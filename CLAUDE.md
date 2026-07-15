@@ -51,6 +51,17 @@ uv run streamlit run app.py --server.port 8540
 
 ## 핵심 규칙
 
+- **상세 필드는 lv6 세부업무만.** lv3~lv5 는 업무를 묶는 분류 그룹이라 **이름 + 설명**만 받는다.
+  규칙 정본은 `schema.has_detail(level)` — 화면(`_full_form`/`_group_form`), 카드 칩
+  (`build_columns`), 집계(`stats`)가 모두 이 함수 하나를 본다. **한 곳만 고치면 안 된다.**
+- **레벨이 바뀌어도 상세 값은 지우지 않는다** — 화면에서 숨길 뿐이다. lv6→lv5 로 승격했다가
+  되돌리면 값이 그대로 살아난다(실수 복구). `normalize()` 가 상위 레벨 필드를 비우게 만들지 말 것.
+  숨은 값은 `schema.has_hidden_detail(node)` 로 감지해 상세 패널에 안내하고, 엑셀에는 그대로
+  보여 "안 보이는 데이터"가 되지 않게 한다.
+- **AI·부서·자동화 집계의 분모는 lv6 뿐**(`stats()` 의 `detail_total`). 전체 노드를 분모로 쓰면
+  상세를 가질 수 없는 lv3~lv5 가 전부 "미적용"으로 잡혀 적용률이 왜곡된다.
+- 한국어 UI 문장에 레벨 이름을 넣을 땐 `schema.josa()` 를 쓴다 — "부문은" / "대분류는".
+  `"...은(는)"` 같은 표기 금지.
 - **평면 노드 배열 + `parent_id`** (중첩 JSON 아님). 이동 = `parent_id`/`order` 2필드 수정.
   사이클은 `would_cycle()` 로 차단, `normalize()` 가 로드 시 `level` 을 깊이로 재계산한다.
 - **lv0~lv2 는 노드가 아니다.** `schema.FIXED_LEVELS` 상수이고 lv3 의 `parent_id` 는 `ROOT_ID("__root__")`.

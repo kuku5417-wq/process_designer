@@ -55,16 +55,20 @@ def build_columns(data: dict, query: str = "") -> list[dict]:
     for lv in range(schema.LEVEL_MIN, schema.LEVEL_MAX + 1):
         pid = _parent_for(lv)
         cards: list[dict] = []
+        # 상세 칩은 상세를 입력하는 레벨에만 — 보드와 상세 패널이 어긋나면 안 된다.
+        # (승격된 카드에 남은 값이 칩으로 보이는데 폼에는 없는 상황을 막는다)
+        detail = schema.has_detail(lv)
         if pid:
             for n in idx.get(pid, []):
                 cards.append({
                     "id": n["id"],
                     "name": n.get("name", ""),
-                    "ai": bool(n.get("has_ai_agent")),
-                    "tech": list(n.get("tech") or [])[:2],
-                    "tech_more": max(0, len(n.get("tech") or []) - 2),
-                    "dept": n.get("dept", ""),
-                    "owner": mask_name(n.get("owner", "")),     # ★ 원본 이름은 iframe 으로 안 나간다
+                    "ai": detail and bool(n.get("has_ai_agent")),
+                    "tech": list(n.get("tech") or [])[:2] if detail else [],
+                    "tech_more": max(0, len(n.get("tech") or []) - 2) if detail else 0,
+                    "dept": n.get("dept", "") if detail else "",
+                    # ★ 원본 이름은 iframe 으로 안 나간다
+                    "owner": mask_name(n.get("owner", "")) if detail else "",
                     "kids": cnt.get(n["id"], 0),
                     "hit": bool(q) and q in n.get("name", "").lower(),
                 })
@@ -97,7 +101,8 @@ def apply_event(evt: dict) -> bool:
     if t == "add":
         pid = evt.get("parent_id") or schema.ROOT_ID
         lv = int(evt.get("level") or schema.LEVEL_MIN)
-        nid = schema.add_node(data, pid, lv, author)
+        # 기본 이름에 레벨을 담아 어느 단계를 만든 건지 바로 보이게 한다
+        nid = schema.add_node(data, pid, lv, author, f"새 {schema.LEVEL_LABELS.get(lv, '업무')}")
         state.select(lv, nid)
         state.touch()
         return True
@@ -207,12 +212,36 @@ def _move_panel(data: dict, node: dict) -> None:
         st.rerun()
 
 
-def _detail(data: dict, node: dict) -> None:
+def _group_form(data: dict, node: dict) -> None:
+    """lv3~lv5 (분류 그룹) — 이름 + 설명만.
+
+    상세 필드는 넘기지 않는다. 승격된 카드에 값이 남아 있어도 덮어쓰지 않기 위함이다.
+    """
+    label = schema.LEVEL_LABELS.get(node["level"], "")
+    st.caption(f"{schema.josa(label)} 업무를 묶는 분류입니다. AI 에이전트·담당자 같은 세부 정보는 "
+               f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}에 입력합니다.")
+    if schema.has_hidden_detail(node):
+        kept = [k for k in schema.DETAIL_FIELDS if node.get(k)]
+        st.info(f"이전에 입력한 세부 정보({len(kept)}개 항목)가 보존되어 있습니다. "
+                f"lv{schema.FULL_DETAIL_LEVEL} 로 옮기면 다시 나타납니다.")
+
+    with st.form(f"detail_{node['id']}"):
+        name = st.text_input(f"{label}명", value=node.get("name", ""))
+        desc = st.text_area("설명", value=node.get("desc", ""), height=90)
+        if st.form_submit_button("적용", type="primary"):
+            if not name.strip():
+                state.set_flash("이름은 비울 수 없습니다.", "warning")
+                st.rerun()
+            schema.update_node(data, node["id"], {"name": name.strip(), "desc": desc},
+                               state.author() or "unknown")
+            state.touch()
+            state.set_flash(f"'{name.strip()}' 을(를) 수정했습니다. 사이드바 [저장] 을 눌러야 파일에 반영됩니다.")
+            st.rerun()
+
+
+def _full_form(data: dict, node: dict) -> None:
+    """lv6 세부업무 — 전체 필드."""
     doms = data.get("domains", {})
-    nmap = schema.node_map(data["nodes"])
-    path = " › ".join(schema.path_names(nmap, node["id"]))
-    st.markdown(f"#### 상세 · lv{node['level']} {schema.LEVEL_LABELS.get(node['level'], '')}")
-    st.caption(path)
 
     def _opts(key: str, extra: str | list | None = None) -> list[str]:
         """도메인 목록 + 현재 값(목록에 없어도 유실되지 않게)."""
@@ -268,6 +297,19 @@ def _detail(data: dict, node: dict) -> None:
             state.touch()
             state.set_flash(f"'{name.strip()}' 을(를) 수정했습니다. 사이드바 [저장] 을 눌러야 파일에 반영됩니다.")
             st.rerun()
+
+
+def _detail(data: dict, node: dict) -> None:
+    """상세 패널 — 레벨에 따라 입력 범위가 다르다 (규칙 정본: schema.has_detail)."""
+    nmap = schema.node_map(data["nodes"])
+    lv = node["level"]
+    st.markdown(f"#### 상세 · lv{lv} {schema.LEVEL_LABELS.get(lv, '')}")
+    st.caption(" › ".join(schema.path_names(nmap, node["id"])))
+
+    if schema.has_detail(lv):
+        _full_form(data, node)
+    else:
+        _group_form(data, node)
 
     with st.expander("옮기기 / 삭제"):
         _move_panel(data, node)

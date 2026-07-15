@@ -129,19 +129,24 @@ def _upload(data: dict) -> None:
 
 def _summary(data: dict) -> None:
     s = schema.stats(data)
+    lv6 = f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}"
     st.markdown("#### 요약")
+    st.caption(f"AI 에이전트·부서·자동화 지표는 **{lv6}** 만 셉니다. "
+               "상위 레벨(부문·대분류·중분류)은 업무를 묶는 분류라 상세 정보를 입력하지 않습니다.")
     c = st.columns(4)
-    c[0].metric("전체 업무", s["total"])
-    c[1].metric("AI 에이전트 적용", s["ai_yes"])
-    c[2].metric("미적용", s["ai_no"])
-    c[3].metric("부서 수", len([k for k in s["by_dept"] if k != "(미지정)"]))
+    c[0].metric("전체 업무", s["total"], help="lv3~lv6 전 레벨 노드 수")
+    c[1].metric(f"{lv6}", s["detail_total"], help="AI 지표의 분모")
+    pct = f"{s['ai_yes'] / s['detail_total'] * 100:.0f}%" if s["detail_total"] else None
+    c[2].metric("AI 에이전트 적용", s["ai_yes"], delta=pct, delta_color="off",
+                help=f"{lv6} {s['detail_total']}개 중")
+    c[3].metric("미적용", s["ai_no"], help=f"{lv6} 중 AI 에이전트가 없는 업무")
     lv = pd.DataFrame([{"레벨": f"lv{k} {schema.LEVEL_LABELS.get(k, '')}", "업무 수": v}
                        for k, v in s["by_level"].items()])
     d1, d2 = st.columns(2)
     with d1:
         st.dataframe(lv, hide_index=True, use_container_width=True)
     with d2:
-        st.dataframe(pd.DataFrame([{"부서/과": k, "업무 수": v} for k, v in s["by_dept"].items()]),
+        st.dataframe(pd.DataFrame([{"부서/과": k, f"{lv6} 수": v} for k, v in s["by_dept"].items()]),
                      hide_index=True, use_container_width=True)
 
 

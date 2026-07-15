@@ -88,16 +88,21 @@ def _domain_df(data: dict) -> pd.DataFrame:
 
 
 def _summary_df(data: dict) -> pd.DataFrame:
+    """요약 시트. AI·부서·자동화 지표의 분모는 lv6 세부업무 (상위 레벨은 상세를 입력하지 않는다)."""
     s = schema.stats(data)
-    rows: list[dict] = [{"구분": "전체", "항목": "업무 수", "값": s["total"]},
-                        {"구분": "AI 에이전트", "항목": "적용", "값": s["ai_yes"]},
-                        {"구분": "AI 에이전트", "항목": "미적용", "값": s["ai_no"]}]
+    lv6 = f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}"
+    rows: list[dict] = [
+        {"구분": "전체", "항목": "업무 수(전 레벨)", "값": s["total"]},
+        {"구분": "전체", "항목": f"{lv6} 수", "값": s["detail_total"]},
+        {"구분": f"AI 에이전트 ({lv6} 기준)", "항목": "적용", "값": s["ai_yes"]},
+        {"구분": f"AI 에이전트 ({lv6} 기준)", "항목": "미적용", "값": s["ai_no"]},
+    ]
     for lv, c in s["by_level"].items():
         rows.append({"구분": "레벨별", "항목": f"lv{lv} ({schema.LEVEL_LABELS.get(lv, '')})", "값": c})
     for d, c in s["by_dept"].items():
-        rows.append({"구분": "부서별", "항목": d, "값": c})
+        rows.append({"구분": f"부서별 ({lv6} 기준)", "항목": d, "값": c})
     for a, c in s["by_automation"].items():
-        rows.append({"구분": "자동화수준별", "항목": a, "값": c})
+        rows.append({"구분": f"자동화수준별 ({lv6} 기준)", "항목": a, "값": c})
     return pd.DataFrame(rows)
 
 

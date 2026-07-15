@@ -29,6 +29,45 @@ LEVEL_LABELS: Final[dict[int, str]] = {
     6: "세부업무",
 }
 
+# ── 레벨별 입력 범위 ────────────────────────────────────
+# lv3~lv5 는 업무를 묶는 분류 그룹이라 이름+설명만 받는다. AI 에이전트를 적용하고 담당자가
+# 붙는 실체는 lv6 세부업무뿐이므로 상세 필드는 거기서만 입력한다.
+# 레벨이 바뀌어도 값은 지우지 않는다 — 화면에서 숨길 뿐이라 다시 lv6 으로 내리면 되살아난다.
+FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
+DETAIL_FIELDS: Final[tuple[str, ...]] = (
+    "dept", "has_ai_agent", "tech", "automation_level", "owner", "frequency", "outputs",
+)
+
+
+def josa(word: str, pair: str = "은/는") -> str:
+    """한글 받침에 따라 조사를 골라 붙인다 — "부문은" / "대분류는".
+
+    UI 텍스트가 한국어라 레벨 이름(부문·대분류·중분류·세부업무)을 문장에 넣을 때 필요하다.
+    "대분류은(는)" 같은 표기를 피한다.
+    """
+    a, b = pair.split("/")
+    if not word:
+        return word
+    ch = word[-1]
+    if not ("가" <= ch <= "힣"):
+        return f"{word}{b}"                                  # 한글이 아니면 받침 없는 형태
+    return f"{word}{a}" if (ord(ch) - 0xAC00) % 28 else f"{word}{b}"
+
+
+def has_detail(level: int) -> bool:
+    """상세 필드(AI·기술·부서·담당자 등)를 입력하는 레벨인지."""
+    try:
+        return int(level) >= FULL_DETAIL_LEVEL
+    except (TypeError, ValueError):
+        return False
+
+
+def has_hidden_detail(node: dict) -> bool:
+    """상위 레벨인데 상세 값이 남아 있는지 (lv6 에서 승격된 카드)."""
+    if has_detail(node.get("level", 0)):
+        return False
+    return any(node.get(f) for f in DETAIL_FIELDS)
+
 # lv3 초기 시드 (최초 1회, 이후 사용자 편집이 정본)
 SEED_LV3: Final[tuple[str, ...]] = (
     "선장운전", "전장운전", "기장운전", "기획운영", "공통업무",
@@ -431,13 +470,20 @@ def move_sibling(data: dict, node_id: str, delta: int, author: str) -> bool:
 # ── 통계 ────────────────────────────────────────────────
 
 def stats(data: dict) -> dict:
+    """집계.
+
+    AI·부서·자동화 지표의 분모는 **lv6 세부업무만**이다. lv3~lv5 는 상세 필드를 입력하지
+    않는 분류 그룹이라 분모에 넣으면 전부 "미적용"으로 잡혀 적용률이 왜곡된다.
+    """
     nodes = data.get("nodes", [])
+    detail = [n for n in nodes if has_detail(n.get("level", 0))]
     by_level: dict[int, int] = {}
     by_dept: dict[str, int] = {}
     by_auto: dict[str, int] = {}
     ai_yes = 0
     for n in nodes:
         by_level[n.get("level", 0)] = by_level.get(n.get("level", 0), 0) + 1
+    for n in detail:
         d = n.get("dept") or "(미지정)"
         by_dept[d] = by_dept.get(d, 0) + 1
         a = n.get("automation_level") or "(미지정)"
@@ -446,11 +492,12 @@ def stats(data: dict) -> dict:
             ai_yes += 1
     return {
         "total": len(nodes),
+        "detail_total": len(detail),          # lv6 세부업무 수 = AI 지표의 분모
         "by_level": dict(sorted(by_level.items())),
         "by_dept": dict(sorted(by_dept.items(), key=lambda kv: -kv[1])),
         "by_automation": dict(sorted(by_auto.items(), key=lambda kv: -kv[1])),
         "ai_yes": ai_yes,
-        "ai_no": len(nodes) - ai_yes,
+        "ai_no": len(detail) - ai_yes,
     }
 
 

@@ -91,6 +91,45 @@ def main() -> int:
     removed = schema.delete_node(d, lv4)
     ck(removed == 3 and len(d["nodes"]) == before - 3, f"delete_node 자손 캐스케이드 {removed}개")
 
+    # 6-1. 레벨별 입력 범위 — 상세는 lv6 만
+    ck(not any(schema.has_detail(lv) for lv in (3, 4, 5)), "lv3~lv5 는 상세 필드 없음(분류 그룹)")
+    ck(schema.has_detail(6), "lv6 은 상세 필드 입력 대상")
+    ck(not schema.has_detail(None) and not schema.has_detail("x"), "has_detail 이 잘못된 값에 안 죽음")
+
+    # 6-2. 레벨이 바뀌어도 상세 값은 보존된다 (숨김만)
+    p3 = d["nodes"][0]["id"]
+    w4 = schema.add_node(d, p3, 4, "tester", "보존확인 대분류")
+    w5 = schema.add_node(d, w4, 5, "tester", "보존확인 중분류")
+    w6 = schema.add_node(d, w5, 6, "tester", "보존확인 세부업무")
+    d = schema.normalize(d)
+    schema.update_node(d, w6, {"has_ai_agent": True, "tech": ["LLM"], "owner": "홍길동",
+                               "dept": "시운전1부", "automation_level": "부분자동",
+                               "frequency": "주 1회", "outputs": "보고서"}, "tester")
+    ck(schema.node_map(d["nodes"])[w6]["level"] == 6, "보존확인 노드 lv6")
+    ck(not schema.has_hidden_detail(schema.node_map(d["nodes"])[w6]), "lv6 은 숨은 값이 아님")
+
+    ok, msg = schema.apply_move(d, w6, w4, "tester")      # lv6 -> lv5 로 승격
+    n6 = schema.node_map(d["nodes"])[w6]
+    ck(ok and n6["level"] == 5, f"lv6 을 lv5 로 승격: {msg}")
+    ck(n6["owner"] == "홍길동" and n6["tech"] == ["LLM"] and n6["has_ai_agent"] is True,
+       "승격해도 상세 값 보존 (삭제 아님)")
+    ck(schema.has_hidden_detail(n6), "승격된 카드에 숨은 상세 값이 있음을 감지")
+
+    ok, _ = schema.apply_move(d, w6, w5, "tester")        # 다시 lv6 으로
+    n6 = schema.node_map(d["nodes"])[w6]
+    ck(ok and n6["level"] == 6 and n6["owner"] == "홍길동", "다시 lv6 으로 내리면 값이 되살아남")
+
+    # 6-3. stats 분모 = lv6 만
+    s = schema.stats(d)
+    lv6_cnt = sum(1 for n in d["nodes"] if n["level"] == 6)
+    ck(s["detail_total"] == lv6_cnt, f"detail_total 이 lv6 수와 일치 ({s['detail_total']}=={lv6_cnt})")
+    ck(s["ai_yes"] + s["ai_no"] == lv6_cnt, "AI 지표 분모에 상위 레벨이 안 섞임")
+    ck(s["total"] > lv6_cnt, f"전체({s['total']})는 lv6({lv6_cnt})보다 많음")
+    ck(s["ai_yes"] == 1, f"AI 적용 1건 집계: {s['ai_yes']}")
+    ck("시운전1부" in s["by_dept"], "부서 집계에 lv6 값 반영")
+    schema.delete_node(d, w4)      # 정리
+    d = schema.normalize(d)
+
     # 7. 손상 데이터 정규화 (고아 / 사이클 / 결측)
     bad = {"nodes": [
         {"id": "a", "parent_id": "없음", "name": "고아"},
