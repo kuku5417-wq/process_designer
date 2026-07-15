@@ -140,6 +140,26 @@ def main() -> int:
     ck(schema.validate(bad) == [], f"손상 데이터 정규화 후 validate 통과: {schema.validate(bad)}")
     ck(schema.node_map(bad["nodes"])["a"]["parent_id"] == schema.ROOT_ID, "고아 노드를 ROOT 로 구제 (삭제 아님)")
 
+    # 7-1. 최초 로드가 시드를 파일로 고정하는지 (세션마다 id 가 달라지면 엑셀 왕복이 깨진다)
+    import shutil as _sh
+    _fresh = _TMP / "fresh"
+    os.environ["PROCESS_DATA_PATH"] = str(_fresh)
+    pc.invalidate_cache()
+    ck(not pc.tree_path().exists(), "새 설치: 데이터 파일 없음")
+    s1, _ = store.load_tree()
+    ck(pc.tree_path().exists(), "첫 로드가 시드를 파일로 고정")
+    s2, _ = store.load_tree()
+    ck([n["id"] for n in s1["nodes"]] == [n["id"] for n in s2["nodes"]],
+       "두번째 로드가 같은 id 를 반환 (세션마다 재생성 안 함)")
+    xb_f = excel_io.build_xlsx(s1, mask=True)
+    parsed_f, _ = excel_io.parse_excel(xb_f, s2)
+    df_f = schema.diff(s2, parsed_f)
+    ck(not df_f["added"] and not df_f["removed"],
+       f"새 설치에서 엑셀 왕복 시 중복 없음 (추가{len(df_f['added'])}/삭제{len(df_f['removed'])})")
+    _sh.rmtree(_fresh, ignore_errors=True)
+    os.environ["PROCESS_DATA_PATH"] = str(_TMP)
+    pc.invalidate_cache()
+
     # 8. 저장 / 로드 왕복
     d = schema.normalize(d)
     r1 = store.save_tree(d, "김철수")

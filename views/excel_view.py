@@ -1,4 +1,7 @@
-"""excel_view.py — 엑셀 다운로드 / 업로드 일괄등록 + JSON 백업.
+"""excel_view.py — 엑셀 가져오기(일괄등록) / 내보내기 + JSON 백업.
+
+화면을 [가져오기][내보내기] 탭으로 나눈다 — 업로드가 다운로드 아래에 묻혀 있으면 기능이
+있는 줄도 모른다(실제로 그런 일이 있었다). 가져오기를 먼저 둔다.
 
 업로드는 반영 전에 추가·변경·삭제 건수를 보여주고 확인을 받는다. 삭제는 기본 OFF —
 엑셀에서 행을 지웠다는 이유만으로 업무가 사라지면 사고이기 때문에 명시적 옵트인으로 둔다.
@@ -20,7 +23,7 @@ def _xlsx_cached(rev: int, dirty: int, mask: bool, _data: dict) -> bytes:
 
 
 def _download(data: dict) -> None:
-    st.markdown("#### 다운로드")
+    st.caption("설계 결과를 엑셀로 받습니다. 이 파일을 고쳐서 [가져오기] 탭에 올리면 일괄 반영됩니다.")
     mask = st.checkbox("담당자 이름 마스킹 (홍길동 → 홍*동)", value=True,
                        help="공유·보고용은 켜두세요. 끄면 원본 이름이 파일에 그대로 들어갑니다.")
     if not mask:
@@ -39,8 +42,7 @@ def _download(data: dict) -> None:
         st.download_button("JSON 원본 다운로드", data=excel_io.build_json_bytes(data),
                            file_name=excel_io.default_filename(ext="json"),
                            mime="application/json", use_container_width=True)
-    st.caption("시트 3장 — 계층도(업무 1개=1행, lv0~lv6 펼침) / 도메인 / 요약. "
-               "이 파일을 그대로 고쳐서 아래에 다시 올리면 일괄 반영됩니다.")
+    st.caption("시트 3장 — 계층도(업무 1개=1행, lv0~lv6 펼침) / 도메인 / 요약.")
 
 
 def _preview_table(nodes: list[dict], data: dict) -> pd.DataFrame:
@@ -53,10 +55,21 @@ def _preview_table(nodes: list[dict], data: dict) -> pd.DataFrame:
 
 
 def _upload(data: dict) -> None:
-    st.markdown("#### 업로드 (일괄등록)")
-    up = st.file_uploader("다운로드한 엑셀을 수정해서 올리세요", type=["xlsx"], key="up_xlsx")
+    st.caption("엑셀로 업무를 한 번에 등록·수정합니다. **[내보내기] 탭에서 받은 파일**을 고쳐서 "
+               "올리세요 — 컬럼 서식이 같아야 읽을 수 있습니다.")
+    up = st.file_uploader("수정한 엑셀 파일 (.xlsx)", type=["xlsx"], key="up_xlsx")
     if up is None:
         st.session_state.pop("up_parsed", None)
+        with st.expander("엑셀 작성 규칙"):
+            st.markdown(
+                "- `lv3`~`lv6` 칸을 **왼쪽부터 연속으로** 채웁니다. (lv4 를 비우고 lv5 만 채우면 오류)\n"
+                "- 상위 업무는 **자기 행이 반드시 있어야** 합니다.\n"
+                "- `id` 칸이 비어 있으면 **새 업무**로 등록됩니다. 기존 업무는 `id` 를 지우지 마세요.\n"
+                f"- AI·기술·부서 같은 세부 정보는 **lv{schema.FULL_DETAIL_LEVEL} "
+                f"{schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}** 행에만 채웁니다.\n"
+                "- 엑셀에서 행을 지워도 **기본은 삭제되지 않습니다** (실수 방지). 삭제하려면 아래 "
+                "체크박스를 켜세요.\n"
+                "- 담당자가 마스킹된 값(`홍*동`)이면 원본 이름을 덮어쓰지 않습니다.")
         return
 
     try:
@@ -152,12 +165,15 @@ def _summary(data: dict) -> None:
 
 def render() -> None:
     data = state.data()
-    st.markdown("### 엑셀 / 내보내기")
+    st.markdown("### 엑셀 가져오기 / 내보내기")
     if state.dirty():
-        st.warning(f"저장하지 않은 변경 {state.dirty()}건이 있습니다. 다운로드 파일에는 포함되지만 "
+        st.warning(f"저장하지 않은 변경 {state.dirty()}건이 있습니다. 내보내기 파일에는 포함되지만 "
                    "다른 사람은 아직 볼 수 없습니다.")
-    _download(data)
-    st.divider()
-    _upload(data)
+    # 가져오기를 먼저 — 다운로드 아래에 묻히면 업로드가 있는 줄 모른다
+    t_up, t_down = st.tabs(["⬆ 가져오기 (일괄등록)", "⬇ 내보내기"])
+    with t_up:
+        _upload(data)
+    with t_down:
+        _download(data)
     st.divider()
     _summary(data)

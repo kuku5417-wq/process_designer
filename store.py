@@ -77,16 +77,38 @@ def disk_stat() -> tuple[float, int, str]:
         return 0.0, 0, ""
 
 
+def _create_if_absent(obj: dict, path: Path) -> bool:
+    """파일이 없을 때만 생성 (O_EXCL). 이미 있으면 False — 남의 파일을 덮지 않는다."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+        return True
+    except FileExistsError:
+        return False
+    except Exception:
+        return False
+
+
 def load_tree() -> tuple[dict, list[str]]:
     """정본 트리 로드. (data, 경고메시지목록).
 
-    파일이 없으면 bootstrap, 손상되면 손상본을 보존한 채 bootstrap 으로 폴백한다.
+    파일이 없으면 bootstrap 을 **파일로 고정한 뒤** 반환한다. 세션마다 새로 bootstrap 하면
+    같은 "선장운전"이 세션마다 다른 id 로 생겨, 최초 저장 전에 내보낸 엑셀을 다른 세션에서
+    올릴 때 전부 신규로 잡혀 시드가 통째로 중복된다.
+
+    손상 시에는 손상본을 보존한 채 bootstrap 으로 폴백한다.
     어떤 경우에도 앱이 죽지 않는다 (공통규칙 5).
     """
     warns: list[str] = []
     p = pc.tree_path()
     if not p.exists():
-        return schema.bootstrap(), warns
+        seed = schema.bootstrap()
+        if _create_if_absent(seed, p):
+            return seed, warns
+        # 그 사이 다른 사람이 만들었다면 그 파일을 정본으로 읽는다 (아래로 진행)
+        if not p.exists():
+            return seed, warns          # 쓰기 실패(권한 등) — 메모리 시드로라도 뜬다
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except Exception as e:

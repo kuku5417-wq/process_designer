@@ -28,7 +28,7 @@ st.set_page_config(page_title="프로세스 설계", page_icon="🗂️", layout
 inject_css()
 state.init()
 
-MENUS = ["계층 편집", "도메인 관리", "엑셀 / 내보내기", "이력 · 복원"]
+MENUS = ["계층 편집", "도메인 관리", "엑셀 가져오기 / 내보내기", "이력 · 복원"]
 
 
 def _check_disk_changed() -> None:
@@ -177,15 +177,11 @@ def main() -> None:
     if _conflict_dialog() or _reload_confirm():
         return
 
+    # 라벨이 아니라 MENUS 위치로 라우팅 — 라벨 문구를 고칠 때 라우터가 조용히 어긋나지 않게
     menu = st.session_state.get("menu", MENUS[0])
-    if menu == "계층 편집":
-        tree_view.render()
-    elif menu == "도메인 관리":
-        domain_view.render()
-    elif menu == "엑셀 / 내보내기":
-        excel_view.render()
-    else:
-        history_view.render()
+    renderer = dict(zip(MENUS, (tree_view.render, domain_view.render,
+                                excel_view.render, history_view.render)))
+    renderer.get(menu, tree_view.render)()
 
 
 main()
