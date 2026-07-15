@@ -1,0 +1,26 @@
+# 시크릿 — 절대 커밋 금지
+.env
+secret/
+*.env.local
+
+# 데이터 (공용PC 로컬 저장분)
+data/
+process/
+*.parquet
+*.tmp
+*.jsonl
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 엑셀 임시파일
+~$*.xlsx
+
+# OS / 에디터
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

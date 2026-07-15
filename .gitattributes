@@ -1,0 +1,5 @@
+# .bat 는 반드시 CRLF (공통규칙: ASCII + CRLF — 한글 인코딩/파싱 오류 방지)
+*.bat text eol=crlf
+
+# 벤더링된 라이브러리는 diff/언어통계에서 제외
+frontend/sortable.min.js binary linguist-vendored

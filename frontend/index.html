@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<!--
+  process_board — 컬럼 드릴다운 DnD 보드 (Streamlit 정적 커스텀 컴포넌트)
+
+  npm 빌드 없이 Streamlit 의 postMessage 프로토콜을 직접 구현한다.
+  ★ 모든 메시지에 isStreamlitMessage:true 가 있어야 한다 — 없으면 부모가 조용히 무시하고
+    60초 뒤 "component failed to render" 로 죽는다. 그래서 send() 한 곳에서만 postMessage 한다.
+  ★ 부모는 componentReady 를 받은 뒤에야 render 를 보낸다. 순서를 지킬 것.
+  ★ iframe 은 scrolling:"no" 라 내부 스크롤이 불가하다 — 컬럼별 overflow-y:auto 로 해결한다.
+  ★ render() 안에서는 절대 setComponentValue 를 호출하지 않는다 (rerun 무한루프).
+-->
+<script src="./sortable.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; overflow:hidden;
+    font-family: "Malgun Gothic", "맑은 고딕", -apple-system, "Segoe UI", sans-serif;
+    background: transparent; color:#0f172a; }
+
+  .board { display:flex; gap:10px; align-items:stretch; overflow-x:auto; padding:2px; }
+  .col { flex:1 1 0; min-width:190px; display:flex; flex-direction:column;
+         background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; }
+  .col.off { opacity:.55; }
+  .colhead { display:flex; align-items:center; justify-content:space-between; gap:6px;
+             padding:8px 9px; border-bottom:1px solid #e2e8f0; }
+  .colhead .t { font-size:12px; font-weight:700; color:#475569; white-space:nowrap;
+                overflow:hidden; text-overflow:ellipsis; }
+  .colhead .n { font-size:11px; color:#94a3b8; font-weight:600; }
+  .add { border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:5px;
+         cursor:pointer; font-size:12px; font-weight:700; padding:1px 7px; line-height:1.5; }
+  .add:hover { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+
+  .list { flex:1; overflow-y:auto; overflow-x:hidden; padding:7px; min-height:60px; }
+  .hint { color:#94a3b8; font-size:11px; padding:8px 3px; }
+
+  .card { background:#fff; border:1px solid #e2e8f0; border-left:3px solid #cbd5e1;
+          border-radius:6px; margin-bottom:5px; }
+  .card.sel { border-left-color:#1f6feb; background:#eff6ff; }
+  .card.hit { box-shadow:0 0 0 2px #fbbf24; }
+  .cbody { padding:6px 8px; cursor:grab; }
+  .cbody:active { cursor:grabbing; }
+  .nm { font-size:12.5px; font-weight:600; line-height:1.35; word-break:break-all; }
+  .meta { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
+  .chip { font-size:9.5px; background:#f1f5f9; color:#475569; border-radius:3px; padding:0 4px;
+          line-height:15px; }
+  .chip.ai { background:#dcfce7; color:#166534; font-weight:700; }
+  .chip.dept { background:#e0e7ff; color:#3730a3; }
+  .chip.kids { background:#fff7ed; color:#9a3412; }
+
+  /* 자식 드롭존 — 드래그 중, 호환되는 레벨에서만 점등 (오조작 방지) */
+  .drop { display:none; margin:0 7px 6px; border:2px dashed #cbd5e1; border-radius:5px;
+          min-height:26px; background:#f8fafc; }
+  /* forceFallback 이라 네이티브 dragenter 가 없다 — 드래그 중 hover 로 강조한다
+     (고스트는 body 에 붙고 pointer-events 가 없어 :hover 가 드롭존에 걸린다) */
+  body.dragging .drop:hover, .drop.sortable-drag-over { border-color:#1f6feb; background:#dbeafe; }
+  .drop::after { content:"여기로 옮기기"; display:block; text-align:center; font-size:9.5px;
+                 color:#94a3b8; line-height:22px; }
+  body.dragging .cbody { cursor:grabbing; }
+  body.dragging-L4 .col[data-level="3"] .drop,
+  body.dragging-L5 .col[data-level="4"] .drop,
+  body.dragging-L6 .col[data-level="5"] .drop { display:block; }
+
+  .ghost { opacity:.4; }
+  .chosen { box-shadow:0 2px 8px rgba(15,23,42,.18); }
+  .err { color:#b91c1c; font-size:12px; padding:8px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+(function () {
+  "use strict";
+
+  // ── Streamlit 프로토콜 ───────────────────────────────
+  function send(msg) {
+    window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, msg), "*");
+  }
+  function setHeight(h) { send({ type: "streamlit:setFrameHeight", height: h }); }
+  function setValue(v) { send({ type: "streamlit:setComponentValue", value: v, dataType: "json" }); }
+
+  function uid() {
+    try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
+    return "e" + Date.now() + "-" + Math.floor(Math.random() * 1e9);
+  }
+  // 사용자 조작에서만 호출한다. render() 안에서 부르면 무한 리런이 된다.
+  function emit(evt) { evt.evt_id = uid(); setValue(evt); }
+
+  var ROOT = "__root__";
+  var root = document.getElementById("root");
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  function cardHTML(card, col) {
+    var chips = "";
+    if (card.ai) chips += '<span class="chip ai">AI</span>';
+    (card.tech || []).forEach(function (t) { chips += '<span class="chip">' + esc(t) + "</span>"; });
+    if (card.tech_more > 0) chips += '<span class="chip">+' + card.tech_more + "</span>";
+    if (card.dept) chips += '<span class="chip dept">' + esc(card.dept) + "</span>";
+    if (card.owner) chips += '<span class="chip">' + esc(card.owner) + "</span>";
+    if (card.kids) chips += '<span class="chip kids">▸' + card.kids + "</span>";
+
+    var cls = "card" + (col.selected === card.id ? " sel" : "") + (card.hit ? " hit" : "");
+    return '<div class="' + cls + '" data-id="' + esc(card.id) + '" data-level="' + col.level + '">'
+      + '<div class="cbody">'
+      + '<div class="nm">' + esc(card.name || "(이름 없음)") + "</div>"
+      + (chips ? '<div class="meta">' + chips + "</div>" : "")
+      + "</div>"
+      + '<div class="drop" data-parent="' + esc(card.id) + '"></div>'
+      + "</div>";
+  }
+
+  function render(args) {
+    var cols = (args && args.columns) || [];
+    var height = (args && args.height) || 620;
+
+    var html = '<div class="board" style="height:' + (height - 6) + 'px">';
+    cols.forEach(function (col) {
+      html += '<div class="col' + (col.enabled ? "" : " off") + '" data-level="' + col.level + '">'
+        + '<div class="colhead"><span class="t">' + esc(col.label) + "</span>"
+        + '<span class="n">' + (col.cards || []).length + "</span>"
+        + (col.enabled ? '<button class="add" data-parent="' + esc(col.parent_id)
+            + '" data-level="' + col.level + '" title="추가">＋</button>' : "")
+        + "</div>";
+      if (!col.enabled) {
+        html += '<div class="list off"><div class="hint">상위 항목을 먼저 선택하세요.</div></div>';
+      } else {
+        html += '<div class="list" data-level="' + col.level + '" data-parent="' + esc(col.parent_id) + '">';
+        (col.cards || []).forEach(function (c) { html += cardHTML(c, col); });
+        html += "</div>";
+        if (!(col.cards || []).length) {
+          html = html.replace(/<\/div>$/, '<div class="hint">＋ 로 추가하세요.</div></div>');
+        }
+      }
+      html += "</div>";
+    });
+    html += "</div>";
+    root.innerHTML = html;
+
+    wire();
+    setHeight(height);
+  }
+
+  function wire() {
+    // (A) 컬럼 리스트 — 형제 순서 변경. group 을 레벨별로 분리해 lv4 카드가 lv6 컬럼에
+    //     떨어지는 사고를 구조적으로 막는다.
+    Array.prototype.forEach.call(root.querySelectorAll(".list[data-level]"), function (el) {
+      var lv = el.dataset.level;
+      Sortable.create(el, {
+        group: { name: "L" + lv, pull: true, put: ["L" + lv] },
+        draggable: ".card", handle: ".cbody", animation: 140,
+        ghostClass: "ghost", chosenClass: "chosen",
+        // 네이티브 HTML5 DnD 대신 마우스/터치 이벤트로 처리한다. iframe 안에서 동작이
+        // 일관되고(브라우저별 dataTransfer 편차 없음), 드래그 중 자동 스크롤도 얻는다.
+        forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3,
+        scroll: true, scrollSensitivity: 60, scrollSpeed: 12,
+        onStart: function () {
+          document.body.classList.add("dragging", "dragging-L" + lv);
+        },
+        onEnd: function (e) {
+          document.body.classList.remove("dragging", "dragging-L" + lv);
+          if (e.from !== e.to) return;              // 드롭존 경유는 (B) 가 처리
+          if (e.oldIndex === e.newIndex) return;
+          var order = Array.prototype.map.call(e.from.children, function (c) { return c.dataset.id; })
+                       .filter(Boolean);
+          emit({ type: "reorder", parent_id: e.from.dataset.parent, level: Number(lv), order: order });
+        }
+      });
+    });
+
+    // (B) 카드 안 드롭존 — 부모 변경 (레벨은 유지). 왼쪽 컬럼의 다른 카드 위로 떨어뜨린다.
+    Array.prototype.forEach.call(root.querySelectorAll(".drop[data-parent]"), function (el) {
+      var lv = Number(el.closest(".card").dataset.level) + 1;
+      Sortable.create(el, {
+        group: { name: "L" + lv, pull: false, put: ["L" + lv] },
+        sort: false, animation: 0,
+        forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3,
+        onAdd: function (e) {
+          e.item.remove();                          // 파이썬 재렌더가 정본 — DOM 은 버린다
+          emit({ type: "move", node_id: e.item.dataset.id, new_parent_id: el.dataset.parent });
+        }
+      });
+    });
+
+    // 클릭 = 선택 / 추가. 이벤트 채널을 하나로 모아 카드마다 st.button 을 두는 것을 피한다.
+    root.addEventListener("click", function (ev) {
+      var add = ev.target.closest(".add");
+      if (add) {
+        emit({ type: "add", parent_id: add.dataset.parent, level: Number(add.dataset.level) });
+        return;
+      }
+      var body = ev.target.closest(".cbody");
+      if (body) emit({ type: "select", node_id: body.closest(".card").dataset.id });
+    });
+  }
+
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.type !== "streamlit:render") return;
+    try {
+      render(e.data.args || {});
+    } catch (err) {
+      root.innerHTML = '<div class="err">보드를 그리지 못했습니다: ' + esc(err && err.message) + "</div>";
+      setHeight(60);
+    }
+  });
+
+  if (typeof Sortable === "undefined") {
+    // sortable.min.js 가 없어도 죽지 않는다 — 읽기전용으로라도 뜬다 (공통규칙 5)
+    root.innerHTML = '<div class="err">sortable.min.js 를 불러오지 못했습니다. '
+      + "사이드바에서 간단 모드를 쓰세요.</div>";
+    setHeight(60);
+  }
+  // 리스너를 붙인 뒤에 ready 를 보낸다 (부모는 ready 이후에만 render 를 보낸다)
+  send({ type: "streamlit:componentReady", apiVersion: 1 });
+})();
+</script>
+</body>
+</html>

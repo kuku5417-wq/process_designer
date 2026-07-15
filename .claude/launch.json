@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "process-designer",
+      "runtimeExecutable": "C:\\Users\\Administrator\\AppData\\Local\\venvs\\process_designer\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "streamlit", "run", "app.py", "--server.port", "8540",
+                      "--server.headless", "true", "--browser.gatherUsageStats", "false"],
+      "port": 8540
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[project]
+name = "process-designer"
+version = "1.0.0"
+description = "시운전팀 프로세스 설계 — lv0~lv6 업무 계층도 + AI 에이전트 적용 현황"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "streamlit>=1.35.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",       # 엑셀 다운로드/업로드
+    "python-dotenv>=1.0.0",  # app_config(.env 로드) 필수
+    # ★ parquet 을 생산하지 않지만 pyarrow 가 필요하다:
+    #   streamlit/components/v1/custom_component.py 의 create_instance 가 pyarrow 를
+    #   import 하므로, 없으면 DnD 커스텀 컴포넌트가 StreamlitAPIException 으로 죽는다.
+    "pyarrow>=14.0.0",
+]
+
+[tool.uv]
+managed = true
+python-preference = "only-system"
+python-downloads = "never"
