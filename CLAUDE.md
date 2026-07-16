@@ -16,6 +16,28 @@ uv run streamlit run app.py --server.port 8540
 
 ## 파일 구조
 
+**두 가지로 배포된다 — UI 소스는 `frontend/index.html` 한 벌뿐이다.**
+
+| | 메인앱 (Streamlit, 8540) | 개인 배포판 (standalone HTML) |
+|---|---|---|
+| 용도 | 공용PC 한 대, 전체 트리 관리·취합 | 각자 PC 에서 자기 업무 작성 → JSON 제출 |
+| 만드는 법 | `run.bat` | `python build_standalone.py` → `dist/*.html` (파일 1개) |
+| 백엔드 | `app.py` + `store.py` | **없음** (localStorage + 파일 내보내기) |
+
+**모드 축이 둘이다** (`index.html` 상단). 하나로 뭉치지 말 것 —
+"백엔드는 없지만 데이터는 진짜"인 개인 배포판을 표현할 수 없다.
+- `SOLO` = 빌드타임 상수 (`window.__PD_SOLO__`, `build_standalone.py` 가 주입)
+- `IN_ST` = 런타임, "streamlit:render 를 받았는가" (전송 계층). **의미를 바꾸지 말 것**
+
+| SOLO | IN_ST | 상태 |
+|---|---|---|
+| false | true | Streamlit 실서비스 |
+| false | false | **디자인 단독 미리보기** (`seed()`/`MOCK_*` 목업) |
+| true | — | **개인 배포판** (진짜 데이터, localStorage) |
+
+`emit()` 이 이 세 갈래로 분기한다: `send` / `previewAction`(가짜) / `soloAction`(진짜).
+`previewAction` 은 이름 그대로 **아무것도 저장하지 않는다** — `soloAction` 과 혼동 금지.
+
 **구조 (v2)**: `frontend/index.html` **한 파일이 전체 UI 와 편집 상태**를 브라우저에서 들고 있고,
 `app.py` 는 "데이터 저장 API" 역할만 한다. 컴포넌트가 [저장] 시 트리 전체를 되돌려주면
 `store.save_tree()` 로 원자적 저장 + 스냅샷 + rev 충돌검사를 한다. Streamlit 위젯은 쓰지 않는다.
@@ -98,6 +120,19 @@ uv run streamlit run app.py --server.port 8540
   상세를 가질 수 없는 lv3~lv5 가 전부 "미적용"으로 잡혀 적용률이 왜곡된다.
 - 한국어 UI 문장에 레벨 이름을 넣을 땐 `schema.josa()` 를 쓴다 — "부문은" / "대분류는".
   `"...은(는)"` 같은 표기 금지.
+- **작업시간**: `work_hours`(1회 소요시간) × `annual_count`(연간 횟수) = 연간 공수.
+  **곱한 값은 저장하지 않는다** — 두 원본과 어긋난다. `schema.annual_hours()` / JS `annualHours()`
+  로만 계산한다. 엑셀의 `연간공수(h)` 컬럼도 쓰기 전용이라 `FIELD_COLS` 에 넣으면 안 된다
+  (넣는 순간 `parse_excel` 이 파생값을 저장 필드로 역수입한다).
+  `FREQ_ANNUAL`(주기→횟수 기본값)의 **자동 채움은 JS 에서만** 한다 — 파이썬이 채우면
+  연간횟수를 일부러 비운 엑셀이 조용히 52 를 얻는다. 그리고 **비어 있을 때만** 채운다
+  (손으로 친 숫자를 드롭다운 조작이 날리면 안 된다).
+- **JS 숫자 입력은 강제하지 않는다.** 키 입력마다 rerender 하므로 `parseFloat` 로 스냅시키면
+  `"0."` 이 `"0"` 이 돼 **소수점을 아예 못 친다**. 친 문자열 그대로 저장하고 정리는 파이썬에 맡긴다.
+- **`SEED_LV3` 는 `(id, name)` 고정 쌍**이고 `frontend/index.html` 의 `SEED_LV3` 와
+  **id·이름이 완전히 같아야 한다**. 개인 배포판과 메인앱이 같은 부문 id 를 써야 취합 시
+  자동 병합된다 — 한쪽만 고치면 부문이 사람 수만큼 중복된다.
+  (`seed()` 는 디자인 미리보기용 목업이라 다르다. 혼동 금지)
 - **평면 노드 배열 + `parent_id`** (중첩 JSON 아님). 이동 = `parent_id`/`order` 2필드 수정.
   사이클은 `would_cycle()` 로 차단, `normalize()` 가 로드 시 `level` 을 깊이로 재계산한다.
 - **lv0~lv2 는 노드가 아니다.** `schema.FIXED_LEVELS` 상수이고 lv3 의 `parent_id` 는 `ROOT_ID("__root__")`.

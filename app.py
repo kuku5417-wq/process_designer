@@ -106,13 +106,18 @@ def _node_brief(nodes: list[dict], base: dict, limit: int = 200) -> list[dict]:
     return out
 
 
-def _preview_import(raw_bytes: bytes) -> None:
-    """엑셀을 파싱만 하고 **보류**한다. 반영은 사용자가 확인한 뒤 import_apply 에서.
+def _preview_import(raw_bytes: bytes, filename: str = "") -> None:
+    """올린 파일을 파싱만 하고 **보류**한다. 반영은 사용자가 확인한 뒤 import_apply 에서.
 
     확인 없이 반영하면 되돌릴 방법이 [디스크 다시 읽기] 뿐이라 위험하다 (v1 은 미리보기가 있었다).
+
+    .json = 개인 배포판(standalone)이 내보낸 파일, .xlsx = 이 앱에서 받아 고친 엑셀.
     """
     data = st.session_state["data"]
-    parsed, errs = excel_io.parse_excel(raw_bytes, data)
+    if filename.lower().endswith(".json") or raw_bytes[:1] == b"{":
+        parsed, errs = excel_io.parse_json(raw_bytes, data)
+    else:
+        parsed, errs = excel_io.parse_excel(raw_bytes, data)
     if errs:
         st.session_state["import_errors"] = errs[:20]
         st.session_state.pop("pending_import", None)
@@ -214,9 +219,9 @@ def _handle(evt: dict) -> None:
 
     elif t == "import":                     # 파싱 + 미리보기만 (반영 아님)
         try:
-            _preview_import(base64.b64decode(evt.get("b64", "")))
+            _preview_import(base64.b64decode(evt.get("b64", "")), evt.get("filename", ""))
         except Exception as e:
-            st.session_state["import_errors"] = [f"엑셀을 읽을 수 없습니다: {e}"]
+            st.session_state["import_errors"] = [f"파일을 읽을 수 없습니다: {e}"]
             st.session_state.pop("pending_import", None)
 
     elif t == "import_apply":               # 사용자가 확인한 뒤에만 반영

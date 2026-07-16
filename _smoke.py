@@ -265,6 +265,93 @@ def main() -> int:
         ck(isinstance(dd3["added"], list) and isinstance(dd3["removed"], list),
            f"복원 diff 계산 가능 (되살아남 {len(dd3['added'])}/사라짐 {len(dd3['removed'])})")
 
+    # 18. 작업시간
+    ck(schema.annual_hours({"work_hours": "0.5", "annual_count": "52"}) == 26.0, "연간 공수 = 0.5 × 52 = 26")
+    ck(all(schema.annual_hours(b) == 0.0 for b in
+           [{}, {"work_hours": "", "annual_count": "52"}, {"work_hours": "abc", "annual_count": "52"},
+            {"work_hours": "2", "annual_count": None}]), "공수 계산이 빈값·문자·None 에 안 죽음")
+    ck(schema.FREQ_ANNUAL["주 1회"] == 52 and schema.FREQ_ANNUAL["일 1회"] == 250,
+       "주기→연간횟수 매핑 (일 1회는 근무일 250)")
+    ck("호선별" not in schema.FREQ_ANNUAL and "수시" not in schema.FREQ_ANNUAL,
+       "호선별·수시는 자동 매핑 없음 (직접 입력)")
+    ck(all(f in schema.DETAIL_FIELDS for f in ("work_hours", "annual_count")), "작업시간이 lv6 전용 필드")
+    ck(all(f in schema.NODE_DEFAULTS for f in ("work_hours", "annual_count")),
+       "작업시간이 NODE_DEFAULTS 에 있음 (없으면 diff 가 변경을 못 잡는다)")
+    # 시간만 바뀐 노드를 diff 가 잡는지 — 못 잡으면 엑셀 미리보기가 "변경 0건" 이라 거짓말한다
+    h1, _ = store.load_tree()
+    h1 = schema.normalize(h1)
+    hid = [n for n in h1["nodes"] if n["level"] == 3][0]["id"]
+    hl4 = schema.add_node(h1, hid, 4, "t", "H4"); hl5 = schema.add_node(h1, hl4, 5, "t", "H5")
+    hl6 = schema.add_node(h1, hl5, 6, "t", "H6")
+    h1 = schema.normalize(h1)
+    h2 = schema.normalize(json.loads(json.dumps(h1)))
+    schema.update_node(h2, hl6, {"work_hours": "3", "annual_count": "12"}, "t")
+    ck(len(schema.diff(h1, h2)["changed"]) == 1, "시간만 바꿔도 diff 가 '변경' 으로 잡음")
+    hs = schema.stats(h2)
+    ck(hs["total_hours"] == 36.0, f"stats 연간 공수 합 = 3 × 12 = 36 (실제 {hs['total_hours']})")
+    # 파이썬이 주기로 횟수를 자동 채우면 안 된다 — 일부러 비운 엑셀이 조용히 52 를 얻는다
+    fq = schema.normalize({"nodes": [{"id": "x", "parent_id": schema.ROOT_ID, "level": 3,
+                                      "name": "F", "frequency": "주 1회"}]})
+    ck(fq["nodes"][0]["annual_count"] == "", "파이썬은 주기로 연간횟수를 자동 채우지 않음")
+
+    # 19. 결정론적 시드 id — 개인 배포판과 메인앱이 같은 부문 id 를 써야 취합된다
+    ck([n["id"] for n in schema.bootstrap()["nodes"]] == [n["id"] for n in schema.bootstrap()["nodes"]],
+       "bootstrap 이 매번 같은 lv3 id 를 만듦")
+    ck([n["id"] for n in schema.bootstrap()["nodes"]] == [s[0] for s in schema.SEED_LV3],
+       "시드 id 가 SEED_LV3 상수와 일치")
+
+    # 20. 개인 제출 JSON 취합 — 브라우저가 실제로 내보낸 fixture 로 검증
+    fx = Path(__file__).resolve().parent / "tests" / "fixtures" / "solo_export_sample.json"
+    if fx.exists():
+        raw = fx.read_bytes()
+        master = schema.bootstrap()
+        got, errs = excel_io.parse_json(raw, master)
+        ck(errs == [], f"브라우저 제출 fixture 파싱 성공: {errs}")
+        d = schema.diff(master, got)
+        ck(len(d["added"]) == 3 and len(d["removed"]) == 0,
+           f"fixture 반영: 추가 3(lv4/5/6) 삭제 0 (실제 추가 {len(d['added'])} 삭제 {len(d['removed'])})")
+        nm = schema.node_map(got["nodes"])
+        ck("lv3_seonjang" in nm and nm["lv3_seonjang"]["name"] == "선장운전", "부문이 고정 id 로 매칭됨")
+        l6 = [n for n in got["nodes"] if n["level"] == 6][0]
+        ck(l6["owner"] == "김철수" and l6["dept"] == "시운전1부", "lv6 에 작성자 신원이 실려 옴")
+        ck(schema.annual_hours(l6) == 15.0, f"제출된 작업시간 반영 (0.5 × 30 = 15, 실제 {schema.annual_hours(l6)})")
+        # 같은 파일 재제출 → 멱등
+        again, _ = excel_io.parse_json(raw, got)
+        ck(len(again["nodes"]) == len(got["nodes"]), "같은 파일 재제출해도 노드가 복제되지 않음(멱등)")
+    else:
+        ck(False, "fixture 파일 없음: tests/fixtures/solo_export_sample.json")
+
+    # 21. 취합 매칭 규칙
+    base2 = schema.bootstrap()
+    # (a) lv3 은 이름 경로로 합쳐진다
+    pa = schema.bootstrap(); na = schema.add_node(pa, schema.ROOT_ID, 3, "A", "새부문")
+    pb = schema.bootstrap(); nb = schema.add_node(pb, schema.ROOT_ID, 3, "B", "새부문")
+    m1, _ = excel_io.parse_json(excel_io.build_json_bytes(schema.normalize(pa)), base2)
+    m2, _ = excel_io.parse_json(excel_io.build_json_bytes(schema.normalize(pb)), m1)
+    ck([n["name"] for n in m2["nodes"]].count("새부문") == 1, "각자 만든 같은 이름의 부문이 하나로 합쳐짐")
+    # (b) lv4 는 경로로 합치지 않는다 — 합치면 뒷사람이 앞사람 값을 조용히 덮는다
+    lv3a = [n for n in base2["nodes"] if n["level"] == 3][0]["id"]
+    qa = schema.bootstrap(); schema.add_node(qa, lv3a, 4, "A", "겹치는대분류")
+    qb = schema.bootstrap(); schema.add_node(qb, lv3a, 4, "B", "겹치는대분류")
+    k1, _ = excel_io.parse_json(excel_io.build_json_bytes(schema.normalize(qa)), base2)
+    k2, _ = excel_io.parse_json(excel_io.build_json_bytes(schema.normalize(qb)), k1)
+    merged = schema.normalize({**k2, "nodes": list(k2["nodes"])
+                               + [dict(n) for n in schema.diff(k1, k2)["removed"]]})
+    ck([n["name"] for n in merged["nodes"]].count("겹치는대분류") == 2,
+       "lv4 는 경로로 안 합침 — 둘 다 남아 관리자가 판단")
+    # (c) 개인이 만든 도메인은 마스터에 바로 안 섞인다
+    td = schema.bootstrap()
+    t3 = [n for n in td["nodes"] if n["level"] == 3][0]["id"]
+    t4 = schema.add_node(td, t3, 4, "A", "T4"); t5 = schema.add_node(td, t4, 5, "A", "T5")
+    t6 = schema.add_node(td, t5, 6, "A", "T6")
+    td = schema.normalize(td)
+    schema.update_node(td, t6, {"tech": ["듣보기술"]}, "A")
+    td["domains"]["tech"].append("듣보기술")
+    g, _ = excel_io.parse_json(excel_io.build_json_bytes(td), schema.bootstrap())
+    ck("듣보기술" not in g["domains"]["tech"], "개인이 만든 기술이 마스터에 바로 안 섞임")
+    ck("듣보기술" in excel_io.unknown_domain_values(g).get("tech", []),
+       "대신 unknown_domain_values 가 잡아 관리자 승인 대기")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

@@ -36,7 +36,35 @@ LEVEL_LABELS: Final[dict[int, str]] = {
 FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "dept", "has_ai_agent", "tech", "automation_level", "owner", "frequency", "outputs",
+    "work_hours", "annual_count",
 )
+
+# ── 작업시간 ────────────────────────────────────────────
+# 연간 공수 = work_hours(1회 소요시간) × annual_count(연간 횟수).
+# 곱한 값은 **저장하지 않는다** — 두 원본과 어긋날 수 있으므로 annual_hours() 로만 계산한다.
+# 주기를 고르면 횟수 기본값이 채워지지만, "호선별"·"수시"는 연간 횟수가 정해지지 않아 직접 입력한다.
+FREQ_ANNUAL: Final[dict[str, int]] = {
+    "일 1회": 250,      # 근무일 기준
+    "주 1회": 52,
+    "월 1회": 12,
+    "분기": 4,
+    "연 1회": 1,
+}
+
+
+def _num(v: object) -> float:
+    """숫자로 못 읽으면 0 — 빈칸·문자·None 에 죽지 않는다."""
+    if v is None or v == "":
+        return 0.0
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def annual_hours(node: dict) -> float:
+    """이 업무의 연간 공수(시간). 둘 중 하나라도 비면 0."""
+    return round(_num(node.get("work_hours")) * _num(node.get("annual_count")), 1)
 
 
 def josa(word: str, pair: str = "은/는") -> str:
@@ -68,10 +96,21 @@ def has_hidden_detail(node: dict) -> bool:
         return False
     return any(node.get(f) for f in DETAIL_FIELDS)
 
-# lv3 초기 시드 (최초 1회, 이후 사용자 편집이 정본)
-SEED_LV3: Final[tuple[str, ...]] = (
-    "선장운전", "전장운전", "기장운전", "기획운영", "공통업무",
-    "해운부", "코멘더", "해양-유틸/프로세스", "해양-안전", "해양-전계장",
+# lv3 초기 시드 (최초 1회, 이후 사용자 편집이 정본).
+# ★ id 를 결정론적 고정값으로 둔다 — 개인 배포용 standalone 과 메인앱이 **같은 id** 로 부문을
+#   깔아야, 개인이 만든 파일을 취합할 때 기존 부문에 자동으로 붙고 중복이 생기지 않는다.
+#   랜덤 uuid 로 두면 사람마다 "선장운전" id 가 달라져 부문이 인원수만큼 쌓인다.
+SEED_LV3: Final[tuple[tuple[str, str], ...]] = (
+    ("lv3_seonjang", "선장운전"),
+    ("lv3_jeonjang", "전장운전"),
+    ("lv3_gijang", "기장운전"),
+    ("lv3_gihoek", "기획운영"),
+    ("lv3_gongtong", "공통업무"),
+    ("lv3_haeun", "해운부"),
+    ("lv3_commander", "코멘더"),
+    ("lv3_hy_util", "해양-유틸/프로세스"),
+    ("lv3_hy_safety", "해양-안전"),
+    ("lv3_hy_elec", "해양-전계장"),
 )
 
 # ── 도메인 마스터 기본값 ────────────────────────────────
@@ -101,6 +140,8 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "owner": "",
     "frequency": "",
     "outputs": "",
+    "work_hours": "",       # 1회 소요시간 (시간, 0.5 = 30분)
+    "annual_count": "",     # 연간 횟수
 }
 
 SCHEMA_VERSION: Final[int] = 1
@@ -132,10 +173,14 @@ def new_node(parent_id: str, level: int, name: str, author: str) -> dict:
 
 
 def bootstrap(author: str = "system") -> dict:
-    """최초 실행 / 파일 손상 시의 기본 트리 (lv3 부문 시드)."""
+    """최초 실행 / 파일 손상 시의 기본 트리 (lv3 부문 시드).
+
+    시드 id 는 SEED_LV3 의 고정값을 쓴다 — 개인 배포판과 id 가 같아야 취합이 된다.
+    """
     nodes: list[dict] = []
-    for i, name in enumerate(SEED_LV3):
+    for i, (nid, name) in enumerate(SEED_LV3):
         n = new_node(ROOT_ID, 3, name, author)
+        n["id"] = nid
         n["order"] = i
         nodes.append(n)
     return {
@@ -481,6 +526,8 @@ def stats(data: dict) -> dict:
     by_dept: dict[str, int] = {}
     by_auto: dict[str, int] = {}
     ai_yes = 0
+    total_hours = 0.0
+    ai_hours = 0.0
     for n in nodes:
         by_level[n.get("level", 0)] = by_level.get(n.get("level", 0), 0) + 1
     for n in detail:
@@ -488,8 +535,11 @@ def stats(data: dict) -> dict:
         by_dept[d] = by_dept.get(d, 0) + 1
         a = n.get("automation_level") or "(미지정)"
         by_auto[a] = by_auto.get(a, 0) + 1
+        h = annual_hours(n)
+        total_hours += h
         if n.get("has_ai_agent"):
             ai_yes += 1
+            ai_hours += h
     return {
         "total": len(nodes),
         "detail_total": len(detail),          # lv6 세부업무 수 = AI 지표의 분모
@@ -498,6 +548,9 @@ def stats(data: dict) -> dict:
         "by_automation": dict(sorted(by_auto.items(), key=lambda kv: -kv[1])),
         "ai_yes": ai_yes,
         "ai_no": len(detail) - ai_yes,
+        # 연간 공수 — "어느 업무가 시간을 먹는가 / 자동화하면 몇 시간이 빠지는가"
+        "total_hours": round(total_hours, 1),
+        "ai_hours": round(ai_hours, 1),
     }
 
 

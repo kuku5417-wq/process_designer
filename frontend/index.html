@@ -113,6 +113,13 @@
 
   .revcap { font-size: 11px; font-weight: 700; color: #a8a29e; white-space: nowrap; }
 
+  /* 연간 공수 — 1회 소요시간 × 연간 횟수 (읽기 전용 파생값) */
+  .mh { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; padding: 9px 12px;
+    background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 9px; }
+  .mh b { font-size: 13.5px; font-weight: 800; color: #0f766e; }
+  .mh span { font-size: 10.5px; color: #5eead4; font-weight: 600; }
+  .solohint { font-size: 11.5px; color: #a8a29e; padding: 10px 2px 0; line-height: 1.6; }
+
   /* ── 검색 ── */
   .searchbox { position: relative; display: flex; align-items: center; gap: 6px; flex: none; }
   .searchbox input { width: 190px; font-size: 12px; padding: 6px 10px; border: 1px solid #e7e1d6;
@@ -280,12 +287,24 @@
 (function () {
   "use strict";
 
-  // ── Streamlit 프로토콜 ───────────────────────────────
+  // ── 모드 / Streamlit 프로토콜 ────────────────────────
+  // 축이 둘이다. 하나로 뭉치면 "백엔드는 없지만 데이터는 진짜"인 개인 배포판을 표현할 수 없다.
+  //   SOLO  = 빌드타임 상수. build_standalone.py 가 주입한다. 기본값 없음 = 기존 동작 그대로.
+  //   IN_ST = 런타임. "streamlit:render 를 받았는가" (전송 계층). 의미를 바꾸지 말 것.
+  // 조합: SOLO=false·IN_ST=true  → Streamlit 실서비스
+  //       SOLO=false·IN_ST=false → 디자인 단독 미리보기 (seed()/MOCK_* 목업)
+  //       SOLO=true              → 개인 배포판 (진짜 데이터, localStorage)
+  var SOLO = (typeof window !== "undefined" && window.__PD_SOLO__ === true);
   var IN_ST = false;
   function send(msg) { try { window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, msg), "*"); } catch (e) {} }
   function setHeight(h) { send({ type: "streamlit:setFrameHeight", height: h }); }
   function uid() { try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return "e" + Date.now() + "-" + Math.floor(Math.random() * 1e9); }
-  function emit(evt) { evt.evt_id = uid(); if (IN_ST) send({ type: "streamlit:setComponentValue", value: evt, dataType: "json" }); else localAction(evt); }
+  function emit(evt) {
+    evt.evt_id = uid();
+    if (IN_ST) return send({ type: "streamlit:setComponentValue", value: evt, dataType: "json" });
+    if (SOLO) return soloAction(evt);
+    return previewAction(evt);          // 디자인 미리보기 — 가짜 플래시만 (이름에 못을 박았다)
+  }
 
   // ── 데이터 모델 (schema.py 와 동일 구조: 평면 노드 + parent_id) ──
   var ROOT = "__root__";
@@ -300,6 +319,18 @@
   var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기" };
 
   function hasDetail(lv) { return Number(lv) >= 6; }
+
+  // ── 작업시간 (schema.annual_hours / schema.FREQ_ANNUAL 의 쌍둥이) ─────────
+  // 연간 공수는 저장하지 않는다 — 두 원본과 어긋날 수 있어 항상 여기서 계산한다.
+  function num(v) {
+    if (v === null || v === undefined || v === "") return 0;
+    var f = parseFloat(String(v).replace(/,/g, "").trim());
+    return isFinite(f) ? f : 0;
+  }
+  function annualHours(n) { return Math.round(num(n.work_hours) * num(n.annual_count) * 10) / 10; }
+  var FREQ_ANNUAL = { "일 1회": 250, "주 1회": 52, "월 1회": 12, "분기": 4, "연 1회": 1 };
+  //  ★ 기본값 자동 채움은 **JS(입력 보조)에서만** 한다. 파이썬 normalize/parse 가 채우면
+  //    연간횟수를 일부러 비운 엑셀이 조용히 52 를 얻는다.
   // schema.josa 와 동일 — 한글 받침에 따라 조사 선택 ("부문은" / "대분류는")
   function josa(w, pair) {
     var p = (pair || "은/는").split("/"), a = p[0], b = p[1];
@@ -325,10 +356,46 @@
       return x[0] + new Array(x.length - 1).join("*") + x[x.length - 1];
     }).join(", ");
   }
-  var _seq = 1;
-  function makeNode(pid, lv, name) { return { id: "n_" + Date.now().toString(36) + (_seq++), parent_id: pid, level: lv, order: 999, name: name || "", desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "", frequency: "", outputs: "" }; }
-  function stats() { var d = S.nodes.filter(function (n) { return hasDetail(n.level); }); var ai = d.filter(function (n) { return n.has_ai_agent; }).length; return { total: S.nodes.length, detail: d.length, ai: ai, rate: d.length ? Math.round(ai / d.length * 100) : 0 }; }
+  // ★ id 는 반드시 전역에서 유일해야 한다. 예전엔 "n_"+Date.now()+_seq 였는데 _seq 가
+  //   **페이지 로드마다 1로 리셋**돼, 20명이 각자 배포판을 열고 같은 밀리초에 첫 카드를
+  //   만들면 같은 id 가 나온다 → 취합 때 서로 다른 업무가 한 노드로 합쳐진다.
+  //   schema.new_id() 와 같은 모양("n_"+hex8)을 crypto 난수로 만든다.
+  function newId() {
+    try {
+      if (crypto && crypto.randomUUID) return "n_" + crypto.randomUUID().replace(/-/g, "").slice(0, 8);
+      if (crypto && crypto.getRandomValues) {
+        var a = new Uint8Array(4); crypto.getRandomValues(a);
+        return "n_" + Array.prototype.map.call(a, function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+      }
+    } catch (e) {}
+    return "n_" + Math.random().toString(16).slice(2, 10);
+  }
+  function makeNode(pid, lv, name) { return { id: newId(), parent_id: pid, level: lv, order: 999, name: name || "", desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "", frequency: "", outputs: "", work_hours: "", annual_count: "" }; }
+  function stats() {
+    var d = S.nodes.filter(function (n) { return hasDetail(n.level); });
+    var ai = d.filter(function (n) { return n.has_ai_agent; }).length;
+    var hours = 0, missing = 0;
+    d.forEach(function (n) { var h = annualHours(n); hours += h; if (!h) missing++; });
+    return { total: S.nodes.length, detail: d.length, ai: ai,
+             rate: d.length ? Math.round(ai / d.length * 100) : 0,
+             hours: Math.round(hours * 10) / 10, hoursMissing: missing };
+  }
   function domUsage(key, val) { var c = 0; S.nodes.forEach(function (n) { if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0) c++; } else if (n[key] === val) c++; }); return c; }
+
+  // ★ schema.SEED_LV3 (schema.py) 와 **id·이름이 완전히 같아야 한다**. 취합 시 부문이
+  //   id 로 매칭되는 근거다. 한쪽만 고치면 사람 수만큼 부문이 중복된다.
+  //   아래 seed() 는 디자인 미리보기용 목업이라 다르다 — 혼동하지 말 것.
+  var SEED_LV3 = [
+    ["lv3_seonjang", "선장운전"], ["lv3_jeonjang", "전장운전"], ["lv3_gijang", "기장운전"],
+    ["lv3_gihoek", "기획운영"], ["lv3_gongtong", "공통업무"], ["lv3_haeun", "해운부"],
+    ["lv3_commander", "코멘더"], ["lv3_hy_util", "해양-유틸/프로세스"],
+    ["lv3_hy_safety", "해양-안전"], ["lv3_hy_elec", "해양-전계장"],
+  ];
+  function soloSeed() {
+    return SEED_LV3.map(function (p, i) {
+      var n = makeNode(ROOT, 3, p[1]); n.id = p[0]; n.order = i; return n;
+    });
+  }
 
   function seed() {
     var n = [], i = 0;
@@ -369,7 +436,9 @@
   var S = {
     nodes: [], domains: {}, rev: 0, author: "", env: "",
     sel: {}, selectedId: null, dirty: [], viewMode: "columns", collapsed: {},
-    activeTab: 0, domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
+    // 탭은 **문자열 키**다. 숫자 인덱스로 두면 개인 모드에서 탭을 빼는 순간 인덱스가 밀려
+    // 엉뚱한 화면이 그려진다.
+    activeTab: "tree", domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
     // 파이썬이 계산해 주는 것들 (JS 에서 만들지 말 것 — schema.diff / excel_io 가 정본)
     diffPreview: null,      // 복원 미리보기 {added, changed, removed, removed_list}
@@ -378,11 +447,25 @@
     treeEpoch: null,        // 파이썬 트리 세대 — 바뀔 때만 S.nodes 를 갈아끼운다
     query: "", confirm: null,
     delMissing: false, addDomains: true,   // 엑셀 반영 옵션
+    dept: "", exported: false,             // 개인 모드: 소속 / 제출 파일을 한 번이라도 냈는지
   };
   var appEl, contentEl, flashTimer;
 
   // ── 조작 (로컬 상태 변경) ───────────────────────────
-  function markDirty(id) { if (S.dirty.indexOf(id) < 0) S.dirty.push(id); }
+  // 개인 모드에서 dirty 는 "저장 안 됨"이 아니라 **"아직 제출 파일로 내보내지 않음"** 이다.
+  // (편집은 아래 soloSaveSoon 이 localStorage 에 자동 저장한다)
+  var _saveTimer = null;
+  function markDirty(id) {
+    if (S.dirty.indexOf(id) < 0) S.dirty.push(id);
+    var n = byId(id);
+    if (n && S.author) { n.updated_by = S.author; n.updated_at = new Date().toISOString().slice(0, 19); }
+    soloSaveSoon();
+  }
+  function soloSaveSoon() {
+    if (!SOLO) return;
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(soloSave, 400);   // 타이핑마다 쓰지 않게 debounce
+  }
   function selectPath(id) { var node = byId(id); var sel = {}; if (node) { ancestors(id).concat([node]).forEach(function (a) { sel[a.level] = a.id; }); } S.sel = sel; S.selectedId = id; }
   function actSelect(id) { selectPath(id); rerender(); }
   function actAdd(pid, lv) {
@@ -394,6 +477,16 @@
     markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"]');
   }
   function actUpdate(id, key, val, refocus) { var n = byId(id); if (!n) return; if (key === "tech") n.tech = val; else n[key] = val; markDirty(id); rerender(refocus); }
+  /** 주기 선택 → 연간 횟수 기본값. **비어 있을 때만** 채운다 — 손으로 친 숫자를
+   *  드롭다운 조작이 날리면 안 된다. */
+  function actSetFrequency(id, v) {
+    var n = byId(id); if (!n) return;
+    n.frequency = v;
+    var def = FREQ_ANNUAL[v];
+    if (def && !String(n.annual_count || "").trim()) n.annual_count = String(def);
+    markDirty(id); rerender();
+  }
+
   function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); actUpdate(id, "tech", a); }
   /** 목록에 없는 기술을 이 업무에 적용하면서 도메인 마스터에도 등록 (v1 tree_view 와 동일) */
   function actAddTech(id, raw) {
@@ -615,18 +708,87 @@
   function domDelete(key, idx) { var v = S.domains[key][idx]; if (domUsage(key, v) > 0) { flash("사용 중이라 삭제할 수 없습니다"); return; } S.domains[key].splice(idx, 1); markDirty("dom"); rerender(); }
 
   function doSave() {
+    // 개인 모드에는 서버가 없다 — [저장] 은 "제출 파일 내보내기"다.
+    // 편집 자체는 markDirty 마다 localStorage 에 자동 저장되므로 눌러야 안 날아가는 게 아니다.
+    if (SOLO) return soloExport();
     if (!S.author) { flash("작성자를 먼저 입력하세요"); return; }
     if (!S.dirty.length) { flash("변경 사항이 없습니다"); return; }
     emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
-    if (!IN_ST) { S.dirty = []; flash("저장했습니다 · 스냅샷 보관됨"); rerender(); }
   }
-  function localAction(evt) {
-    // 파이썬이 없을 때(단독 미리보기) 대체 동작
-    if (evt.type === "download") flash((evt.fmt === "json" ? "JSON" : "엑셀") + " 다운로드를 시작합니다 (미리보기)");
-    else if (evt.type === "import") flash("미리보기에서는 실제 업로드가 되지 않습니다");
-    else if (evt.type === "restore") flash("선택한 시점으로 복원했습니다 (미리보기)");
-    else if (evt.type === "reload") flash("디스크 최신 내용을 불러왔습니다 (미리보기)");
-    else if (evt.type === "force") { S.conflict = null; S.dirty = []; flash("내 것으로 덮어썼습니다 (미리보기)"); rerender(); }
+  // ── 개인 모드(!IN_ST) — 파이썬·서버 없이 파일 하나로 도는 배포판 ──────────
+  // 편집은 localStorage 에 자동 저장되고, [내 파일 내보내기] 로 JSON 을 받아 관리자에게 준다.
+  var LS_PREFIX = "pd_solo_v1:";
+  function lsKey() {
+    // 같은 PC 를 여러 명이 써도 섞이지 않게 신원을 키에 넣는다
+    return LS_PREFIX + ((S.dept || "-") + "|" + (S.author || "-"));
+  }
+  function soloSave() {
+    if (IN_ST) return;
+    try {
+      localStorage.setItem(lsKey(), JSON.stringify({
+        nodes: S.nodes, domains: S.domains, dept: S.dept, author: S.author, ts: Date.now(),
+      }));
+      localStorage.setItem(LS_PREFIX + "last", lsKey());
+    } catch (e) { /* 용량 초과 등 — 저장 실패해도 편집은 계속돼야 한다 */ }
+  }
+  function soloLoad() {
+    try {
+      var k = localStorage.getItem(LS_PREFIX + "last");
+      var raw = k && localStorage.getItem(k);
+      if (!raw) return null;
+      var d = JSON.parse(raw);
+      return (d && d.nodes && d.nodes.length) ? d : null;
+    } catch (e) { return null; }
+  }
+  function soloExportName() {
+    var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); };
+    return "프로세스_" + (S.dept || "부서") + "_" + (S.author || "이름") + "_"
+      + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + ".json";
+  }
+  /** 내보내기 — 상단 신원(소속·이름)을 전 lv6 노드에 주입한다. 카드마다 다시 묻지 않는 이유. */
+  function soloExport() {
+    if (!S.dept || !S.author) { flash("상단에 소속과 이름을 먼저 입력하세요"); return; }
+    var mine = S.nodes.map(function (n) {
+      var c = Object.assign({}, n);
+      if (hasDetail(c.level)) { c.dept = S.dept; c.owner = S.author; }
+      return c;
+    });
+    var payload = { schema_version: 1, exported_by: S.author, exported_dept: S.dept,
+                    exported_at: new Date().toISOString(), nodes: mine, domains: S.domains };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = soloExportName();
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    S.exported = true; S.dirty = [];
+    flash("내보냈습니다 — 이 파일을 관리자에게 전달하세요");
+    rerender();
+  }
+  function soloImport(text) {
+    try {
+      var d = JSON.parse(text);
+      if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
+      S.nodes = d.nodes.map(function (n) { return Object.assign({}, n); });
+      if (d.domains) S.domains = JSON.parse(JSON.stringify(d.domains));
+      if (d.exported_dept) S.dept = d.exported_dept;
+      if (d.exported_by) S.author = d.exported_by;
+      S.selectedId = null; S.sel = {}; S.dirty = []; S.exported = true;
+      soloSave(); flash("불러왔습니다 — 이어서 작성하세요"); rerender();
+    } catch (e) { flash("파일을 읽을 수 없습니다: " + e.message); }
+  }
+
+  function soloAction(evt) {
+    if (evt.type === "download") soloExport();
+    else if (evt.type === "import_local") soloImport(evt.text || "");
+    else if (evt.type === "dismiss") { S.conflict = null; rerender(); }
+    else console.warn("[solo] 처리하지 않는 이벤트:", evt.type);   // 조용히 삼키지 않는다
+  }
+
+  /** 디자인 단독 미리보기 전용 — 실제로는 아무것도 저장하지 않는다. */
+  function previewAction(evt) {
+    if (evt.type === "download") flash("다운로드 (미리보기 — 실제 저장 안 됨)");
+    else if (evt.type === "import") flash("미리보기에서는 업로드가 되지 않습니다");
+    else if (evt.type === "force") { S.conflict = null; S.dirty = []; flash("덮어썼습니다 (미리보기)"); rerender(); }
     else if (evt.type === "dismiss") { S.conflict = null; rerender(); }
   }
 
@@ -635,25 +797,47 @@
 
   // ── 뷰 (HTML 문자열) ────────────────────────────────
   // 진입점은 fullView() 하나다 (rerender 가 그것만 부른다).
+  /** 탭 목록. 개인 모드는 서버가 없어 이력·복원이 성립하지 않으므로 아예 뺀다. */
+  function TABS() {
+    var t = [{ k: "tree", label: "계층 편집" },
+             { k: "domain", label: "도메인 관리" },
+             { k: "io", label: SOLO ? "내보내기 / 불러오기" : "엑셀 가져오기 / 내보내기" }];
+    if (!SOLO) t.push({ k: "hist", label: "이력 · 복원" });
+    return t;
+  }
+
   function topbar() {
     var st = stats();
-    var TABS = ["계층 편집", "도메인 관리", "엑셀 가져오기 / 내보내기", "이력 · 복원"];
-    var tabs = TABS.map(function (t, i) { return '<button class="tab' + (i === S.activeTab ? " on" : "") + '" data-act="tab" data-i="' + i + '">' + esc(t) + "</button>"; }).join("");
-    var toggle = S.activeTab === 0 ? '<div class="seg"><button class="segb' + (S.viewMode !== "outline" ? " on" : "") + '" data-act="viewcols">▦ 컬럼</button><button class="segb' + (S.viewMode === "outline" ? " on" : "") + '" data-act="viewout">☰ 전체보기</button></div>' : "";
+    var tabs = TABS().map(function (t) { return '<button class="tab' + (t.k === S.activeTab ? " on" : "") + '" data-act="tab" data-k="' + t.k + '">' + esc(t.label) + "</button>"; }).join("");
+    var toggle = S.activeTab === "tree" ? '<div class="seg"><button class="segb' + (S.viewMode !== "outline" ? " on" : "") + '" data-act="viewcols">▦ 컬럼</button><button class="segb' + (S.viewMode === "outline" ? " on" : "") + '" data-act="viewout">☰ 전체보기</button></div>' : "";
     var n = S.dirty.length;
-    var badge = n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>';
-    var canSave = !!S.author && n > 0;
+    var badge = SOLO
+      ? (n ? '<div class="badge dirty">● 미제출 ' + n + "건</div>" : '<div class="badge clean">제출됨</div>')
+      : (n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>');
+    var canSave = SOLO ? (!!S.author && !!S.dept) : (!!S.author && n > 0);
+    // 개인 모드: 소속·이름을 한 번만 받고, 카드마다 부서·담당자를 묻지 않는다.
+    var ident = SOLO
+      ? '<div class="authwrap"><label>소속</label><select class="authinput" data-fkey="mydept" style="width:118px">'
+        + '<option value="">— 선택 —</option>'
+        + (S.domains.dept || []).map(function (d) { return '<option value="' + esc(d) + '"' + (d === S.dept ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("")
+        + '</select></div>'
+        + '<div class="authwrap"><label>이름</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름" /></div>'
+      : '<div class="authwrap"><label>작성자</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름 입력" /></div>';
     return '<div class="top">'
-      + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
+      + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계' + (SOLO ? " · 개인 작성용" : "") + '</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
       + '<div class="tabs">' + tabs + "</div>" + toggle
       + '<div class="grow"></div>'
-      + '<div class="pill"><b>AI 적용률 ' + st.rate + '%</b><span>세부업무 ' + st.detail + "개 중 " + st.ai + "개</span></div>"
-      + '<div class="authwrap"><label>작성자</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름 입력" /></div>'
-      + (S.rev ? '<span class="revcap">rev ' + esc(S.rev) + "</span>" : "")
+      // 개인에겐 "AI 적용률"보다 "얼마나 채웠나 / 내 업무가 연간 몇 시간인가"가 쓸모 있다
+      + (SOLO
+          ? '<div class="pill"><b>연간 ' + st.hours + ' 시간</b><span>세부업무 ' + st.detail + "개 · 시간 미입력 " + st.hoursMissing + "개</span></div>"
+          : '<div class="pill"><b>AI 적용률 ' + st.rate + '%</b><span>세부업무 ' + st.detail + "개 중 " + st.ai + "개</span></div>")
+      + ident
+      + (!SOLO && S.rev ? '<span class="revcap">rev ' + esc(S.rev) + "</span>" : "")
       + badge
       // v1 사이드바의 [↻ 디스크 다시 읽기] — 배너를 기다리지 않고 언제든 최신본을 받는다
-      + '<button class="minibtn" data-act="reload" title="다른 사람이 저장한 최신 내용을 불러옵니다">↻ 다시 읽기</button>'
-      + '<button class="save ' + (canSave ? "on" : "off") + '" data-act="save">💾 저장</button>'
+      + (SOLO ? "" : '<button class="minibtn" data-act="reload" title="다른 사람이 저장한 최신 내용을 불러옵니다">↻ 다시 읽기</button>')
+      + '<button class="save ' + (canSave ? "on" : "off") + '" data-act="save">'
+      + (SOLO ? "⬇ 제출 파일 내보내기" : "💾 저장") + "</button>"
       + "</div>";
   }
   function banners() {
@@ -780,11 +964,19 @@
       var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
       fields += '<div class="aicard ' + (n.has_ai_agent ? "on" : "") + '"><label class="aiflex" style="gap:8px"><input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (n.has_ai_agent ? " checked" : "") + ' style="width:15px;height:15px" /><span class="ait" style="color:' + (n.has_ai_agent ? "#166534" : "#334155") + '">🤖 AI 에이전트 적용</span><span class="aih" style="margin:0">' + (n.has_ai_agent ? "이 업무에 AI 에이전트가 적용됩니다" : "적용 시 요약 통계에 집계됩니다") + "</span></label></div>"
         + '<div class="grid2">'
-        + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
-        + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
+        // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
+        + (SOLO ? "" :
+             '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
+           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>')
         + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
         + '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
+        + '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
+        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
+        + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
+        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
         + "</div>"
+        + '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
+        + '<span>1회 소요시간 × 연간 횟수</span></div>'
         + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
         + '<input class="fi" style="font-size:12px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>'
@@ -830,8 +1022,8 @@
 
     var p = S.importPreview;
     if (!p) {
-      return '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:13px;font-weight:700;color:#57534e;margin-top:6px">수정한 엑셀 파일을 여기에 올리세요 (.xlsx)</div><div style="font-size:11.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 파일이어야 읽을 수 있습니다</div></label>'
-        + '<input id="xlsxup" type="file" accept=".xlsx" style="display:none" data-fkey="xlsxfile" />'
+      return '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:13px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:11.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
+        + '<input id="xlsxup" type="file" accept=".xlsx,.json" style="display:none" data-fkey="xlsxfile" />'
         + '<div style="margin-top:18px;font-size:12px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#78716c;line-height:1.9">'
         + "<li>lv3~lv6 칸을 <b>왼쪽부터 연속으로</b> 채웁니다. (lv4 를 비우고 lv5 만 채우면 오류)</li>"
         + "<li>상위 업무는 자기 행이 반드시 있어야 합니다.</li>"
@@ -877,7 +1069,35 @@
       + '<div style="font-size:11.5px;color:#a8a29e;margin-top:10px">반영 후 상단 [저장] 을 눌러야 파일에 기록됩니다.</div></div>';
   }
 
+  /** 개인 모드 IO — 서버가 없으니 제출 파일 내보내기 / 이어서 작성하기만 있다. */
+  function pageSoloIO() {
+    var st = stats();
+    var ready = !!S.dept && !!S.author;
+    return '<div class="page scroll"><div class="pw"><div class="h1">내보내기 / 불러오기</div>'
+      + '<div class="sub">작성이 끝나면 파일로 내보내 관리자에게 전달하세요. 편집 내용은 이 브라우저에 자동 저장됩니다.</div>'
+      + '<div class="cardbox" style="padding:22px;margin-top:18px">'
+      + '<div style="font-size:13px;font-weight:800;color:#0f766e;margin-bottom:10px">⬇ 제출 파일 내보내기</div>'
+      + (ready
+          ? '<div style="font-size:12.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b> · 이름 <b>' + esc(S.author)
+            + '</b> 으로 내보냅니다. 세부업무 ' + st.detail + "개"
+            + (st.hoursMissing ? ' <span style="color:#92400e">(작업시간 미입력 ' + st.hoursMissing + "개)</span>" : "")
+            + "</div>"
+          : '<div class="warn">상단에 <b>소속</b>과 <b>이름</b>을 먼저 입력하세요. 취합할 때 누구 것인지 구분하는 기준입니다.</div>')
+      + '<div style="margin-top:14px"><button class="' + (ready ? "primary" : "secondary") + '" data-act="save">⬇ 제출 파일 내보내기 (.json)</button></div>'
+      + '<div class="solohint">· 카드마다 부서·담당자를 적지 않아도 됩니다 — 내보낼 때 위 소속·이름이 자동으로 들어갑니다.<br/>'
+      + '· 이 파일에는 담당자 실명이 들어 있습니다. 관리자에게만 전달하세요.</div></div>'
+      + '<div class="cardbox" style="padding:22px;margin-top:14px">'
+      + '<div style="font-size:13px;font-weight:800;color:#57534e;margin-bottom:10px">⬆ 이어서 작성하기</div>'
+      + '<div style="font-size:12.5px;color:#78716c;line-height:1.6">전에 내보낸 .json 을 불러오면 그 시점부터 이어서 쓸 수 있습니다. PC 를 바꿨거나 브라우저를 초기화했을 때 쓰세요.</div>'
+      + '<label class="drop" for="jsonup" style="margin-top:12px;padding:22px"><div style="font-size:22px">⬆</div>'
+      + '<div style="font-size:12.5px;font-weight:700;color:#57534e;margin-top:5px">내보낸 .json 파일 선택</div></label>'
+      + '<input id="jsonup" type="file" accept=".json" style="display:none" data-fkey="jsonup" />'
+      + '<div class="warn" style="margin-top:12px">⚠ 불러오면 지금 화면의 내용이 파일 내용으로 <b>바뀝니다</b>.</div></div>'
+      + "</div></div>";
+  }
+
   function pageExcel() {
+    if (SOLO) return pageSoloIO();
     var st = stats();
     var sub = ["up", "down"].map(function (k) { return '<button class="stab' + (S.excelTab === k ? " on" : "") + '" data-act="exceltab" data-k="' + k + '">' + (k === "up" ? "⬆ 가져오기 (일괄등록)" : "⬇ 내보내기") + "</button>"; }).join("");
     var pane = "";
@@ -962,10 +1182,10 @@
   // ── 렌더 / 포커스 복원 ──────────────────────────────
   function fullView() {
     var body;
-    if (S.activeTab === 0) body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
-    else if (S.activeTab === 1) body = pageDomain();
-    else if (S.activeTab === 2) body = pageExcel();
-    else body = pageHistory();
+    if (S.activeTab === "domain") body = pageDomain();
+    else if (S.activeTab === "io") body = pageExcel();
+    else if (S.activeTab === "hist" && !SOLO) body = pageHistory();
+    else body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
   }
   function rerender(focusSel) {
@@ -987,9 +1207,9 @@
     var el = e.target.closest("[data-act]"); if (!el) return;
     var a = el.dataset.act, d = el.dataset;
     if (a === "tab") {
-      S.activeTab = +d.i; rerender();
+      S.activeTab = d.k; rerender();
       // 이력 탭 진입 시 기본 선택의 diff 를 파이썬에 요청 (안 하면 "계산하는 중…" 에 머문다)
-      if (S.activeTab === 3 && S.history.length && !S.diffPreview) actHistPick(S.histPick || 0);
+      if (S.activeTab === "hist" && S.history.length && !S.diffPreview) actHistPick(S.histPick || 0);
     }
     else if (a === "viewcols") S.viewMode = "columns", rerender();
     else if (a === "viewout") S.viewMode = "outline", rerender();
@@ -1018,11 +1238,21 @@
   function onInput(e) {
     var el = e.target.closest("[data-fkey]"); if (!el) return;
     var f = el.dataset.fkey;
-    if (f === "author") { S.author = el.value; var b = contentEl.querySelector(".badge"); var sv = contentEl.querySelector(".save"); if (sv) { var can = !!S.author && S.dirty.length > 0; sv.className = "save " + (can ? "on" : "off"); } return; }
+    if (f === "author") {
+      S.author = el.value;
+      var sv = contentEl.querySelector(".save");
+      if (sv) { var can = SOLO ? (!!S.author && !!S.dept) : (!!S.author && S.dirty.length > 0); sv.className = "save " + (can ? "on" : "off"); }
+      soloSaveSoon();
+      return;
+    }
     if (f === "name") return actUpdate(el.dataset.id, "name", el.value, '[data-fkey="name"]');
     if (f === "desc") return actUpdate(el.dataset.id, "desc", el.value, '[data-fkey="desc"]');
     if (f === "owner") return actUpdate(el.dataset.id, "owner", el.value, '[data-fkey="owner"]');
     if (f === "outputs") return actUpdate(el.dataset.id, "outputs", el.value, '[data-fkey="outputs"]');
+    // 숫자로 강제하지 않고 **친 문자열 그대로** 저장한다. parseFloat 로 스냅시키면
+    // "0." 이 "0" 이 돼 소수점을 아예 못 친다. 정리는 파이썬 normalize 가 한다.
+    if (f === "work_hours") return actUpdate(el.dataset.id, "work_hours", el.value, '[data-fkey="work_hours"]');
+    if (f === "annual_count") return actUpdate(el.dataset.id, "annual_count", el.value, '[data-fkey="annual_count"]');
     if (f === "dom") return domRename(el.dataset.k, +el.dataset.i, el.value, '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
     if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
   }
@@ -1037,7 +1267,9 @@
     var el = e.target.closest("[data-fkey]"); if (!el) return;
     var f = el.dataset.fkey;
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
-    if (f === "dept" || f === "automation_level" || f === "frequency") return actUpdate(el.dataset.id, f, el.value);
+    if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
+    if (f === "frequency") return actSetFrequency(el.dataset.id, el.value);
+    if (f === "dept" || f === "automation_level") return actUpdate(el.dataset.id, f, el.value);
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);
     if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
     if (f === "mask") { S.mask = el.checked; rerender(); return; }
@@ -1048,8 +1280,14 @@
       var file = el.files && el.files[0]; if (!file) return;
       var rd = new FileReader();
       // 파싱/미리보기 요청일 뿐 — 반영은 사용자가 [이 내용으로 반영] 을 눌러야 일어난다
-      rd.onload = function () { var b64 = String(rd.result).split(",")[1] || ""; emit({ type: "import", filename: file.name, b64: b64 }); flash("엑셀을 읽는 중…"); };
+      rd.onload = function () { var b64 = String(rd.result).split(",")[1] || ""; emit({ type: "import", filename: file.name, b64: b64 }); flash("파일을 읽는 중…"); };
       rd.readAsDataURL(file);
+    }
+    if (f === "jsonup") {            // 개인 모드 — 이어서 작성하기
+      var jf = el.files && el.files[0]; if (!jf) return;
+      var jr = new FileReader();
+      jr.onload = function () { emit({ type: "import_local", text: String(jr.result) }); };
+      jr.readAsText(jf, "utf-8");
     }
   }
 
@@ -1106,10 +1344,22 @@
     catch (err) { if (appEl) contentEl.innerHTML = '<div style="padding:20px;color:#b91c1c">화면 오류: ' + esc(err && err.message) + "</div>"; }
   });
 
-  // 단독 미리보기: 300ms 안에 Streamlit render 가 안 오면 시드로 뜬다
-  setTimeout(function () { if (!IN_ST) { S.nodes = seed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS)); S.history = MOCK_HIST; S.audit = MOCK_AUDIT; boot(); } }, 300);
-
-  send({ type: "streamlit:componentReady", apiVersion: 1 });
+  if (SOLO) {
+    // 개인 배포판: 파이썬을 기다릴 이유가 없다. localStorage 초안이 있으면 이어서, 없으면 시드로.
+    var saved = soloLoad();
+    if (saved) {
+      S.nodes = saved.nodes; S.domains = saved.domains || JSON.parse(JSON.stringify(DEF_DOMAINS));
+      S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
+    } else {
+      S.nodes = soloSeed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS));
+    }
+    boot();
+    if (saved) flash("이 브라우저에 저장해둔 작성분을 불러왔습니다");
+  } else {
+    // 디자인 단독 미리보기: 300ms 안에 Streamlit render 가 안 오면 목업으로 뜬다
+    setTimeout(function () { if (!IN_ST) { S.nodes = seed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS)); S.history = MOCK_HIST; S.audit = MOCK_AUDIT; boot(); } }, 300);
+    send({ type: "streamlit:componentReady", apiVersion: 1 });
+  }
 })();
 </script>
 </body>
