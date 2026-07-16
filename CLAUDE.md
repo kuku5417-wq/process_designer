@@ -69,6 +69,48 @@ uv run streamlit run app.py --server.port 8540
 | `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 |
 | `restore` / `reload` | JS→PY | 스냅샷 복원 / 디스크 재로드 |
 
+### 발생 패턴 — 부하 분석용 수집 (개인 배포판 SOLO 전용, 앱 미반영)
+
+부하 = "언제·몇 번 하는가". lv6 은 `occur_pattern` 으로 세 갈래:
+
+| 패턴 | 받는 값 | 부하 |
+|---|---|---|
+| 상시루틴 | `freq_unit` + `freq_count` | 연간 = 횟수 × 단위연간수 × 소요시간 |
+| 호선루틴 | `freq_unit` + `freq_count` + `apply_phases[]`(복수) | **구간길이 미상 → 보류.** 나중에 trial_schedule 조인 |
+| 호선이벤트 | `base_event` + `offset_start` + `offset_days` + `per_ship_count` | 호선당 = 횟수 × 소요시간. 연간은 척수 곱해 나중에 |
+
+lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **lv6 이 상속**한다
+(`shipTypesOf` → `ancestors`). lv6 에 선종 필드를 두지 말 것 — 중복되면 어긋난다.
+
+**지켜야 할 규칙:**
+- **원자값만 저장, 곱셈은 저장 안 함.** 척수·구간길이·마일스톤 날짜·근무일은 전부 외부
+  parquet 이고 시나리오마다 변한다. 지금 곱해 "연간부하"로 저장하면 척수 시나리오를 못 바꾼다.
+  `loadOf()` 가 **`kind` 를 함께 반환**하는 이유 — 연간(상시)과 호선당(이벤트)을 한 숫자로
+  더하면 거짓이다. `stats()`·상단 지표가 버킷을 나눠 쓴다.
+- **호선루틴은 호선당 횟수를 저장하지 않는다** — `구간길이 × 주기` 파생. 그래서 주기는
+  반드시 **단위당 N회(비율)** 로 받는다. 총량으로 받으면 구간길이와 합성 불가.
+- **`per_ship_count`(호선당) 를 `annual_count`(연간) 와 섞지 말 것.** 단위가 달라 한 칸에
+  담으면 엑셀 컬럼 충돌·취합 오염·집계 단위혼합이 난다.
+- `freq_unit`+`freq_count` 를 나눈 이유 — 기존 `frequency` 열거형은 `주 1회` 뿐이라 **`주 3회`
+  를 표현 못 했다.** 이 분리로 상시·호선루틴이 같은 형태가 된다.
+- **`MILESTONE_EVENTS` 는 운영 12종 전부**(tbm `_PJTEVNT_MAP` 키). 사외망 더미 milestone 에
+  G/T 가 없는 건 나중 조인 시 결측 문제이지 수집 옵션에서 뺄 이유가 아니다.
+- **개인 파일에 이름을 넣지 않는다** — `soloExport` 가 lv6 에 `dept` 만 주입하고 `owner`·
+  `updated_by` 를 비운다. 취합은 소속별 집계다.
+
+### 앱 미반영 (다음 단계 — HTML 과 별도로 정리)
+
+위 필드는 **`SOLO` 게이트**라 메인앱 화면엔 안 뜬다. 앱에 붙일 때 할 일:
+- `schema.py`: 신규 필드 + **`NODE_DEFAULTS` 편입**(빠지면 `diff` 가 변경을 못 잡아 엑셀·취합
+  미리보기가 "변경 0건" 이라 거짓말한다) + 상수 + `annual_hours` 좁힘 + `per_ship_hours` +
+  `stats` 버킷 분리 + `GROUP_META_FIELDS`(lv4 필드를 `DETAIL_FIELDS` 에 넣으면 AI·부서
+  적용률 분모가 오염된다)
+- `excel_io.py`: 신규 컬럼. **엑셀 업로드는 data_manager 패턴 참조** — 엑셀을 열어 DataFrame
+  으로 만들어 저장 (`esg_converter.py`, `parquet_io.save_parquet_atomic`)
+- `app.py`: 취합 시 신규 필드 미리보기·반영, **소속별 집계**
+- 부하 엔진: costplan `cost_model.compute`/`_milestone_phase_starts`/`_dates` 이식.
+  척수는 pjtlist 읽기전용 + 수동 시나리오 (스키마에 넣지 말 것)
+
 ### 프론트엔드 규칙 (index.html)
 
 - **JS 로직은 파이썬과 쌍둥이다.** `hasDetail`/`maskName`/`josa`/`actMoveTo`/`wouldCycle`/
