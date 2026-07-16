@@ -39,4 +39,9 @@ constraint-dependencies = [
     "anyio==4.13.0",
     "charset-normalizer==3.4.7",
     "uvicorn==0.49.0",
+    "altair==6.1.0",
+    "certifi==2026.5.20",
+    "protobuf==7.35.0",
+    "python-multipart==0.0.30",
+    "starlette==1.2.1",
 ]

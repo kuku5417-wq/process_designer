@@ -12,16 +12,7 @@ set "VENV=%LOCALAPPDATA%\venvs\%APP%"
 set "PORT=8540"
 cd /d "%~dp0"
 
-REM ---- network: pypi needs the proxy on the corporate net, and must NOT use it outside ----
-REM      default = external net (current operating env). No answer in 10s -> external.
-choice /C OI /T 10 /D O /M "Network? O=external (no proxy, default)  I=corporate (proxy on)"
-if errorlevel 2 (
-  set "HTTP_PROXY=http://60.200.254.1:9090"
-  set "HTTPS_PROXY=http://60.200.254.1:9090"
-  echo   [net] corporate: proxy ON
-) else (
-  echo   [net] external: proxy OFF
-)
+REM ---- network (proxy on/off) is auto-detected below, after the python guard ----
 
 REM ---- use Windows cert store (fixes SSL UnknownIssuer behind corp SSL inspection) ----
 set "UV_NATIVE_TLS=true"
@@ -57,6 +48,34 @@ if errorlevel 1 (
   echo         32-bit ^(Python312-32^) is unusable: pandas/pyarrow have no 32-bit wheels.
   goto :end
 )
+
+REM --- network: pypi needs the proxy on the corporate net, and must NOT use it outside.
+REM     Detected with path_config.is_internal() (= NAS_BASE_PATH reachable?), the same rule
+REM     the app itself uses. It imports stdlib only, so it runs before deps are installed.
+REM     Do NOT ask the user: an unanswered prompt silently picked the wrong network before.
+REM     Override when detection is wrong (e.g. corporate net with NAS unmounted):
+REM       set PD_NET=corporate     (or  set PD_NET=external)  before running this file.
+set "NETMODE="
+if defined PD_NET set "NETMODE=%PD_NET%"
+if defined NETMODE goto :netdone
+set "SYSPY="
+for /f "delims=" %%P in ('uv python find cpython-3.12-windows-x86_64 2^>nul') do set "SYSPY=%%P"
+if not defined SYSPY goto :netext
+"%SYSPY%" -c "import path_config,sys; sys.exit(0 if path_config.is_internal() else 1)" >nul 2>nul
+if errorlevel 1 goto :netext
+set "NETMODE=corporate"
+goto :netdone
+:netext
+set "NETMODE=external"
+:netdone
+if /I "%NETMODE%"=="corporate" (
+  set "HTTP_PROXY=http://60.200.254.1:9090"
+  set "HTTPS_PROXY=http://60.200.254.1:9090"
+  echo   [net] corporate ^(NAS reachable^) : proxy ON
+) else (
+  echo   [net] external ^(NAS not reachable^) : proxy OFF   [override: set PD_NET=corporate]
+)
+
 REM --- --locked: honor uv.lock as-is. Without it uv silently re-resolves to the newest
 REM     releases when the lock drifts - that is exactly how this app ended up needing a
 REM     fresh pyarrow download and failing on the corporate net. Fail loudly instead.
