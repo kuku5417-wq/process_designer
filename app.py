@@ -47,10 +47,21 @@ def _component():
     return st.session_state["_comp"]
 
 
+def _set_data(data: dict) -> None:
+    """세션 트리 교체 + epoch 증가.
+
+    프론트는 epoch 이 바뀔 때만 자기 트리를 파이썬 것으로 갈아끼운다. 그렇지 않으면
+    download·histpick 처럼 단순 조회성 왕복에도 화면이 저장본으로 되돌아가
+    **저장 안 한 편집이 조용히 사라진다**.
+    """
+    st.session_state["data"] = data
+    st.session_state["tree_epoch"] = st.session_state.get("tree_epoch", 0) + 1
+
+
 def _load() -> dict:
     if "data" not in st.session_state:
         data, warns = store.load_tree()
-        st.session_state["data"] = data
+        _set_data(data)
         st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
         if warns:
             st.session_state["flash"] = " / ".join(warns)
@@ -68,6 +79,8 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "tree": {"nodes": data.get("nodes", []),
                  "domains": data.get("domains", {}),
                  "rev": data.get("rev", 0)},
+        # 프론트는 epoch 이 바뀔 때만 트리를 갈아끼운다 (미저장 편집 보호 — _set_data 주석 참조)
+        "tree_epoch": st.session_state.get("tree_epoch", 0),
         "author": st.session_state.get("author", ""),
         "env": pc.get_env_label(),
         "history": store.list_history(),
@@ -76,24 +89,92 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "conflict": conflict,
         "disk_newer": disk_newer,
         "dirty_all": dirty_all,
+        # 판정은 파이썬이 한다 — 프론트는 결과만 그린다
+        "diff_preview": st.session_state.get("diff_preview"),
+        "import_preview": st.session_state.get("import_preview"),
+        "import_errors": st.session_state.get("import_errors") or [],
     }
 
 
-def _apply_import(raw_bytes: bytes) -> None:
+def _node_brief(nodes: list[dict], base: dict, limit: int = 200) -> list[dict]:
+    """미리보기 목록용 — 레벨 + 경로 문자열 (lv0~lv2 고정단은 뺀다)."""
+    nmap = schema.node_map(base.get("nodes", []))
+    out = []
+    for n in nodes[:limit]:
+        path = " › ".join(schema.path_names(nmap, n["id"])[3:]) or n.get("name", "")
+        out.append({"level": n.get("level", ""), "path": path})
+    return out
+
+
+def _preview_import(raw_bytes: bytes) -> None:
+    """엑셀을 파싱만 하고 **보류**한다. 반영은 사용자가 확인한 뒤 import_apply 에서.
+
+    확인 없이 반영하면 되돌릴 방법이 [디스크 다시 읽기] 뿐이라 위험하다 (v1 은 미리보기가 있었다).
+    """
     data = st.session_state["data"]
     parsed, errs = excel_io.parse_excel(raw_bytes, data)
     if errs:
-        st.session_state["flash"] = "엑셀 오류: " + " / ".join(errs[:3])
+        st.session_state["import_errors"] = errs[:20]
+        st.session_state.pop("pending_import", None)
         return
+    st.session_state.pop("import_errors", None)
     d = schema.diff(data, parsed)
-    if d["removed"]:                       # 삭제 기본 OFF — 사라진 노드는 되살려 병합
+    st.session_state["pending_import"] = parsed
+    st.session_state["import_preview"] = {
+        "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
+        "added_list": _node_brief(d["added"], parsed),
+        "changed_list": _node_brief(d["changed"], parsed),
+        "removed_list": _node_brief(d["removed"], data),
+        "unknown": excel_io.unknown_domain_values(parsed),
+        "labels": schema.DOMAIN_LABELS,
+    }
+
+
+def _apply_import(delete_missing: bool, add_domains: bool) -> None:
+    parsed = st.session_state.get("pending_import")
+    if not parsed:
+        st.session_state["flash"] = "반영할 엑셀이 없습니다. 파일을 다시 올려주세요."
+        return
+    data = st.session_state["data"]
+    d = schema.diff(data, parsed)
+    if d["removed"] and not delete_missing:
+        # 삭제 옵트인이 꺼져 있으면 사라진 노드를 되살려 병합 (엑셀 행 삭제 = 실수일 수 있다)
         parsed = schema.normalize({**parsed, "nodes": list(parsed["nodes"]) + [dict(n) for n in d["removed"]]})
         d = schema.diff(data, parsed)
+    if add_domains:
+        doms = parsed.setdefault("domains", {})
+        for k, vals in excel_io.unknown_domain_values(parsed).items():
+            for v in vals:
+                if v not in doms.setdefault(k, []):
+                    doms[k].append(v)
     parsed["rev"] = data.get("rev", 0)
-    st.session_state["data"] = parsed
+    _set_data(parsed)
     st.session_state["dirty_all"] = True   # 반영분은 저장 전까지 '미저장'
+    for k in ("pending_import", "import_preview", "import_errors"):
+        st.session_state.pop(k, None)
     st.session_state["flash"] = (f"엑셀 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])} · "
                                  f"삭제 {len(d['removed'])}. 상단 [저장]을 눌러야 파일에 기록됩니다.")
+
+
+def _preview_restore(name: str, nodes: list[dict] | None) -> None:
+    """복원 미리보기 — 실제 계산은 검증된 schema.diff 가 한다 (JS 재구현 금지).
+
+    비교 대상은 **화면의 현재 트리**(저장 안 한 편집 포함)다 — v1 history_view 와 동일.
+    미리보기일 뿐이므로 session_state 의 데이터는 건드리지 않는다.
+    """
+    snap = store.load_snapshot(name)
+    if snap is None:
+        st.session_state["diff_preview"] = None
+        return
+    cur = st.session_state["data"]
+    if nodes is not None:
+        cur = {**cur, "nodes": nodes}      # 세션 원본 미변경 — 얕은 사본으로만 비교
+    d = schema.diff(cur, snap)
+    st.session_state["diff_preview"] = {
+        "file": name,
+        "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
+        "removed_list": _node_brief(d["removed"], cur),
+    }
 
 
 def _handle(evt: dict) -> None:
@@ -107,7 +188,7 @@ def _handle(evt: dict) -> None:
         data["rev"] = int(evt.get("rev", data.get("rev", 0)))
         res = store.save_tree(data, evt.get("author", ""), force=(t == "force"))
         if res.ok:
-            st.session_state["data"], _ = store.load_tree()   # 정규화된 정본 재로드
+            _set_data(store.load_tree()[0])                   # 정규화된 정본 재로드
             st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
             st.session_state.pop("conflict", None)
             st.session_state["flash"] = f"저장했습니다 (rev {res.rev})."
@@ -131,23 +212,35 @@ def _handle(evt: dict) -> None:
         except Exception as e:
             st.session_state["flash"] = f"내보내기 실패: {e}"
 
-    elif t == "import":
+    elif t == "import":                     # 파싱 + 미리보기만 (반영 아님)
         try:
-            _apply_import(base64.b64decode(evt.get("b64", "")))
+            _preview_import(base64.b64decode(evt.get("b64", "")))
         except Exception as e:
-            st.session_state["flash"] = f"엑셀을 읽을 수 없습니다: {e}"
+            st.session_state["import_errors"] = [f"엑셀을 읽을 수 없습니다: {e}"]
+            st.session_state.pop("pending_import", None)
+
+    elif t == "import_apply":               # 사용자가 확인한 뒤에만 반영
+        _apply_import(bool(evt.get("delete_missing")), bool(evt.get("add_domains", True)))
+
+    elif t == "import_cancel":
+        for k in ("pending_import", "import_preview", "import_errors"):
+            st.session_state.pop(k, None)
+
+    elif t == "histpick":                    # 복원 미리보기 (실제 diff 는 파이썬이 계산)
+        _preview_restore(evt.get("file") or "", evt.get("nodes"))
 
     elif t == "restore":
         res, restored = store.restore(evt.get("file") or "", evt.get("author", ""))
         if res.ok and restored is not None:
-            st.session_state["data"] = restored
+            _set_data(restored)
             st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
+            st.session_state.pop("diff_preview", None)
             st.session_state["flash"] = f"복원했습니다 (rev {res.rev})."
         else:
             st.session_state["flash"] = res.error or "복원에 실패했습니다."
 
     elif t == "reload":
-        st.session_state["data"], _ = store.load_tree()
+        _set_data(store.load_tree()[0])
         st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
         st.session_state.pop("conflict", None)
         st.session_state["flash"] = "최신 내용을 불러왔습니다."

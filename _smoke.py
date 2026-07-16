@@ -225,6 +225,46 @@ def main() -> int:
     ck(not rt["added"] and not rt["removed"] and not rt["changed"],
        f"엑셀 왕복 무손실 (추가{len(rt['added'])}/삭제{len(rt['removed'])}/변경{len(rt['changed'])})")
 
+    # 15. 엑셀 삭제 옵트인 — app.py _apply_import 의 병합 규칙과 동일 로직
+    base, _ = store.load_tree()
+    trimmed = {**base, "nodes": [n for n in base["nodes"] if n["level"] == 3][:3]}
+    trimmed = schema.normalize(trimmed)
+    xb2 = excel_io.build_xlsx(trimmed, mask=True)
+    parsed2, _ = excel_io.parse_excel(xb2, base)
+    d2 = schema.diff(base, parsed2)
+    ck(len(d2["removed"]) > 0, f"엑셀에서 행을 지우면 삭제 대상으로 잡힘 ({len(d2['removed'])}개)")
+    # delete_missing=False -> 되살려 병합
+    merged = schema.normalize({**parsed2, "nodes": list(parsed2["nodes"]) + [dict(n) for n in d2["removed"]]})
+    ck(len(schema.diff(base, merged)["removed"]) == 0, "삭제 옵트인 OFF: 사라진 노드를 되살려 병합")
+    ck(len(merged["nodes"]) == len(base["nodes"]), "삭제 옵트인 OFF: 노드 수 보존")
+    # delete_missing=True -> 실제 삭제
+    ck(len(parsed2["nodes"]) < len(base["nodes"]), "삭제 옵트인 ON: 실제로 줄어듦")
+
+    # 16. 도메인 미등록 값 감지 (app.py 가 이 함수로 안내한다)
+    dom_base, _ = store.load_tree()
+    lv3id = [n for n in dom_base["nodes"] if n["level"] == 3][0]["id"]
+    a4 = schema.add_node(dom_base, lv3id, 4, "t", "A")
+    a5 = schema.add_node(dom_base, a4, 5, "t", "B")
+    a6 = schema.add_node(dom_base, a5, 6, "t", "C")
+    schema.update_node(dom_base, a6, {"dept": "없는부서", "tech": ["없는기술", "LLM"],
+                                      "automation_level": "없는수준", "frequency": "없는주기"}, "t")
+    dom_base = schema.normalize(dom_base)
+    unk = excel_io.unknown_domain_values(dom_base)
+    ck(unk.get("dept") == ["없는부서"], f"미등록 부서 감지: {unk.get('dept')}")
+    ck(unk.get("tech") == ["없는기술"], f"미등록 기술만 감지(LLM 제외): {unk.get('tech')}")
+    ck("automation_level" in unk and "frequency" in unk, "미등록 자동화수준·주기 감지")
+    dom_base["domains"]["dept"].append("없는부서")
+    ck("dept" not in excel_io.unknown_domain_values(dom_base), "도메인에 추가하면 더는 미등록이 아님")
+
+    # 17. 복원 diff 는 schema.diff 가 정본 (프론트가 하드코딩하면 안 됨)
+    cur3, _ = store.load_tree()
+    snaps = store.list_history()
+    if snaps:
+        sp = store.load_snapshot(snaps[0]["file"])
+        dd3 = schema.diff(cur3, sp)
+        ck(isinstance(dd3["added"], list) and isinstance(dd3["removed"], list),
+           f"복원 diff 계산 가능 (되살아남 {len(dd3['added'])}/사라짐 {len(dd3['removed'])})")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")
