@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1520";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -388,7 +388,19 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
              rate: d.length ? Math.round(ai / d.length * 100) : 0,
              hours: Math.round(hours * 10) / 10, hoursMissing: missing };
   }
-  function domUsage(key, val) { var c = 0; S.nodes.forEach(function (n) { if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0) c++; } else if (n[key] === val) c++; }); return c; }
+  /** 이 도메인 값을 쓰는 업무 수.
+   *  ★ 빈 값은 0 이다. `n[key] === ""` 로 세면 **그 필드를 안 채운 모든 노드**가 걸려
+   *    (개인 모드는 dept 를 카드에서 안 받으니 전부다) "13개 업무" 같은 거짓 숫자가 뜨고,
+   *    삭제 버튼까지 잠긴다. "빈 값을 쓰는 업무" 라는 개념 자체가 없다. */
+  function domUsage(key, val) {
+    if (!val) return 0;
+    var c = 0;
+    S.nodes.forEach(function (n) {
+      if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0) c++; }
+      else if (n[key] === val) c++;
+    });
+    return c;
+  }
 
   // ★ schema.SEED_LV3 (schema.py) 와 **id·이름이 완전히 같아야 한다**. 취합 시 부문이
   //   id 로 매칭되는 근거다. 한쪽만 고치면 사람 수만큼 부문이 중복된다.
@@ -705,18 +717,30 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
 
   function actToggle(id) { S.collapsed[id] = !S.collapsed[id]; rerender(); }
   function actCollapseAll() { var anyOpen = S.nodes.some(function (n) { return childrenOf(n.id).length && !S.collapsed[n.id]; }); if (anyOpen) { var c = {}; S.nodes.forEach(function (n) { if (childrenOf(n.id).length) c[n.id] = true; }); S.collapsed = c; } else S.collapsed = {}; rerender(); }
-  function domRename(key, idx, val, refocus, noRender) {
+  /** 도메인 값 이름 변경. **칸을 벗어나거나 Enter 를 눌렀을 때(change) 한 번만** 불린다.
+   *  글자마다(input) 부르면 "시"→"시운"→"시운전" 이 차례로 커밋되며 노드를 그때그때
+   *  덮어써서, 오타를 고치려 지우고 다시 치는 순간 데이터가 망가진다. */
+  function domRename(key, idx, val, refocus) {
     var old = S.domains[key][idx];
-    // 다른 행과 겹치는 이름은 거부 — 같은 값이 두 줄이 되면 어느 쪽을 쓰는지 알 수 없다.
-    // 단 조합 중에는 검사하지 않는다 — "시운전1부" 를 치는 도중 "시"·"시운" 이 걸려 막힌다.
-    if (!noRender) {
-      var dup = (S.domains[key] || []).some(function (v, i) { return i !== idx && v === val && val.trim(); });
-      if (dup) { flash("'" + val + "' 은(는) 이미 목록에 있습니다"); rerender(refocus); return; }
-    }
+    val = String(val == null ? "" : val).trim();
+    if (val === old) return;                      // 안 바뀌었으면 아무것도 안 한다
+
+    // 빈 값은 거부하고 되돌린다 — 빈 도메인은 고를 수도, 셀 수도 없다
+    if (!val) { flash("값은 비울 수 없습니다"); rerender(refocus); return; }
+    // 다른 행과 겹치는 이름은 거부 — 같은 값이 두 줄이면 어느 쪽을 쓰는지 알 수 없다
+    var dup = (S.domains[key] || []).some(function (v, i) { return i !== idx && v === val; });
+    if (dup) { flash("'" + val + "' 은(는) 이미 목록에 있습니다"); rerender(refocus); return; }
+
     S.domains[key][idx] = val;
-    S.nodes.forEach(function (n) { if (key === "tech") n.tech = (n.tech || []).map(function (t) { return t === old ? val : t; }); else if (n[key] === old) n[key] = val; });
+    // ★ old 가 비어 있으면 노드를 건드리지 않는다. `n[key] === ""` 는 그 필드를 안 채운
+    //   모든 노드와 일치해서, 전 노드에 새 값이 박힌다(실제로 13개 노드가 오염됐다).
+    if (old) {
+      S.nodes.forEach(function (n) {
+        if (key === "tech") n.tech = (n.tech || []).map(function (t) { return t === old ? val : t; });
+        else if (n[key] === old) n[key] = val;
+      });
+    }
     markDirty("dom");
-    if (noRender) return;      // IME 조합 중 — DOM 교체 금지
     rerender(refocus);
   }
   function domAdd(key) {
@@ -1024,7 +1048,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
       + '<div class="subtabs">' + tabs + "</div>"
       + '<div class="cardbox"><div class="dhead"><span>값</span><span>사용 중</span><span></span></div>' + rows
       + '<div style="padding:13px 16px"><button class="dadd" data-act="domadd" data-k="' + dk + '">＋ 값 추가</button></div></div>'
-      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:12px">변경은 상단 <b>저장</b> 을 눌러야 파일에 반영됩니다.</div></div></div>';
+      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:12px">값을 고친 뒤 <b>칸을 벗어나면</b> 반영됩니다. '
+      + (SOLO ? '제출하려면 상단 <b>⬇ 제출 파일 내보내기</b> 를 누르세요.'
+              : '파일에 기록하려면 상단 <b>저장</b> 을 누르세요.') + "</div></div></div>";
   }
 
   // 엑셀 가져오기 — 파일 선택 → 파이썬이 파싱/미리보기 → 확인 → 반영 (2단계).
@@ -1296,8 +1322,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
     // "0." 이 "0" 이 돼 소수점을 아예 못 친다. 정리는 파이썬 normalize 가 한다.
     var FIELDS = { name: 1, desc: 1, owner: 1, outputs: 1, work_hours: 1, annual_count: 1 };
     if (FIELDS[f]) return actUpdate(id, f, el.value, '[data-fkey="' + f + '"]', !doRender);
-    if (f === "dom") return domRename(el.dataset.k, +el.dataset.i, el.value,
-                                      '[data-fkey="dom"][data-i="' + el.dataset.i + '"]', !doRender);
+    // ★ dom(도메인 값)은 여기서 처리하지 않는다 — onChange(칸을 벗어날 때)에서 한 번만
+    //   커밋한다. 글자마다 커밋하면 미완성 값이 노드에 박힌다.
     if (f === "query") { S.query = el.value; if (doRender) rerender('[data-fkey="query"]'); return; }
   }
 
@@ -1315,8 +1341,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
     e.preventDefault();
     actAddTech(el.dataset.id, el.value);
   }
+  // change = 값이 확정된 시점(칸을 벗어나거나 Enter). select/checkbox 와 도메인 값 입력이 여기 온다.
   function onChange(e) {
     var el = e.target.closest("[data-fkey]"); if (!el) return;
+    if (el.dataset.fkey === "dom") {
+      return domRename(el.dataset.k, +el.dataset.i, el.value,
+                       '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
+    }
     var f = el.dataset.fkey;
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
