@@ -3,218 +3,784 @@
 <head>
 <meta charset="utf-8" />
 <!--
-  process_board — 컬럼 드릴다운 DnD 보드 (Streamlit 정적 커스텀 컴포넌트)
+  process_board_v2 — 프로세스 설계 프론트엔드 (Streamlit 정적 커스텀 컴포넌트, npm 빌드 없음)
 
-  npm 빌드 없이 Streamlit 의 postMessage 프로토콜을 직접 구현한다.
-  ★ 모든 메시지에 isStreamlitMessage:true 가 있어야 한다 — 없으면 부모가 조용히 무시하고
-    60초 뒤 "component failed to render" 로 죽는다. 그래서 send() 한 곳에서만 postMessage 한다.
-  ★ 부모는 componentReady 를 받은 뒤에야 render 를 보낸다. 순서를 지킬 것.
-  ★ iframe 은 scrolling:"no" 라 내부 스크롤이 불가하다 — 컬럼별 overflow-y:auto 로 해결한다.
-  ★ render() 안에서는 절대 setComponentValue 를 호출하지 않는다 (rerun 무한루프).
+  ★ 기존 index.html 과의 핵심 차이:
+    - 예전 보드는 "보이는 4컬럼"만 담고 이벤트 1건만 되돌렸다.
+    - v2 는 전체 트리를 브라우저가 들고 편집하며, [저장] 시 tree 전체를 되돌린다.
+      → 파이썬(app.py)이 store.save_tree 로 원자적 저장 + 스냅샷 + 충돌검사.
+  ★ 모든 postMessage 에 isStreamlitMessage:true 필수. send() 한 곳에서만 postMessage.
+  ★ 순서: componentReady → 부모 streamlit:render → setFrameHeight → (조작) setComponentValue.
+  ★ render() 안에서는 setComponentValue 를 부르지 않는다(무한 리런). 사용자 조작에서만.
+  ★ 파이썬이 넘겨주는 args: { tree:{nodes,domains,rev}, author, env, history:[], audit:[],
+      flash:"", conflict:null|{...} }. 컴포넌트가 되돌리는 값: { type, evt_id, ... }.
+
+  ★ 드래그(SortableJS, 로컬 번들 · MIT): 트리를 브라우저가 통째로 들고 있으므로 드래그는
+    S.nodes 만 고치고 서버 왕복이 없다. group 을 레벨별(L3~L6)로 분리해 lv4 카드가 lv6
+    컬럼에 떨어지는 사고를 구조적으로 막는다 — 같은 레벨끼리만 오가므로 레벨 변경·사이클이
+    원천적으로 불가능하다. forceFallback: iframe 안에서 pointer 이벤트가 더 일관되고
+    드래그 중 자동 스크롤을 얻는다(네이티브 dragenter 가 없어 강조는 :hover CSS 로 처리).
 -->
 <script src="./sortable.min.js"></script>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin:0; padding:0; overflow:hidden;
-    font-family: "Malgun Gothic", "맑은 고딕", -apple-system, "Segoe UI", sans-serif;
-    background: transparent; color:#0f172a; }
+  html, body { margin: 0; padding: 0; background: transparent;
+    font-family: "Pretendard", "Malgun Gothic", "맑은 고딕", -apple-system, "Segoe UI", sans-serif;
+    color: #1c1917; -webkit-font-smoothing: antialiased; }
+  button, input, select, textarea { font-family: inherit; }
+  .scroll::-webkit-scrollbar { width: 9px; height: 9px; }
+  .scroll::-webkit-scrollbar-thumb { background: #d8cfc0; border-radius: 5px; }
+  .app { display: flex; flex-direction: column; background: #eceae5; border-radius: 14px;
+    overflow: hidden; border: 1px solid #ddd6ca; }
 
-  .board { display:flex; gap:10px; align-items:stretch; overflow-x:auto; padding:2px; }
-  .col { flex:1 1 0; min-width:190px; display:flex; flex-direction:column;
-         background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; }
-  .col.off { opacity:.55; }
-  .colhead { display:flex; align-items:center; justify-content:space-between; gap:6px;
-             padding:8px 9px; border-bottom:1px solid #e2e8f0; }
-  .colhead .t { font-size:12px; font-weight:700; color:#475569; white-space:nowrap;
-                overflow:hidden; text-overflow:ellipsis; }
-  .colhead .n { font-size:11px; color:#94a3b8; font-weight:600; }
-  .add { border:1px solid #cbd5e1; background:#fff; color:#334155; border-radius:5px;
-         cursor:pointer; font-size:12px; font-weight:700; padding:1px 7px; line-height:1.5; }
-  .add:hover { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+  /* 상단바 */
+  .top { display: flex; align-items: center; gap: 16px; padding: 11px 20px; background: #fff;
+    border-bottom: 1px solid #e7e1d6; flex: none; }
+  .top > * { flex: none; }
+  .top .grow { flex: 1 1 auto; }
+  .treewrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: #0f766e; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  .btitle { font-size: 14.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1.15; }
+  .bsub { font-size: 10.5px; color: #a8a29e; font-weight: 600; }
+  .tabs { display: flex; gap: 2px; background: #f0ede6; padding: 3px; border-radius: 9px; }
+  .tab { padding: 6px 13px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer;
+    white-space: nowrap; color: #78716c; border: none; background: transparent; }
+  .tab.on { background: #fff; color: #0f766e; box-shadow: 0 1px 3px rgba(28,25,23,.13); }
+  .seg { display: flex; gap: 3px; background: #f0ede6; padding: 3px; border-radius: 9px; }
+  .segb { padding: 6px 13px; border-radius: 7px; font-size: 11.5px; font-weight: 700; cursor: pointer;
+    color: #78716c; border: none; background: transparent; }
+  .segb.on { background: #fff; color: #0f766e; box-shadow: 0 1px 3px rgba(28,25,23,.12); }
+  .grow { flex: 1; }
+  .pill { display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #f0fdfa;
+    border: 1px solid #99f6e4; border-radius: 9px; }
+  .pill b { font-size: 11px; color: #115e59; }
+  .pill span { font-size: 10.5px; color: #78716c; }
+  .authwrap { display: flex; align-items: center; gap: 7px; }
+  .authwrap label { font-size: 11px; color: #a8a29e; font-weight: 600; }
+  .authinput { width: 104px; font-size: 12px; padding: 6px 9px; border: 1px solid #e7e1d6;
+    border-radius: 8px; outline: none; }
+  .authinput:focus { border-color: #0f766e; }
+  .badge { font-size: 11.5px; font-weight: 700; padding: 6px 11px; border-radius: 9px; }
+  .badge.clean { color: #78716c; background: #f0ede6; }
+  .badge.dirty { color: #92400e; background: #fef3c7; border: 1px solid #fde68a; font-weight: 800; }
+  .save { font-size: 12.5px; font-weight: 800; padding: 7px 16px; border-radius: 9px; border: none;
+    color: #fff; }
+  .save.on { background: #0f766e; cursor: pointer; }
+  .save.off { background: #cabfb0; cursor: not-allowed; }
+  .save.on:hover { filter: brightness(1.08); }
 
-  .list { flex:1; overflow-y:auto; overflow-x:hidden; padding:7px; min-height:60px; }
-  .hint { color:#94a3b8; font-size:11px; padding:8px 3px; }
+  .crumb { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 10px 20px;
+    background: #faf8f3; border-bottom: 1px solid #f4f1ea; flex: none; }
+  .chip { border-radius: 999px; padding: 3px 11px; font-size: 11.5px; font-weight: 700; }
+  .chip.fix { background: #e7e1d6; color: #57534e; }
+  .chip.cur { background: #0f766e; color: #fff; }
+  .sep { color: #cabfb0; font-size: 12px; }
+  .crumbtail { font-size: 11px; color: #a8a29e; }
 
-  .card { background:#fff; border:1px solid #e2e8f0; border-left:3px solid #cbd5e1;
-          border-radius:6px; margin-bottom:5px; }
-  .card.sel { border-left-color:#1f6feb; background:#eff6ff; }
-  .card.hit { box-shadow:0 0 0 2px #fbbf24; }
-  .cbody { padding:6px 8px; cursor:grab; }
-  .cbody:active { cursor:grabbing; }
-  .nm { font-size:12.5px; font-weight:600; line-height:1.35; word-break:break-all; }
-  .meta { margin-top:3px; display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
-  .chip { font-size:9.5px; background:#f1f5f9; color:#475569; border-radius:3px; padding:0 4px;
-          line-height:15px; }
-  .chip.ai { background:#dcfce7; color:#166534; font-weight:700; }
-  .chip.dept { background:#e0e7ff; color:#3730a3; }
-  .chip.kids { background:#fff7ed; color:#9a3412; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  .board { flex: 1; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
+  .col { flex: 1; min-width: 210px; display: flex; flex-direction: column; background: #f8f6f1;
+    border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
+  .col.off { opacity: .6; }
+  .colhead { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    padding: 10px 12px; border-bottom: 1px solid #ece6da; }
+  .colhead .t { font-size: 11.5px; font-weight: 800; color: #57534e; }
+  .colhead .n { font-size: 11px; color: #a8a29e; font-weight: 700; }
+  .list { flex: 1; overflow-y: auto; padding: 9px; display: flex; flex-direction: column; gap: 7px; }
+  .emptyhint { color: #b8b0a4; font-size: 11.5px; padding: 14px 6px; text-align: center; line-height: 1.5; }
+  .card { background: #fff; border: 1px solid #e7e1d6; border-left: 3px solid #cabfb0;
+    border-radius: 10px; padding: 11px 13px; cursor: pointer; transition: border-color .12s; }
+  .card:hover { border-color: #5eead4; }
+  .card.sel { background: #f0fdfa; border-color: #0f766e; border-left-color: #0f766e;
+    box-shadow: 0 2px 8px rgba(15,118,110,.12); }
+  .card .top1 { display: flex; align-items: flex-start; gap: 6px; }
+  .card .nm { flex: 1; font-size: 13px; font-weight: 700; line-height: 1.35; word-break: break-all; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; margin-top: 4px; flex: none;
+    box-shadow: 0 0 0 3px #fef3c7; }
+  .cdesc { margin-top: 3px; font-size: 10.5px; color: #a8a29e; line-height: 1.4; overflow: hidden;
+    white-space: nowrap; text-overflow: ellipsis; }
+  .meta { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .mc { font-size: 9.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; line-height: 16px; }
+  .mc.ai { background: #dcfce7; color: #166534; font-weight: 800; }
+  .mc.dept { background: #e0e7ff; color: #3730a3; }
+  .mc.kids { background: #fff7ed; color: #9a3412; font-weight: 700; }
+  .mc.n { background: #f0ede6; color: #57534e; }
+  .addbtn { border: 1.5px dashed #cabfb0; background: #fff; color: #78716c; border-radius: 8px;
+    padding: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .addbtn:hover { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
 
-  /* 자식 드롭존 — 드래그 중, 호환되는 레벨에서만 점등 (오조작 방지) */
-  .drop { display:none; margin:0 7px 6px; border:2px dashed #cbd5e1; border-radius:5px;
-          min-height:26px; background:#f8fafc; }
-  /* forceFallback 이라 네이티브 dragenter 가 없다 — 드래그 중 hover 로 강조한다
-     (고스트는 body 에 붙고 pointer-events 가 없어 :hover 가 드롭존에 걸린다) */
-  body.dragging .drop:hover, .drop.sortable-drag-over { border-color:#1f6feb; background:#dbeafe; }
-  .drop::after { content:"여기로 옮기기"; display:block; text-align:center; font-size:9.5px;
-                 color:#94a3b8; line-height:22px; }
-  body.dragging .cbody { cursor:grabbing; }
-  body.dragging-L4 .col[data-level="3"] .drop,
-  body.dragging-L5 .col[data-level="4"] .drop,
-  body.dragging-L6 .col[data-level="5"] .drop { display:block; }
+  /* ── 드래그 (SortableJS) ── */
+  .card { cursor: grab; }
+  body.dragging .card { cursor: grabbing; }
+  .sgh { opacity: .35; }                                  /* 원래 자리 고스트 */
+  .sch { box-shadow: 0 6px 18px rgba(15,23,42,.22); }     /* 집어든 카드 */
+  /* 자식 드롭존 — 드래그 중, 받을 수 있는 레벨의 카드에서만 나타난다 */
+  .cdrop { display: none; margin-top: 8px; border: 2px dashed #cabfb0; border-radius: 8px;
+    min-height: 26px; background: #faf8f3; }
+  .cdrop::after { content: "여기로 옮기기"; display: block; text-align: center;
+    font-size: 9.5px; color: #b8b0a4; line-height: 22px; }
+  body.dragL4 .cdrop.acc4, body.dragL5 .cdrop.acc5, body.dragL6 .cdrop.acc6 { display: block; }
+  /* forceFallback 이라 네이티브 dragenter 가 없다 — 고스트는 pointer-events 가 없어 :hover 가 걸린다 */
+  body.dragging .cdrop:hover { border-color: #0f766e; background: #ccfbf1; }
 
-  .ghost { opacity:.4; }
-  .chosen { box-shadow:0 2px 8px rgba(15,23,42,.18); }
-  .err { color:#b91c1c; font-size:12px; padding:8px; }
+  /* 아웃라인 */
+  .outwrap { flex: 1; display: flex; flex-direction: column; padding: 16px; min-width: 0; }
+  .outcard { flex: 1; background: #fff; border: 1px solid #ece6da; border-radius: 12px; display: flex;
+    flex-direction: column; overflow: hidden; min-height: 0; }
+  .outhead { display: flex; align-items: center; gap: 10px; padding: 11px 16px;
+    border-bottom: 1px solid #f4f1ea; flex: none; }
+  .outhead .h1 { font-size: 12.5px; font-weight: 800; color: #44403c; }
+  .outhead .h2 { font-size: 11px; color: #a8a29e; }
+  .minibtn { font-size: 11px; font-weight: 700; color: #78716c; background: #f0ede6; border: none;
+    border-radius: 7px; padding: 6px 11px; cursor: pointer; }
+  .minibtn.p { color: #fff; background: #0f766e; font-weight: 800; }
+  .row { display: flex; align-items: center; border-radius: 8px; margin-bottom: 1px; }
+  .row:hover { background: #faf8f3; }
+  .row.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; }
+  .tog { width: 22px; text-align: center; font-size: 10px; color: #a8a29e; padding: 10px 0; flex: none; }
+  .rowmain { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; min-width: 0; }
+  .lvb { font-size: 9px; font-weight: 800; padding: 2px 5px; border-radius: 4px; flex: none; }
+  .lvb.d { background: #99f6e4; color: #115e59; }
+  .lvb.g { background: #f0ede6; color: #78716c; }
+  .rowname { font-size: 12.5px; font-weight: 600; color: #1c1917; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; }
+  .rowdesc { font-size: 10.5px; color: #a8a29e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 240px; }
+  .rowadd { font-size: 15px; font-weight: 800; color: #b8b0a4; background: transparent; border: none;
+    cursor: pointer; padding: 4px 12px; }
+  .rowadd:hover { color: #0f766e; }
+
+  /* 사이드 패널 */
+  .panel { width: 392px; flex: none; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
+    flex-direction: column; min-height: 0; }
+  .phead { padding: 15px 18px; border-bottom: 1px solid #f4f1ea; }
+  .phead.d { background: #f0fdfa; }
+  .prow { display: flex; align-items: center; gap: 8px; }
+  .ptag { font-size: 10px; font-weight: 800; color: #78716c; background: #f0ede6; padding: 2px 6px;
+    border-radius: 5px; }
+  .plv { font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 6px; }
+  .plv.d { background: #99f6e4; color: #115e59; }
+  .plv.g { background: #f0ede6; color: #57534e; }
+  .punsaved { font-size: 10.5px; font-weight: 700; color: #92400e; background: #fef3c7; padding: 2px 7px;
+    border-radius: 5px; }
+  .pname { margin-top: 8px; font-size: 13.5px; font-weight: 800; line-height: 1.3; word-break: break-all; }
+  .ppath { margin-top: 3px; font-size: 10.5px; color: #a8a29e; }
+  .pbody { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 11px; }
+  .fl { font-size: 11.5px; font-weight: 700; color: #57534e; margin-bottom: 5px; }
+  .fi { width: 100%; font-size: 13px; padding: 9px 11px; border: 1px solid #d8cfc0; border-radius: 9px; outline: none; }
+  .fi:focus, .fa:focus, .fs:focus { border-color: #0f766e; }
+  .fa { width: 100%; height: 50px; font-size: 12.5px; padding: 8px 11px; border: 1px solid #d8cfc0;
+    border-radius: 9px; outline: none; resize: none; line-height: 1.5; }
+  .fs { width: 100%; font-size: 12.5px; padding: 8px 10px; border: 1px solid #d8cfc0; border-radius: 8px;
+    outline: none; background: #fff; cursor: pointer; }
+  .note { font-size: 11.5px; color: #78716c; background: #f8f6f1; border: 1px solid #f0ede6;
+    border-radius: 10px; padding: 12px 13px; line-height: 1.6; }
+  .warn { font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
+    border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .aicard { border-radius: 10px; padding: 8px 12px; border: 1px solid #e7e1d6; background: #f8f6f1; }
+  .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
+  .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+  .aiflex input { width: 17px; height: 17px; accent-color: #16a34a; cursor: pointer; }
+  .ait { font-size: 12.5px; font-weight: 800; }
+  .aih { font-size: 10.5px; color: #a8a29e; margin-top: 1px; }
+  .techrow { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tchip { font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #d8cfc0; background: #fff; color: #78716c; }
+  .tchip.on { border-color: #0f766e; background: #0f766e; color: #fff; }
+  .delbtn { font-size: 11.5px; color: #b91c1c; background: #fff; border: 1px solid #fecaca; border-radius: 8px;
+    padding: 8px 13px; cursor: pointer; font-weight: 700; }
+  .delbtn:hover { background: #fef2f2; }
+  .pempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 30px; text-align: center; }
+
+  /* 일반 화면 (도메인/엑셀/이력) */
+  .page { flex: 1; overflow-y: auto; padding: 24px 30px; min-height: 0; }
+  .pw { max-width: 900px; }
+  .h1 { font-size: 17px; font-weight: 800; }
+  .sub { font-size: 12.5px; color: #78716c; margin-top: 4px; line-height: 1.55; }
+  .subtabs { display: flex; gap: 8px; margin: 18px 0 16px; flex-wrap: wrap; }
+  .stab { padding: 8px 15px; border-radius: 9px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+    background: #f0ede6; color: #78716c; border: none; }
+  .stab.on { background: #0f766e; color: #fff; }
+  .cardbox { background: #fff; border: 1px solid #ece6da; border-radius: 14px; overflow: hidden; }
+  .dhead, .drow { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; padding: 10px 16px; }
+  .dhead { background: #faf8f3; border-bottom: 1px solid #f4f1ea; font-size: 11px; font-weight: 800; color: #a8a29e; }
+  .drow { border-bottom: 1px solid #f7f4ee; }
+  .dinput { font-size: 13px; font-weight: 600; padding: 8px 11px; border: 1px solid #e7e1d6; border-radius: 8px; outline: none; color: #1c1917; }
+  .dinput:focus { border-color: #0f766e; }
+  .use { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .use.y { background: #ccfbf1; color: #115e59; }
+  .use.n { background: #f0ede6; color: #a8a29e; }
+  .dadd { font-size: 12.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1.5px dashed #5eead4;
+    border-radius: 9px; padding: 9px 14px; cursor: pointer; }
+  .dadd:hover { background: #ccfbf1; }
+  .drop { border: 2px dashed #d8cfc0; border-radius: 12px; padding: 34px; text-align: center; cursor: pointer; background: #faf8f3; }
+  .drop:hover { border-color: #0f766e; background: #f0fdfa; }
+  .metricgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+  .metric { background: #fff; border: 1px solid #ece6da; border-radius: 12px; padding: 15px 16px; }
+  .metric .l { font-size: 11.5px; color: #78716c; font-weight: 600; }
+  .metric .v { font-size: 26px; font-weight: 800; margin-top: 3px; }
+  .metric .h { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 1px; }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .tbl { background: #fff; border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
+  .tbl .th { padding: 10px 15px; font-size: 12px; font-weight: 800; color: #57534e; background: #faf8f3; border-bottom: 1px solid #f4f1ea; }
+  .tbl .tr { display: flex; justify-content: space-between; padding: 8px 15px; font-size: 12.5px; border-bottom: 1px solid #f7f4ee; }
+  .primary { font-size: 13px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .secondary { font-size: 13px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 12.5px; border-radius: 9px; }
+  .histrow.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; font-weight: 700; }
+  .diffgrid { display: flex; gap: 12px; }
+  .diff { flex: 1; border-radius: 11px; padding: 14px; text-align: center; }
+  .diff .dv { font-size: 24px; font-weight: 800; }
+  .diff .dl { font-size: 11.5px; font-weight: 700; margin-top: 2px; }
+  .actx { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 6px; }
+
+  /* 배너 / 플래시 */
+  .banner { padding: 12px 20px; font-size: 12.5px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .banner.info { background: #eff6ff; color: #1e40af; border-bottom: 1px solid #dbeafe; }
+  .banner.conf { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fecaca; }
+  .banner button { font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 7px; border: 1px solid currentColor; background: #fff; cursor: pointer; }
+  .flash { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1c1917;
+    color: #fff; font-size: 12.5px; font-weight: 600; padding: 10px 18px; border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(28,25,23,.28); z-index: 50; }
 </style>
 </head>
 <body>
-<div id="root"></div>
+<div id="app"></div>
 <script>
 (function () {
   "use strict";
 
   // ── Streamlit 프로토콜 ───────────────────────────────
-  function send(msg) {
-    window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, msg), "*");
-  }
+  var IN_ST = false;
+  function send(msg) { try { window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, msg), "*"); } catch (e) {} }
   function setHeight(h) { send({ type: "streamlit:setFrameHeight", height: h }); }
-  function setValue(v) { send({ type: "streamlit:setComponentValue", value: v, dataType: "json" }); }
+  function uid() { try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {} return "e" + Date.now() + "-" + Math.floor(Math.random() * 1e9); }
+  function emit(evt) { evt.evt_id = uid(); if (IN_ST) send({ type: "streamlit:setComponentValue", value: evt, dataType: "json" }); else localAction(evt); }
 
-  function uid() {
-    try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (e) {}
-    return "e" + Date.now() + "-" + Math.floor(Math.random() * 1e9);
-  }
-  // 사용자 조작에서만 호출한다. render() 안에서 부르면 무한 리런이 된다.
-  function emit(evt) { evt.evt_id = uid(); setValue(evt); }
-
+  // ── 데이터 모델 (schema.py 와 동일 구조: 평면 노드 + parent_id) ──
   var ROOT = "__root__";
-  var root = document.getElementById("root");
+  var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무" };
+  var FIXED = ["조선", "생산", "시운전"];
+  var DEF_DOMAINS = {
+    dept: ["시운전1부", "시운전2부", "시운전3부", "기획운영부", "해운부", "해양사업부"],
+    tech: ["LLM", "OCR", "RPA", "예측모델", "이상탐지", "BI/대시보드", "챗봇", "음성인식", "컴퓨터비전"],
+    automation_level: ["수동", "부분자동", "완전자동", "AI자동"],
+    frequency: ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
+  };
+  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기" };
 
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  function hasDetail(lv) { return Number(lv) >= 6; }
+  function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
+  function childrenOf(pid) { return S.nodes.filter(function (n) { return n.parent_id === pid; }).sort(function (a, b) { return (a.order - b.order) || String(a.name).localeCompare(b.name); }); }
+  function byId(id) { for (var i = 0; i < S.nodes.length; i++) if (S.nodes[i].id === id) return S.nodes[i]; return null; }
+  function ancestors(id) { var out = [], cur = byId(id), g = 0; while (cur && cur.parent_id !== ROOT && g++ < 20) { var p = byId(cur.parent_id); if (!p) break; out.unshift(p); cur = p; } return out; }
+  function pathNames(id) { var self = byId(id); return FIXED.concat(ancestors(id).map(function (a) { return a.name; })).concat(self ? [self.name] : []); }
+  function descCount(id) { var c = 0, st = childrenOf(id).slice(); while (st.length) { var x = st.pop(); c++; st = st.concat(childrenOf(x.id)); } return c; }
+  // pii.mask_name 과 동일 규칙이어야 한다 — 화면(JS)과 엑셀(파이썬)의 마스킹이 어긋나면 안 된다.
+  // 홍길동→홍*동 / 이순→이* / 남궁길동→남**동 (가운데 전부 가림) / 콤마 그룹은 각각 처리.
+  function maskName(n) {
+    if (!n) return "";
+    return String(n).split(",").map(function (x) {
+      x = x.trim();
+      if (x.length <= 1) return x;
+      if (x.length === 2) return x[0] + "*";
+      return x[0] + new Array(x.length - 1).join("*") + x[x.length - 1];
+    }).join(", ");
+  }
+  var _seq = 1;
+  function makeNode(pid, lv, name) { return { id: "n_" + Date.now().toString(36) + (_seq++), parent_id: pid, level: lv, order: 999, name: name || "", desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "", frequency: "", outputs: "" }; }
+  function stats() { var d = S.nodes.filter(function (n) { return hasDetail(n.level); }); var ai = d.filter(function (n) { return n.has_ai_agent; }).length; return { total: S.nodes.length, detail: d.length, ai: ai, rate: d.length ? Math.round(ai / d.length * 100) : 0 }; }
+  function domUsage(key, val) { var c = 0; S.nodes.forEach(function (n) { if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0) c++; } else if (n[key] === val) c++; }); return c; }
+
+  function seed() {
+    var n = [], i = 0;
+    function nd(id, p, lv, name, ex) { var b = { id: id, parent_id: p, level: lv, order: i++, name: name, desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "", frequency: "", outputs: "" }; if (ex) for (var k in ex) b[k] = ex[k]; return b; }
+    n.push(nd("s1", ROOT, 3, "선장운전", { desc: "항해·조타·갑판 관련 시운전 업무" }));
+    n.push(nd("s2", ROOT, 3, "전장운전", { desc: "전기·계장 시운전 업무" }));
+    n.push(nd("s3", ROOT, 3, "기장운전", { desc: "기관·추진 시운전 업무" }));
+    n.push(nd("s4", ROOT, 3, "기획운영", { desc: "시운전 계획·안전·품질 관리" }));
+    n.push(nd("s5", ROOT, 3, "공통업무", {}));
+    n.push(nd("a1", "s1", 4, "항해·조타 시운전", { desc: "항해장비 및 조타 계통 시험" }));
+    n.push(nd("a2", "s1", 4, "갑판기계 시운전", {}));
+    n.push(nd("a3", "s2", 4, "전력계통 시운전", {}));
+    n.push(nd("b1", "a1", 5, "항해장비 점검", { desc: "레이더·GPS·자이로 등" }));
+    n.push(nd("b2", "a1", 5, "조타장치 시험", {}));
+    n.push(nd("b3", "a2", 5, "계류·양묘 장비", {}));
+    n.push(nd("c1", "b1", 6, "레이더 동작시험", { desc: "X/S밴드 레이더의 표적 탐지·거리 정확도 확인", dept: "시운전1부", has_ai_agent: true, tech: ["이상탐지", "BI/대시보드"], automation_level: "부분자동", owner: "김민수", frequency: "호선별", outputs: "시운전 결과보고서 / SAP" }));
+    n.push(nd("c2", "b1", 6, "자이로컴퍼스 정렬시험", { desc: "자이로 방위 오차 측정 및 보정", dept: "시운전1부", automation_level: "수동", owner: "이정호", frequency: "호선별" }));
+    n.push(nd("c3", "b1", 6, "GPS/AIS 통신확인", { desc: "위성 측위 및 선박자동식별장치 데이터 송수신 점검", dept: "시운전1부", has_ai_agent: true, tech: ["OCR", "RPA"], automation_level: "AI자동", owner: "박서준", frequency: "호선별", outputs: "통신점검 체크리스트" }));
+    n.push(nd("c4", "b2", 6, "조타 응답시험", { desc: "타각 지령 대비 실제 응답시간 측정", dept: "시운전1부", automation_level: "수동", owner: "최유진", frequency: "호선별" }));
+    n.push(nd("c5", "b2", 6, "비상조타 절체시험", { dept: "시운전1부", owner: "최유진", frequency: "호선별" }));
+    n.push(nd("c6", "b3", 6, "윈들러스 부하시험", { desc: "양묘기 부하 및 브레이크 성능 확인", dept: "시운전2부", tech: ["예측모델"], automation_level: "부분자동", owner: "정다은", frequency: "호선별" }));
+    return n;
+  }
+  var MOCK_HIST = [
+    { file: "", ts: "2026-07-16 09:42", author: "김민수", rev: 14, n_nodes: 23 },
+    { file: "", ts: "2026-07-15 17:20", author: "이정호", rev: 13, n_nodes: 22 },
+    { file: "", ts: "2026-07-15 11:05", author: "박서준", rev: 12, n_nodes: 20 },
+    { file: "", ts: "2026-07-14 16:33", author: "최유진", rev: 11, n_nodes: 18 },
+  ];
+  var MOCK_AUDIT = [
+    { ts: "2026-07-16 09:42", author: "김민수", action: "save", rev: 14, n_nodes: 23 },
+    { ts: "2026-07-15 22:10", author: "이정호", action: "force", rev: 13, n_nodes: 22 },
+    { ts: "2026-07-15 17:20", author: "이정호", action: "save", rev: 13, n_nodes: 22 },
+    { ts: "2026-07-15 14:02", author: "박서준", action: "restore", rev: 12, n_nodes: 20 },
+  ];
+
+  // ── 상태 ────────────────────────────────────────────
+  var S = {
+    nodes: [], domains: {}, rev: 0, author: "", env: "",
+    sel: {}, selectedId: null, dirty: [], viewMode: "columns", collapsed: {},
+    activeTab: 0, domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
+    history: [], audit: [], flash: "", conflict: null, diskNewer: null,
+  };
+  var appEl, contentEl, flashTimer;
+
+  // ── 조작 (로컬 상태 변경) ───────────────────────────
+  function markDirty(id) { if (S.dirty.indexOf(id) < 0) S.dirty.push(id); }
+  function selectPath(id) { var node = byId(id); var sel = {}; if (node) { ancestors(id).concat([node]).forEach(function (a) { sel[a.level] = a.id; }); } S.sel = sel; S.selectedId = id; }
+  function actSelect(id) { selectPath(id); rerender(); }
+  function actAdd(pid, lv) { if (!pid) return; var nn = makeNode(pid, lv, ""); S.nodes.push(nn); markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"]'); }
+  function actUpdate(id, key, val, refocus) { var n = byId(id); if (!n) return; if (key === "tech") n.tech = val; else n[key] = val; markDirty(id); rerender(refocus); }
+  function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); actUpdate(id, "tech", a); }
+  function actDel(id) { var victims = {}; victims[id] = 1; var st = childrenOf(id).slice(); while (st.length) { var x = st.pop(); victims[x.id] = 1; st = st.concat(childrenOf(x.id)); } var node = byId(id); var pid = node ? node.parent_id : ROOT; S.nodes = S.nodes.filter(function (n) { return !victims[n.id]; }); S.dirty = S.dirty.filter(function (d) { return !victims[d]; }); S.selectedId = null; selectPath(pid); S.selectedId = null; flash("삭제했습니다"); rerender(); }
+  // ── 드래그 조작 (schema.apply_reorder / apply_move 와 동일 규칙) ──
+  function renumber(pid) { childrenOf(pid).forEach(function (n, i) { n.order = i; }); }
+
+  function actReorder(pid, orderedIds) {
+    // 목적지 리스트 전체 id 배열이 정본 — DOM 과 상태의 drift 를 원천 차단한다
+    var pos = {}; orderedIds.forEach(function (id, i) { pos[id] = i; });
+    var touched = false;
+    S.nodes.forEach(function (n) {
+      if (n.parent_id === pid && pos[n.id] !== undefined && n.order !== pos[n.id]) { n.order = pos[n.id]; touched = true; }
+    });
+    if (!touched) return;
+    renumber(pid);
+    orderedIds.forEach(markDirty);
+    rerender();
   }
 
-  function cardHTML(card, col) {
-    var chips = "";
-    if (card.ai) chips += '<span class="chip ai">AI</span>';
-    (card.tech || []).forEach(function (t) { chips += '<span class="chip">' + esc(t) + "</span>"; });
-    if (card.tech_more > 0) chips += '<span class="chip">+' + card.tech_more + "</span>";
-    if (card.dept) chips += '<span class="chip dept">' + esc(card.dept) + "</span>";
-    if (card.owner) chips += '<span class="chip">' + esc(card.owner) + "</span>";
-    if (card.kids) chips += '<span class="chip kids">▸' + card.kids + "</span>";
+  function actMove(id, newPid) {
+    var n = byId(id); if (!n || !newPid || n.parent_id === newPid) return;
+    // 같은 레벨끼리만 드롭되므로(group 분리) 레벨 변경·사이클은 구조적으로 불가능하다
+    var oldPid = n.parent_id;
+    n.parent_id = newPid;
+    n.order = childrenOf(newPid).length;
+    renumber(oldPid); renumber(newPid);
+    markDirty(id);
+    selectPath(id);
+    flash("'" + (n.name || "이름 없음") + "' 을(를) 옮겼습니다");
+    rerender();
+  }
 
-    var cls = "card" + (col.selected === card.id ? " sel" : "") + (card.hit ? " hit" : "");
-    return '<div class="' + cls + '" data-id="' + esc(card.id) + '" data-level="' + col.level + '">'
-      + '<div class="cbody">'
-      + '<div class="nm">' + esc(card.name || "(이름 없음)") + "</div>"
+  var _sorts = [];
+  function endDrag(lv) {
+    // 드래그 흔적을 확실히 지운다. 남으면 드롭존이 계속 보이고 _dragging 가드에 클릭이 막힌다.
+    document.body.classList.remove("dragging", "dragL3", "dragL4", "dragL5", "dragL6");
+    setTimeout(function () { _dragging = false; }, 0);
+  }
+  function wireDnD() {
+    _sorts.forEach(function (s) { try { s.destroy(); } catch (e) {} });
+    _sorts = [];
+    endDrag();     // rerender 로 DOM 이 갈렸으므로 드래그 상태도 초기화
+    if (typeof Sortable === "undefined" || S.viewMode !== "columns") return;
+    var opt = { forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3, animation: 140,
+                ghostClass: "sgh", chosenClass: "sch", scroll: true, scrollSensitivity: 60, scrollSpeed: 12 };
+
+    // (A) 컬럼 안 — 형제 순서 변경
+    [].forEach.call(contentEl.querySelectorAll(".list[data-lv]"), function (el) {
+      var lv = el.dataset.lv;
+      _sorts.push(Sortable.create(el, Object.assign({}, opt, {
+        group: { name: "L" + lv, pull: true, put: ["L" + lv] },
+        draggable: ".card", filter: ".addbtn,.cdrop",
+        onStart: function () { _dragging = true; document.body.classList.add("dragging", "dragL" + lv); },
+        onEnd: function (e) {
+          endDrag();
+          if (e.from !== e.to) return;                  // 드롭존 경유는 (B) 가 처리
+          if (e.oldIndex === e.newIndex) return;
+          var pid = e.from.dataset.parent;
+          var ids = [].map.call(e.from.querySelectorAll(":scope > .card"), function (c) { return c.dataset.id; });
+          // 다음 틱으로 미룬다 — 콜백 안에서 rerender 하면 wireDnD 가 드래그 중인
+          // Sortable 을 파괴해 뒷정리가 끊긴다
+          setTimeout(function () { actReorder(pid, ids); }, 0);
+        },
+      })));
+    });
+
+    // (B) 카드 안 드롭존 — 상위 바꾸기 (레벨은 유지)
+    [].forEach.call(contentEl.querySelectorAll(".cdrop[data-parent]"), function (el) {
+      var lv = Number(el.closest(".card").dataset.lv) + 1;
+      _sorts.push(Sortable.create(el, Object.assign({}, opt, {
+        group: { name: "L" + lv, pull: false, put: ["L" + lv] }, sort: false,
+        // onAdd 는 Sortable 의 뒷정리(onEnd) 전에 불린다. 여기서 바로 rerender 하면
+        // 드래그 중인 인스턴스가 파괴돼 onEnd 가 영영 안 오고, dragging 클래스와
+        // _dragging 가드가 남아 앱 전체가 클릭 불능이 된다. 다음 틱으로 미룬다.
+        onAdd: function (e) {
+          var id = e.item.dataset.id, pid = el.dataset.parent;
+          e.item.remove();                               // 파이썬/상태 재렌더가 정본 — DOM 은 버린다
+          setTimeout(function () { actMove(id, pid); }, 0);
+        },
+      })));
+    });
+  }
+
+  function actToggle(id) { S.collapsed[id] = !S.collapsed[id]; rerender(); }
+  function actCollapseAll() { var anyOpen = S.nodes.some(function (n) { return childrenOf(n.id).length && !S.collapsed[n.id]; }); if (anyOpen) { var c = {}; S.nodes.forEach(function (n) { if (childrenOf(n.id).length) c[n.id] = true; }); S.collapsed = c; } else S.collapsed = {}; rerender(); }
+  function domRename(key, idx, val, refocus) { var old = S.domains[key][idx]; S.domains[key][idx] = val; S.nodes.forEach(function (n) { if (key === "tech") n.tech = (n.tech || []).map(function (t) { return t === old ? val : t; }); else if (n[key] === old) n[key] = val; }); markDirty("dom"); rerender(refocus); }
+  function domAdd(key) { S.domains[key] = (S.domains[key] || []).concat(["새 값"]); markDirty("dom"); rerender(); }
+  function domDelete(key, idx) { var v = S.domains[key][idx]; if (domUsage(key, v) > 0) { flash("사용 중이라 삭제할 수 없습니다"); return; } S.domains[key].splice(idx, 1); markDirty("dom"); rerender(); }
+
+  function doSave() {
+    if (!S.author) { flash("작성자를 먼저 입력하세요"); return; }
+    if (!S.dirty.length) { flash("변경 사항이 없습니다"); return; }
+    emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
+    if (!IN_ST) { S.dirty = []; flash("저장했습니다 · 스냅샷 보관됨"); rerender(); }
+  }
+  function localAction(evt) {
+    // 파이썬이 없을 때(단독 미리보기) 대체 동작
+    if (evt.type === "download") flash((evt.fmt === "json" ? "JSON" : "엑셀") + " 다운로드를 시작합니다 (미리보기)");
+    else if (evt.type === "import") flash("미리보기에서는 실제 업로드가 되지 않습니다");
+    else if (evt.type === "restore") flash("선택한 시점으로 복원했습니다 (미리보기)");
+    else if (evt.type === "reload") flash("디스크 최신 내용을 불러왔습니다 (미리보기)");
+    else if (evt.type === "force") { S.conflict = null; S.dirty = []; flash("내 것으로 덮어썼습니다 (미리보기)"); rerender(); }
+    else if (evt.type === "dismiss") { S.conflict = null; rerender(); }
+  }
+
+  function flash(msg) { S.flash = msg; renderFlash(); clearTimeout(flashTimer); flashTimer = setTimeout(function () { S.flash = ""; renderFlash(); }, 1900); }
+  function renderFlash() { var ex = document.getElementById("flash"); if (ex) ex.remove(); if (S.flash) { var d = document.createElement("div"); d.id = "flash"; d.className = "flash"; d.textContent = S.flash; document.body.appendChild(d); } }
+
+  // ── 뷰 (HTML 문자열) ────────────────────────────────
+  function view() {
+    return topbar() + banners() + '<div class="body">' + bodyView() + "</div>";
+  }
+  function topbar() {
+    var st = stats();
+    var TABS = ["계층 편집", "도메인 관리", "엑셀 가져오기 / 내보내기", "이력 · 복원"];
+    var tabs = TABS.map(function (t, i) { return '<button class="tab' + (i === S.activeTab ? " on" : "") + '" data-act="tab" data-i="' + i + '">' + esc(t) + "</button>"; }).join("");
+    var toggle = S.activeTab === 0 ? '<div class="seg"><button class="segb' + (S.viewMode !== "outline" ? " on" : "") + '" data-act="viewcols">▦ 컬럼</button><button class="segb' + (S.viewMode === "outline" ? " on" : "") + '" data-act="viewout">☰ 전체보기</button></div>' : "";
+    var n = S.dirty.length;
+    var badge = n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>';
+    var canSave = !!S.author && n > 0;
+    return '<div class="top">'
+      + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
+      + '<div class="tabs">' + tabs + "</div>" + toggle
+      + '<div class="grow"></div>'
+      + '<div class="pill"><b>AI 적용률 ' + st.rate + '%</b><span>세부업무 ' + st.detail + "개 중 " + st.ai + "개</span></div>"
+      + '<div class="authwrap"><label>작성자</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름 입력" /></div>'
+      + badge
+      + '<button class="save ' + (canSave ? "on" : "off") + '" data-act="save">💾 저장</button>'
+      + "</div>";
+  }
+  function banners() {
+    var h = "";
+    if (S.conflict) {
+      h += '<div class="banner conf"><b>' + esc(maskName(S.conflict.disk_author) || "다른 사람") + "</b> 님이 먼저 저장했습니다 (rev " + esc(S.conflict.disk_rev) + "). 자동 병합은 하지 않습니다."
+        + '<span class="grow"></span>'
+        + '<button data-act="reload">최신 불러오기</button><button data-act="force">내 것으로 덮어쓰기</button><button data-act="dismiss">취소</button></div>';
+    } else if (S.diskNewer) {
+      h += '<div class="banner info"><b>' + esc(maskName(S.diskNewer.author) || "다른 사람") + "</b> 님이 방금 저장했습니다 (rev " + esc(S.diskNewer.rev) + ")."
+        + '<span class="grow"></span><button data-act="reload">↻ 디스크 다시 읽기</button></div>';
+    }
+    return h;
+  }
+  function bodyView() {
+    if (S.activeTab === 1) return pageDomain();
+    if (S.activeTab === 2) return pageExcel();
+    if (S.activeTab === 3) return pageHistory();
+    return crumb() + (S.viewMode === "outline" ? outline() : columns()) + panel();
+  }
+  function crumb() {
+    var chips = FIXED.map(function (f) { return '<span class="chip fix">🔒 ' + esc(f) + "</span><span class=\"sep\">›</span>"; }).join("");
+    var tail = "";
+    if (S.selectedId) { pathNames(S.selectedId).slice(3).forEach(function (nm) { chips += '<span class="chip cur">' + esc(nm || "(이름 없음)") + "</span><span class=\"sep\">›</span>"; }); }
+    else tail = '<span class="crumbtail">· 카드를 선택하면 경로가 표시됩니다</span>';
+    return '<div class="crumb" style="width:100%;position:absolute;left:0;top:0;display:none"></div>'; // placeholder (crumb는 아래에서 별도 배치)
+  }
+
+  function columns() {
+    var html = '<div class="board scroll">';
+    for (var lv = 3; lv <= 6; lv++) {
+      var pid = lv === 3 ? ROOT : S.sel[lv - 1];
+      var enabled = !!pid;
+      html += '<div class="col' + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
+        + '<div class="list scroll" data-lv="' + lv + '" data-parent="' + esc(pid || "") + '">';
+      if (!enabled) html += '<div class="emptyhint">상위 항목을<br/>먼저 선택하세요</div>';
+      else {
+        var cards = childrenOf(pid);
+        cards.forEach(function (nn) { html += cardHTML(nn, lv); });
+        html += '<button class="addbtn" data-act="add" data-pid="' + esc(pid) + '" data-lv="' + lv + '">＋ 새 ' + esc(LABELS[lv]) + "</button>";
+      }
+      html += "</div></div>";
+    }
+    return html + "</div>";
+  }
+  function cardHTML(nn, lv) {
+    var detail = hasDetail(lv), chips = "";
+    if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
+    if (detail) (nn.tech || []).slice(0, 2).forEach(function (t) { chips += '<span class="mc n">' + esc(t) + "</span>"; });
+    if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
+    if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
+    if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
+    var kids = childrenOf(nn.id).length;
+    if (kids) chips += '<span class="mc kids">▸' + kids + "</span>";
+    var sel = S.selectedId === nn.id;
+    // lv6 아래는 없으므로 드롭존도 없다. 드롭존은 자기보다 한 단계 아래 레벨만 받는다.
+    var drop = lv < 6 ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
+    return '<div class="card' + (sel ? " sel" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
+      + '<div class="top1"><div class="nm">' + esc(nn.name || "(이름 없음)") + "</div>" + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot" title="저장 안 됨"></span>' : "") + "</div>"
+      + (nn.desc ? '<div class="cdesc">' + esc(nn.desc) + "</div>" : "")
       + (chips ? '<div class="meta">' + chips + "</div>" : "")
-      + "</div>"
-      + '<div class="drop" data-parent="' + esc(card.id) + '"></div>'
+      + drop
       + "</div>";
   }
 
-  function render(args) {
-    var cols = (args && args.columns) || [];
-    var height = (args && args.height) || 620;
-
-    var html = '<div class="board" style="height:' + (height - 6) + 'px">';
-    cols.forEach(function (col) {
-      html += '<div class="col' + (col.enabled ? "" : " off") + '" data-level="' + col.level + '">'
-        + '<div class="colhead"><span class="t">' + esc(col.label) + "</span>"
-        + '<span class="n">' + (col.cards || []).length + "</span>"
-        + (col.enabled ? '<button class="add" data-parent="' + esc(col.parent_id)
-            + '" data-level="' + col.level + '" title="추가">＋</button>' : "")
-        + "</div>";
-      if (!col.enabled) {
-        html += '<div class="list off"><div class="hint">상위 항목을 먼저 선택하세요.</div></div>';
-      } else {
-        html += '<div class="list" data-level="' + col.level + '" data-parent="' + esc(col.parent_id) + '">';
-        (col.cards || []).forEach(function (c) { html += cardHTML(c, col); });
-        html += "</div>";
-        if (!(col.cards || []).length) {
-          html = html.replace(/<\/div>$/, '<div class="hint">＋ 로 추가하세요.</div></div>');
-        }
-      }
-      html += "</div>";
-    });
-    html += "</div>";
-    root.innerHTML = html;
-
-    wire();
-    setHeight(height);
+  function outline() {
+    var anyOpen = S.nodes.some(function (n) { return childrenOf(n.id).length && !S.collapsed[n.id]; });
+    var body = "";
+    (function walk(pid, depth) {
+      childrenOf(pid).forEach(function (nn) {
+        var kids = childrenOf(nn.id), col = !!S.collapsed[nn.id], sel = S.selectedId === nn.id, detail = hasDetail(nn.level);
+        var chips = "";
+        if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
+        if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
+        if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
+        if (kids.length) chips += '<span class="mc kids">▸' + kids.length + "</span>";
+        body += '<div class="row' + (sel ? " sel" : "") + '" style="padding-left:' + (depth * 20) + 'px">'
+          + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
+          + '<div class="rowmain" data-act="select" data-id="' + esc(nn.id) + '"><span class="lvb ' + (detail ? "d" : "g") + '">lv' + nn.level + "</span>"
+          + '<span class="rowname"' + (sel ? ' style="font-weight:800"' : "") + ">" + esc(nn.name || "(이름 없음)") + "</span>"
+          + (nn.desc ? '<span class="rowdesc">' + esc(nn.desc) + "</span>" : "") + chips
+          + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot"></span>' : "") + "</div>"
+          + (nn.level < 6 ? '<button class="rowadd" data-act="add" data-pid="' + esc(nn.id) + '" data-lv="' + (nn.level + 1) + '" title="하위 추가">＋</button>' : "")
+          + "</div>";
+        if (!col) walk(nn.id, depth + 1);
+      });
+    })(ROOT, 0);
+    return '<div class="outwrap"><div class="outcard"><div class="outhead"><span class="h1">업무 계층 전체보기</span><span class="h2">클릭하면 오른쪽에서 상세 입력</span><div class="grow"></div>'
+      + '<button class="minibtn" data-act="collapse">' + (anyOpen ? "모두 접기" : "모두 펼치기") + "</button>"
+      + '<button class="minibtn p" data-act="add" data-pid="' + ROOT + '" data-lv="3">＋ 새 부문</button></div>'
+      + '<div class="list scroll" style="padding:7px">' + body + "</div></div></div>";
   }
 
-  function wire() {
-    // (A) 컬럼 리스트 — 형제 순서 변경. group 을 레벨별로 분리해 lv4 카드가 lv6 컬럼에
-    //     떨어지는 사고를 구조적으로 막는다.
-    Array.prototype.forEach.call(root.querySelectorAll(".list[data-level]"), function (el) {
-      var lv = el.dataset.level;
-      Sortable.create(el, {
-        group: { name: "L" + lv, pull: true, put: ["L" + lv] },
-        draggable: ".card", handle: ".cbody", animation: 140,
-        ghostClass: "ghost", chosenClass: "chosen",
-        // 네이티브 HTML5 DnD 대신 마우스/터치 이벤트로 처리한다. iframe 안에서 동작이
-        // 일관되고(브라우저별 dataTransfer 편차 없음), 드래그 중 자동 스크롤도 얻는다.
-        forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3,
-        scroll: true, scrollSensitivity: 60, scrollSpeed: 12,
-        onStart: function () {
-          document.body.classList.add("dragging", "dragging-L" + lv);
-        },
-        onEnd: function (e) {
-          document.body.classList.remove("dragging", "dragging-L" + lv);
-          if (e.from !== e.to) return;              // 드롭존 경유는 (B) 가 처리
-          if (e.oldIndex === e.newIndex) return;
-          var order = Array.prototype.map.call(e.from.children, function (c) { return c.dataset.id; })
-                       .filter(Boolean);
-          emit({ type: "reorder", parent_id: e.from.dataset.parent, level: Number(lv), order: order });
-        }
-      });
-    });
+  function crumbBar() {
+    var chips = FIXED.map(function (f) { return '<span class="chip fix">🔒 ' + esc(f) + "</span><span class=\"sep\">›</span>"; }).join("");
+    var tail = '<span class="crumbtail">· 카드를 선택하면 경로가 표시됩니다</span>';
+    if (S.selectedId) { tail = ""; pathNames(S.selectedId).slice(3).forEach(function (nm) { chips += '<span class="chip cur">' + esc(nm || "(이름 없음)") + "</span><span class=\"sep\">›</span>"; }); }
+    return '<div class="crumb">' + chips + tail + "</div>";
+  }
 
-    // (B) 카드 안 드롭존 — 부모 변경 (레벨은 유지). 왼쪽 컬럼의 다른 카드 위로 떨어뜨린다.
-    Array.prototype.forEach.call(root.querySelectorAll(".drop[data-parent]"), function (el) {
-      var lv = Number(el.closest(".card").dataset.level) + 1;
-      Sortable.create(el, {
-        group: { name: "L" + lv, pull: false, put: ["L" + lv] },
-        sort: false, animation: 0,
-        forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3,
-        onAdd: function (e) {
-          e.item.remove();                          // 파이썬 재렌더가 정본 — DOM 은 버린다
-          emit({ type: "move", node_id: e.item.dataset.id, new_parent_id: el.dataset.parent });
-        }
-      });
-    });
+  function panel() {
+    if (!S.selectedId) {
+      return '<div class="panel"><div class="pempty"><div style="font-size:34px">👈</div><div style="font-size:13px;font-weight:700;color:#57534e">카드를 선택하면 여기서 편집합니다</div><div style="font-size:11.5px;color:#a8a29e;line-height:1.6">각 컬럼의 <b>＋</b> 로 새 업무를 추가하고,<br/>내용은 입력 즉시 반영됩니다. 마치면 상단 <b>저장</b>.</div></div></div>';
+    }
+    var n = byId(S.selectedId); if (!n) return '<div class="panel"></div>';
+    var detail = hasDetail(n.level), lv = n.level, id = n.id;
+    var dirty = S.dirty.indexOf(id) >= 0;
+    var head = '<div class="phead ' + (detail ? "d" : "g") + '"><div class="prow"><span class="ptag">지금 편집 중</span>'
+      + '<span class="plv ' + (detail ? "d" : "g") + '">lv' + lv + " · " + esc(LABELS[lv]) + "</span>"
+      + (dirty ? '<span class="punsaved">● 미저장</span>' : "") + "</div>"
+      + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:11px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
+      + '<div class="ppath">' + esc(pathNames(id).join("  ›  ")) + "</div></div>";
 
-    // 클릭 = 선택 / 추가. 이벤트 채널을 하나로 모아 카드마다 st.button 을 두는 것을 피한다.
-    root.addEventListener("click", function (ev) {
-      var add = ev.target.closest(".add");
-      if (add) {
-        emit({ type: "add", parent_id: add.dataset.parent, level: Number(add.dataset.level) });
-        return;
-      }
-      var body = ev.target.closest(".cbody");
-      if (body) emit({ type: "select", node_id: body.closest(".card").dataset.id });
-    });
+    var fields = ""
+      + '<div><div class="fl">' + esc(LABELS[lv]) + '명</div><input class="fi" data-fkey="name" data-id="' + esc(id) + '" value="' + esc(n.name) + '" placeholder="이름을 입력하세요" /></div>'
+      + '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>";
+
+    if (!detail) {
+      var hidden = ["dept", "owner", "outputs", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
+      fields += '<div class="note">📁 ' + esc(LABELS[lv]) + '은(는) 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무</b>에서 입력합니다.</div>';
+      if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
+    } else {
+      var opt = function (key, cur) { var base = (S.domains[key] || []).slice(); if (cur && base.indexOf(cur) < 0) base.push(cur); return '<option value="">— 선택 —</option>' + base.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join(""); };
+      var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
+      fields += '<div class="aicard ' + (n.has_ai_agent ? "on" : "") + '"><label class="aiflex" style="gap:8px"><input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (n.has_ai_agent ? " checked" : "") + ' style="width:15px;height:15px" /><span class="ait" style="color:' + (n.has_ai_agent ? "#166534" : "#334155") + '">🤖 AI 에이전트 적용</span><span class="aih" style="margin:0">' + (n.has_ai_agent ? "이 업무에 AI 에이전트가 적용됩니다" : "적용 시 요약 통계에 집계됩니다") + "</span></label></div>"
+        + '<div class="grid2">'
+        + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
+        + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
+        + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
+        + '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
+        + "</div>"
+        + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div></div>"
+        + '<div><div class="fl">산출물 / 연계 시스템</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서 / SAP" /></div>';
+    }
+    return '<div class="panel">' + head + '<div class="pbody scroll">' + fields + "</div></div>";
+  }
+
+  // 계층 편집 본문은 crumb 바 + (보드|아웃라인) + 패널 → body 안에 나란히 두려면 flex-column 래핑 필요
+  function bodyViewTree() { return crumbBar() + '<div class="body" style="flex:1">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div>"; }
+
+  function pageDomain() {
+    var keys = ["dept", "tech", "automation_level", "frequency"];
+    var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
+    var dk = S.domTab;
+    var rows = (S.domains[dk] || []).map(function (v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" /><span class="use ' + (u > 0 ? "y" : "n") + '">' + u + '개 업무</span><button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }).join("");
+    return '<div class="page scroll"><div class="pw"><div class="h1">도메인 관리</div><div class="sub">카드 상세에서 고르는 선택 목록입니다. 값 이름을 바꾸면 그 값을 쓰는 업무도 함께 바뀝니다. 사용 중인 값은 삭제할 수 없습니다.</div>'
+      + '<div class="subtabs">' + tabs + "</div>"
+      + '<div class="cardbox"><div class="dhead"><span>값</span><span>사용 중</span><span></span></div>' + rows
+      + '<div style="padding:13px 16px"><button class="dadd" data-act="domadd" data-k="' + dk + '">＋ 값 추가</button></div></div>'
+      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:12px">변경은 상단 <b>저장</b> 을 눌러야 파일에 반영됩니다.</div></div></div>';
+  }
+
+  function pageExcel() {
+    var st = stats();
+    var sub = ["up", "down"].map(function (k) { return '<button class="stab' + (S.excelTab === k ? " on" : "") + '" data-act="exceltab" data-k="' + k + '">' + (k === "up" ? "⬆ 가져오기 (일괄등록)" : "⬇ 내보내기") + "</button>"; }).join("");
+    var pane = "";
+    if (S.excelTab === "up") {
+      pane = '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:13px;font-weight:700;color:#57534e;margin-top:6px">수정한 엑셀 파일을 여기에 올리세요 (.xlsx)</div><div style="font-size:11.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 파일이어야 읽을 수 있습니다</div></label>'
+        + '<input id="xlsxup" type="file" accept=".xlsx" style="display:none" data-fkey="xlsxfile" />'
+        + '<div style="margin-top:18px;font-size:12px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#78716c;line-height:1.9"><li>lv3~lv6 칸을 <b>왼쪽부터 연속으로</b> 채웁니다.</li><li>상위 업무는 자기 행이 반드시 있어야 합니다.</li><li><code style="background:#f0ede6;padding:1px 5px;border-radius:4px">id</code> 가 비어 있으면 새 업무로 등록됩니다.</li><li>AI·기술·부서 같은 세부 정보는 <b>lv6 세부업무</b> 행에만 채웁니다.</li><li>엑셀에서 행을 지워도 기본은 삭제되지 않습니다 (반영 전 확인).</li></ul></div>';
+    } else {
+      pane = '<div class="cardbox" style="padding:22px"><div style="font-size:12.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀로 받습니다. 이 파일을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다. 시트 3장 — 계층도 / 도메인 / 요약.</div>'
+        + '<label style="display:flex;align-items:center;gap:9px;margin:16px 0;cursor:pointer"><input type="checkbox" data-fkey="mask"' + (S.mask ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:12.5px;font-weight:600;color:#44403c">담당자 이름 마스킹 (홍길동 → 홍*동)</span></label>'
+        + (!S.mask ? '<div class="warn" style="margin-bottom:14px">⚠ 마스킹을 끄면 개인정보가 담긴 파일이 됩니다. 외부 공유에 주의하세요.</div>' : "")
+        + '<div style="display:flex;gap:10px"><button class="primary" style="flex:1" data-act="down" data-fmt="xlsx">엑셀 다운로드 (.xlsx)</button><button class="secondary" style="flex:1" data-act="down" data-fmt="json">JSON 원본 다운로드</button></div></div>';
+    }
+    var metrics = [["전체 업무", st.total, "lv3~lv6 전 레벨"], ["세부업무(lv6)", st.detail, "AI 지표의 분모"], ["AI 에이전트 적용", st.ai, st.rate + "%"], ["미적용", st.detail - st.ai, "lv6 중"]]
+      .map(function (m) { return '<div class="metric"><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>"; }).join("");
+    var byLevel = [3, 4, 5, 6].map(function (lv) { return '<div class="tr"><span>lv' + lv + " " + esc(LABELS[lv]) + '</span><b>' + S.nodes.filter(function (n) { return n.level === lv; }).length + "</b></div>"; }).join("");
+    var dc = {}; S.nodes.filter(function (n) { return hasDetail(n.level); }).forEach(function (n) { var d = n.dept || "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
+    var byDept = Object.keys(dc).sort(function (a, b) { return dc[b] - dc[a]; }).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + dc[k] + "</b></div>"; }).join("");
+    return '<div class="page scroll"><div class="pw"><div class="h1">엑셀 가져오기 / 내보내기</div><div class="sub">업무가 많을 때는 화면에서 하나씩 만들지 말고 엑셀로 한 번에 등록·수정하세요.</div>'
+      + '<div class="subtabs">' + sub + "</div>" + pane
+      + '<div style="font-size:13.5px;font-weight:800;margin:24px 0 4px">요약</div><div style="font-size:11.5px;color:#a8a29e;margin-bottom:14px">AI·부서·자동화 지표는 lv6 세부업무만 셉니다.</div>'
+      + '<div class="metricgrid">' + metrics + "</div>"
+      + '<div class="twocol"><div class="tbl"><div class="th">레벨별 업무 수</div>' + byLevel + '</div><div class="tbl"><div class="th">부서별 세부업무 수</div>' + byDept + "</div></div></div></div>";
+  }
+
+  function pageHistory() {
+    var hist = S.history.length ? S.history : MOCK_HIST;
+    var rows = hist.map(function (h, i) { return '<div class="histrow' + (S.histPick === i ? " sel" : "") + '" data-act="histpick" data-i="' + i + '"><span>' + esc(h.ts) + "</span><span>" + esc(maskName(h.author)) + "</span><span>rev" + esc(h.rev) + "</span><span>" + esc(h.n_nodes) + "개</span></div>"; }).join("");
+    var hp = hist[S.histPick] || hist[0] || { ts: "", author: "", rev: 0 };
+    var diffs = [["되살아남", [2, 1, 4, 6][S.histPick] || 0, "#166534", "#dcfce7"], ["값이 바뀜", [3, 5, 2, 4][S.histPick] || 0, "#92400e", "#fef3c7"], ["사라짐", [1, 0, 3, 2][S.histPick] || 0, "#b91c1c", "#fee2e2"]]
+      .map(function (d) { return '<div class="diff" style="background:' + d[3] + '"><div class="dv" style="color:' + d[2] + '">' + d[1] + '</div><div class="dl" style="color:' + d[2] + '">' + d[0] + "</div></div>"; }).join("");
+    var can = S.restoreOk && !!S.author;
+    var aud = S.audit.length ? S.audit : MOCK_AUDIT;
+    var ACT = { save: "저장", force: "강제 덮어쓰기", restore: "복원" };
+    var auditRows = aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:12.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("");
+    return '<div class="page scroll"><div class="pw"><div class="h1">이력 · 복원</div><div class="sub">저장할 때마다 직전 버전이 스냅샷으로 보관됩니다 (최근 90일 + 최신 50개).</div>'
+      + '<div class="cardbox" style="margin-top:18px"><div class="histrow" style="background:#faf8f3;color:#a8a29e;font-size:11px;font-weight:800;cursor:default"><span>시각</span><span>작성자</span><span>rev</span><span>업무 수</span></div>' + rows + "</div>"
+      + '<div class="cardbox" style="padding:20px;margin-top:16px"><div style="font-size:12px;font-weight:800;color:#57534e">복원할 시점</div><div style="font-size:13px;font-weight:700;color:#0f766e;margin:6px 0 16px">' + esc(hp.ts) + " · " + esc(maskName(hp.author)) + " · rev" + esc(hp.rev) + "</div>"
+      + '<div style="font-size:12px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>"
+      + '<label style="display:flex;align-items:center;gap:9px;margin:18px 0 0;cursor:pointer"><input type="checkbox" data-fkey="restoreok"' + (S.restoreOk ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:12.5px;color:#44403c">위 내용을 확인했고 이 시점으로 되돌립니다</span></label>'
+      + '<div style="margin-top:14px"><button class="' + (can ? "primary" : "") + '" style="' + (can ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:800;cursor:not-allowed") + 'padding:9px 18px" data-act="restore">이 시점으로 복원</button></div></div>'
+      + '<div style="font-size:13.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:11px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div></div></div>";
+  }
+
+  // ── 렌더 / 포커스 복원 ──────────────────────────────
+  function fullView() {
+    var body;
+    if (S.activeTab === 0) body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
+    else if (S.activeTab === 1) body = pageDomain();
+    else if (S.activeTab === 2) body = pageExcel();
+    else body = pageHistory();
+    return topbar() + banners() + body;
+  }
+  function rerender(focusSel) {
+    contentEl.innerHTML = fullView();
+    wireDnD();          // innerHTML 로 DOM 을 갈아끼웠으므로 Sortable 을 다시 붙인다
+    layout();
+    if (focusSel) { var el = contentEl.querySelector(focusSel); if (el) { el.focus(); try { var v = el.value; el.setSelectionRange(v.length, v.length); } catch (e) {} } }
+  }
+  function layout() {
+    // iframe 높이 자동 — Streamlit 스크롤은 컴포넌트 안에서 처리한다
+    var target = IN_ST ? 820 : (document.querySelector(".app") ? document.querySelector(".app").offsetHeight : 820);
+    if (IN_ST) setHeight(824);
+  }
+
+  // ── 이벤트 위임 (한 번만 바인딩) ─────────────────────
+  var _dragging = false;
+  function onClick(e) {
+    if (_dragging) return;          // 드래그 끝에 딸려오는 click 이 select 로 새지 않게
+    var el = e.target.closest("[data-act]"); if (!el) return;
+    var a = el.dataset.act, d = el.dataset;
+    if (a === "tab") S.activeTab = +d.i, rerender();
+    else if (a === "viewcols") S.viewMode = "columns", rerender();
+    else if (a === "viewout") S.viewMode = "outline", rerender();
+    else if (a === "select") actSelect(d.id);
+    else if (a === "add") actAdd(d.pid, +d.lv);
+    else if (a === "toggle") actToggle(d.id);
+    else if (a === "collapse") actCollapseAll();
+    else if (a === "del") actDel(d.id);
+    else if (a === "tech") actToggleTech(d.id, d.t);
+    else if (a === "save") doSave();
+    else if (a === "domtab") S.domTab = d.k, rerender();
+    else if (a === "domadd") domAdd(d.k);
+    else if (a === "domdel") domDelete(d.k, +d.i);
+    else if (a === "exceltab") S.excelTab = d.k, rerender();
+    else if (a === "down") emit({ type: "download", fmt: d.fmt, mask: S.mask, nodes: S.nodes, domains: S.domains });
+    else if (a === "histpick") S.histPick = +d.i, S.restoreOk = false, rerender();
+    else if (a === "restore") { if (!S.author) return flash("작성자를 먼저 입력하세요"); if (!S.restoreOk) return; var hist = S.history.length ? S.history : MOCK_HIST; emit({ type: "restore", file: (hist[S.histPick] || {}).file, author: S.author }); }
+    else if (a === "reload") emit({ type: "reload" });
+    else if (a === "force") emit({ type: "force", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
+    else if (a === "dismiss") { S.conflict = null; rerender(); }
+  }
+  function onInput(e) {
+    var el = e.target.closest("[data-fkey]"); if (!el) return;
+    var f = el.dataset.fkey;
+    if (f === "author") { S.author = el.value; var b = contentEl.querySelector(".badge"); var sv = contentEl.querySelector(".save"); if (sv) { var can = !!S.author && S.dirty.length > 0; sv.className = "save " + (can ? "on" : "off"); } return; }
+    if (f === "name") return actUpdate(el.dataset.id, "name", el.value, '[data-fkey="name"]');
+    if (f === "desc") return actUpdate(el.dataset.id, "desc", el.value, '[data-fkey="desc"]');
+    if (f === "owner") return actUpdate(el.dataset.id, "owner", el.value, '[data-fkey="owner"]');
+    if (f === "outputs") return actUpdate(el.dataset.id, "outputs", el.value, '[data-fkey="outputs"]');
+    if (f === "dom") return domRename(el.dataset.k, +el.dataset.i, el.value, '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
+  }
+  function onChange(e) {
+    var el = e.target.closest("[data-fkey]"); if (!el) return;
+    var f = el.dataset.fkey;
+    if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
+    if (f === "dept" || f === "automation_level" || f === "frequency") return actUpdate(el.dataset.id, f, el.value);
+    if (f === "mask") { S.mask = el.checked; rerender(); return; }
+    if (f === "restoreok") { S.restoreOk = el.checked; rerender(); return; }
+    if (f === "xlsxfile") {
+      var file = el.files && el.files[0]; if (!file) return;
+      var rd = new FileReader();
+      rd.onload = function () { var b64 = String(rd.result).split(",")[1] || ""; emit({ type: "import", filename: file.name, b64: b64 }); flash("업로드 파일을 확인하는 중… (반영 후 결과 표시)"); };
+      rd.readAsDataURL(file);
+    }
+  }
+
+  // ── 초기화 / Streamlit 렌더 수신 ────────────────────
+  function applyArgs(args) {
+    if (args.tree) { S.nodes = (args.tree.nodes || []).map(function (n) { return Object.assign({}, n); }); S.domains = JSON.parse(JSON.stringify(args.tree.domains || DEF_DOMAINS)); S.rev = args.tree.rev || 0; }
+    if (typeof args.author === "string") S.author = args.author;
+    S.env = args.env || "";
+    S.history = args.history || [];
+    S.audit = args.audit || [];
+    S.conflict = args.conflict || null;
+    S.diskNewer = args.disk_newer || null;
+    S.dirty = [];               // 저장 성공 후 재렌더 시 초기화
+    if (args.dirty_all) S.dirty = S.nodes.map(function (n) { return n.id; }).concat(["dom"]);  // 엑셀 반영 직후: 전부 미저장
+    if (typeof args.flash === "string" && args.flash) flash(args.flash);
+    if (S.histPick >= (S.history.length || 1)) S.histPick = 0;
+  }
+  function boot() {
+    appEl = document.getElementById("app");
+    appEl.className = "app";
+    contentEl = document.createElement("div");
+    contentEl.style.display = "flex";
+    contentEl.style.flexDirection = "column";
+    contentEl.style.height = IN_ST ? "820px" : "820px";
+    appEl.appendChild(contentEl);
+    appEl.addEventListener("click", onClick);
+    appEl.addEventListener("input", onInput);
+    appEl.addEventListener("change", onChange);
+    rerender();
   }
 
   window.addEventListener("message", function (e) {
     if (!e.data || e.data.type !== "streamlit:render") return;
-    try {
-      render(e.data.args || {});
-    } catch (err) {
-      root.innerHTML = '<div class="err">보드를 그리지 못했습니다: ' + esc(err && err.message) + "</div>";
-      setHeight(60);
-    }
+    IN_ST = true;
+    try { applyArgs(e.data.args || {}); if (!appEl) boot(); else rerender(); }
+    catch (err) { if (appEl) contentEl.innerHTML = '<div style="padding:20px;color:#b91c1c">화면 오류: ' + esc(err && err.message) + "</div>"; }
   });
 
-  if (typeof Sortable === "undefined") {
-    // sortable.min.js 가 없어도 죽지 않는다 — 읽기전용으로라도 뜬다 (공통규칙 5)
-    root.innerHTML = '<div class="err">sortable.min.js 를 불러오지 못했습니다. '
-      + "사이드바에서 간단 모드를 쓰세요.</div>";
-    setHeight(60);
-  }
-  // 리스너를 붙인 뒤에 ready 를 보낸다 (부모는 ready 이후에만 render 를 보낸다)
+  // 단독 미리보기: 300ms 안에 Streamlit render 가 안 오면 시드로 뜬다
+  setTimeout(function () { if (!IN_ST) { S.nodes = seed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS)); S.history = MOCK_HIST; S.audit = MOCK_AUDIT; boot(); } }, 300);
+
   send({ type: "streamlit:componentReady", apiVersion: 1 });
 })();
 </script>

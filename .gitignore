@@ -19,6 +19,9 @@ venv/
 # 엑셀 임시파일
 ~$*.xlsx
 
+# 전달용 압축 패키지 (내용은 이미 소스에 반영됨)
+*.zip
+
 # OS / 에디터
 Thumbs.db
 .DS_Store
