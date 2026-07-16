@@ -18,3 +18,25 @@ dependencies = [
 managed = true
 python-preference = "only-system"
 python-downloads = "never"
+# 사내망 공용PC 는 pypi 직접 접속이 막혀 있어, uv 캐시에 없는 휠은 받지 못해 설치가 죽는다.
+# 이 프로젝트는 가장 늦게 만들어져 전 패키지가 "그 시점 최신"으로 resolve 됐고, 그 바람에
+# pyarrow(~25MB)·numpy 등을 새로 받아야 하는 유일한 앱이 됐다.
+# 기준은 data_manager — 전 앱의 parquet 생산자라 어느 PC에나 깔려 있어 캐시 적중 가능성이 가장 높다.
+# 버전을 올릴 땐 data_manager 와 함께 올려야 캐시 공유가 유지된다.
+constraint-dependencies = [
+    "pyarrow==24.0.0",
+    "numpy==2.4.6",
+    "streamlit==1.58.0",
+    "pillow==12.2.0",
+    "rpds-py==2026.5.1",
+    "narwhals==2.22.0",
+    "click==8.4.1",
+    "typing-extensions==4.15.0",
+    "tzdata==2026.2",
+    "gitpython==3.1.50",
+    "pydeck==0.9.2",
+    "websockets==16.0",
+    "anyio==4.13.0",
+    "charset-normalizer==3.4.7",
+    "uvicorn==0.49.0",
+]

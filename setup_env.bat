@@ -12,9 +12,16 @@ set "VENV=%LOCALAPPDATA%\venvs\%APP%"
 set "PORT=8540"
 cd /d "%~dp0"
 
-REM ---- proxy: external net default OFF (no VDI). For corporate net, remove REM from next 2 lines ----
-REM set "HTTP_PROXY=http://60.200.254.1:9090"
-REM set "HTTPS_PROXY=%HTTP_PROXY%"
+REM ---- network: pypi needs the proxy on the corporate net, and must NOT use it outside ----
+REM      default = external net (current operating env). No answer in 10s -> external.
+choice /C OI /T 10 /D O /M "Network? O=external (no proxy, default)  I=corporate (proxy on)"
+if errorlevel 2 (
+  set "HTTP_PROXY=http://60.200.254.1:9090"
+  set "HTTPS_PROXY=http://60.200.254.1:9090"
+  echo   [net] corporate: proxy ON
+) else (
+  echo   [net] external: proxy OFF
+)
 
 REM ---- use Windows cert store (fixes SSL UnknownIssuer behind corp SSL inspection) ----
 set "UV_NATIVE_TLS=true"
@@ -50,19 +57,24 @@ if errorlevel 1 (
   echo         32-bit ^(Python312-32^) is unusable: pandas/pyarrow have no 32-bit wheels.
   goto :end
 )
+REM --- --locked: honor uv.lock as-is. Without it uv silently re-resolves to the newest
+REM     releases when the lock drifts - that is exactly how this app ended up needing a
+REM     fresh pyarrow download and failing on the corporate net. Fail loudly instead.
 if exist "pyproject.toml" (
-  uv sync --python cpython-3.12-windows-x86_64
+  uv sync --locked --python cpython-3.12-windows-x86_64
 ) else (
   echo [ERROR] no pyproject.toml found.
   goto :end
 )
 if errorlevel 1 (
   echo.
-  echo [FAIL] dependency install failed. Try:
-  echo   1^) SSL UnknownIssuer: UV_NATIVE_TLS=true already set. else  set SSL_CERT_FILE=C:\path\corp-ca.pem
-  echo   2^) Connect error: check HTTP_PROXY/HTTPS_PROXY above
-  echo   3^) last resort: uv sync --native-tls --allow-insecure-host pypi.org --allow-insecure-host files.pythonhosted.org
-  echo   4^) 32-bit Python ^(Python312-32^) detected: install 64-bit Python 3.12 from python.org, then rerun
+  echo [FAIL] dependency install failed. Read the actual uv error above first.
+  echo        These are only hints - not detections:
+  echo   - Connect / timeout    : on the corporate net? rerun and answer I at the Network prompt
+  echo   - SSL UnknownIssuer    : UV_NATIVE_TLS=true is already set.
+  echo                            else  set SSL_CERT_FILE=C:\path\corp-ca.pem
+  echo   - lock is out of date  : uv lock   ^(then rerun; --locked refuses a drifted lock^)
+  echo   - last resort: uv sync --native-tls --allow-insecure-host pypi.org --allow-insecure-host files.pythonhosted.org
   goto :end
 )
 
