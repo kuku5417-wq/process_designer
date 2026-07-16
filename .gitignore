@@ -22,10 +22,10 @@ venv/
 # 전달용 압축 패키지 (내용은 이미 소스에 반영됨)
 *.zip
 
-# 개인 배포판 빌드 산출물 — build_standalone.py 로 언제든 재생성.
-# 커밋하면 index.html 한 글자 고칠 때마다 130KB diff 가 붙고, 원본과 어긋난
-# stale 산출물이 정본처럼 보일 위험이 있다.
-dist/
+# dist/ 는 **커밋한다** — 팀원이 GitHub 에서 HTML 을 바로 받게 하려는 것.
+# ★ frontend/index.html 을 고쳤으면 반드시 `python build_standalone.py` 를 돌려 dist/ 도
+#   함께 커밋할 것. 안 그러면 배포판이 소스보다 옛 버전인 채로 남는다.
+#   파일명은 고정이라 재빌드하면 덮어써진다(옛 산출물이 쌓이지 않는다).
 
 # OS / 에디터
 Thumbs.db

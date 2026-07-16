@@ -57,7 +57,9 @@ def build() -> Path:
     out_html = html.replace(_SCRIPT_TAG, inject, 1)
 
     DIST.mkdir(parents=True, exist_ok=True)
-    out = DIST / f"프로세스설계_개인작성용_{stamp}.html"
+    # 파일명은 **고정**한다. 타임스탬프를 넣으면 재빌드마다 새 파일이 생겨 저장소에 옛
+    # 산출물이 쌓이고, 팀원에게 줄 링크도 매번 바뀐다. 빌드 시각은 파일 안(__PD_BUILD__)에 있다.
+    out = DIST / "프로세스설계_개인작성용.html"
     out.write_text(out_html, encoding="utf-8")
     return out
 
