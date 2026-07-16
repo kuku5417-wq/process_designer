@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1503";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -484,7 +484,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
     renumber(pid);
     markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"]');
   }
-  function actUpdate(id, key, val, refocus) { var n = byId(id); if (!n) return; if (key === "tech") n.tech = val; else n[key] = val; markDirty(id); rerender(refocus); }
+  function actUpdate(id, key, val, refocus, noRender) {
+    var n = byId(id); if (!n) return;
+    if (key === "tech") n.tech = val; else n[key] = val;
+    markDirty(id);
+    if (noRender) return;      // IME 조합 중 — DOM 을 갈아엎으면 한글 조합이 끊긴다
+    rerender(refocus);
+  }
   /** 주기 선택 → 연간 횟수 기본값. **비어 있을 때만** 채운다 — 손으로 친 숫자를
    *  드롭다운 조작이 날리면 안 된다. */
   function actSetFrequency(id, v) {
@@ -699,14 +705,19 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
 
   function actToggle(id) { S.collapsed[id] = !S.collapsed[id]; rerender(); }
   function actCollapseAll() { var anyOpen = S.nodes.some(function (n) { return childrenOf(n.id).length && !S.collapsed[n.id]; }); if (anyOpen) { var c = {}; S.nodes.forEach(function (n) { if (childrenOf(n.id).length) c[n.id] = true; }); S.collapsed = c; } else S.collapsed = {}; rerender(); }
-  function domRename(key, idx, val, refocus) {
+  function domRename(key, idx, val, refocus, noRender) {
     var old = S.domains[key][idx];
-    // 다른 행과 겹치는 이름은 거부 — 같은 값이 두 줄이 되면 어느 쪽을 쓰는지 알 수 없다
-    var dup = (S.domains[key] || []).some(function (v, i) { return i !== idx && v === val && val.trim(); });
-    if (dup) { flash("'" + val + "' 은(는) 이미 목록에 있습니다"); rerender(refocus); return; }
+    // 다른 행과 겹치는 이름은 거부 — 같은 값이 두 줄이 되면 어느 쪽을 쓰는지 알 수 없다.
+    // 단 조합 중에는 검사하지 않는다 — "시운전1부" 를 치는 도중 "시"·"시운" 이 걸려 막힌다.
+    if (!noRender) {
+      var dup = (S.domains[key] || []).some(function (v, i) { return i !== idx && v === val && val.trim(); });
+      if (dup) { flash("'" + val + "' 은(는) 이미 목록에 있습니다"); rerender(refocus); return; }
+    }
     S.domains[key][idx] = val;
     S.nodes.forEach(function (n) { if (key === "tech") n.tech = (n.tech || []).map(function (t) { return t === old ? val : t; }); else if (n[key] === old) n[key] = val; });
-    markDirty("dom"); rerender(refocus);
+    markDirty("dom");
+    if (noRender) return;      // IME 조합 중 — DOM 교체 금지
+    rerender(refocus);
   }
   function domAdd(key) {
     var base = S.domains[key] || [], nm = "새 값", i = 2;
@@ -1197,10 +1208,28 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
     return topbar() + banners() + body + confirmModal();
   }
   function rerender(focusSel) {
+    // 다시 그리기 전에 캐럿 위치를 기억한다. 무조건 끝으로 보내면 글자 중간을 고칠 때
+    // 한 자 칠 때마다 커서가 맨 뒤로 튄다.
+    var caret = null;
+    if (focusSel) {
+      var prev = contentEl.querySelector(focusSel);
+      if (prev && prev === document.activeElement) {
+        try { caret = { s: prev.selectionStart, e: prev.selectionEnd }; } catch (e) {}
+      }
+    }
     contentEl.innerHTML = fullView();
     wireDnD();          // innerHTML 로 DOM 을 갈아끼웠으므로 Sortable 을 다시 붙인다
     layout();
-    if (focusSel) { var el = contentEl.querySelector(focusSel); if (el) { el.focus(); try { var v = el.value; el.setSelectionRange(v.length, v.length); } catch (e) {} } }
+    if (focusSel) {
+      var el = contentEl.querySelector(focusSel);
+      if (el) {
+        el.focus();
+        try {
+          if (caret) el.setSelectionRange(caret.s, caret.e);
+          else el.setSelectionRange(el.value.length, el.value.length);
+        } catch (e) {}
+      }
+    }
   }
   function layout() {
     // iframe 높이 자동 — Streamlit 스크롤은 컴포넌트 안에서 처리한다
@@ -1243,9 +1272,19 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
     else if (a === "cxcancel") { S.confirm = null; rerender(); }
     else if (a === "cxok") { var c = S.confirm; S.confirm = null; if (c && c.onOk) c.onOk(); else rerender(); }
   }
-  function onInput(e) {
-    var el = e.target.closest("[data-fkey]"); if (!el) return;
-    var f = el.dataset.fkey;
+  // ★ 한글 IME: 조합 중(ㅎ+ㅏ→하)에 rerender 로 입력칸을 새 DOM 으로 갈아끼우면 조합이
+  //   끊겨 자모가 낱낱이 확정된다("ㅎㅏㅎㅏ"). 조합 중에는 모델만 갱신하고 화면은 그대로 둔다.
+  //   compositionend 에서 한 번만 다시 그린다. (일본어·중국어 IME 도 동일)
+  var _composing = false;
+  function onCompositionStart() { _composing = true; }
+  function onCompositionEnd(e) {
+    _composing = false;
+    var el = e.target && e.target.closest && e.target.closest("[data-fkey]");
+    if (el) applyInput(el, true);      // 조합 완료 — 이제 안전하게 갱신
+  }
+
+  function applyInput(el, doRender) {
+    var f = el.dataset.fkey, id = el.dataset.id;
     if (f === "author") {
       S.author = el.value;
       var sv = contentEl.querySelector(".save");
@@ -1253,20 +1292,25 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
       soloSaveSoon();
       return;
     }
-    if (f === "name") return actUpdate(el.dataset.id, "name", el.value, '[data-fkey="name"]');
-    if (f === "desc") return actUpdate(el.dataset.id, "desc", el.value, '[data-fkey="desc"]');
-    if (f === "owner") return actUpdate(el.dataset.id, "owner", el.value, '[data-fkey="owner"]');
-    if (f === "outputs") return actUpdate(el.dataset.id, "outputs", el.value, '[data-fkey="outputs"]');
     // 숫자로 강제하지 않고 **친 문자열 그대로** 저장한다. parseFloat 로 스냅시키면
     // "0." 이 "0" 이 돼 소수점을 아예 못 친다. 정리는 파이썬 normalize 가 한다.
-    if (f === "work_hours") return actUpdate(el.dataset.id, "work_hours", el.value, '[data-fkey="work_hours"]');
-    if (f === "annual_count") return actUpdate(el.dataset.id, "annual_count", el.value, '[data-fkey="annual_count"]');
-    if (f === "dom") return domRename(el.dataset.k, +el.dataset.i, el.value, '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
-    if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
+    var FIELDS = { name: 1, desc: 1, owner: 1, outputs: 1, work_hours: 1, annual_count: 1 };
+    if (FIELDS[f]) return actUpdate(id, f, el.value, '[data-fkey="' + f + '"]', !doRender);
+    if (f === "dom") return domRename(el.dataset.k, +el.dataset.i, el.value,
+                                      '[data-fkey="dom"][data-i="' + el.dataset.i + '"]', !doRender);
+    if (f === "query") { S.query = el.value; if (doRender) rerender('[data-fkey="query"]'); return; }
+  }
+
+  function onInput(e) {
+    var el = e.target.closest("[data-fkey]"); if (!el) return;
+    applyInput(el, !(_composing || e.isComposing));
   }
   // Enter 로 확정하는 입력 (목록에 없는 기술 추가)
   function onKeydown(e) {
     if (e.key !== "Enter") return;
+    // 한글 조합을 Enter 로 확정하는 순간에도 keydown 이 온다 — 그걸 "추가" 로 오인하면
+    // "레이더" 를 치다 Enter 를 눌렀을 뿐인데 미완성 기술이 등록된다.
+    if (_composing || e.isComposing || e.keyCode === 229) return;
     var el = e.target.closest('[data-fkey="newtech"]'); if (!el) return;
     e.preventDefault();
     actAddTech(el.dataset.id, el.value);
@@ -1342,6 +1386,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260716_1443";
     appEl.addEventListener("input", onInput);
     appEl.addEventListener("change", onChange);
     appEl.addEventListener("keydown", onKeydown);
+    // 한글 IME — 조합 중엔 rerender 를 멈춰야 자모가 낱낱이 확정되지 않는다
+    appEl.addEventListener("compositionstart", onCompositionStart);
+    appEl.addEventListener("compositionend", onCompositionEnd);
     rerender();
   }
 
