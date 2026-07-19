@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_0759";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_0846";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1644,6 +1644,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_0759";
     if (el) applyInput(el, true);      // 조합 완료 — 이제 안전하게 갱신
   }
 
+  // ★ 이름·설명은 카드/전체보기/헤더에 실시간으로 비치는 자유 텍스트다. 예전엔 한 글자 칠 때마다
+  //   rerender() 로 contentEl.innerHTML 을 통째로 갈아끼우고 wireDnD() 로 Sortable 을 다시 붙였다.
+  //   그 사이 포커스된 <input> 이 파괴돼, 빠르게 치면 그 순간의 글자가 **사라진다**("한번씩").
+  //   해법: 모델만 갱신하고 화면의 '메아리'(카드 이름·설명)만 제자리에서 고친다. input 은 손대지
+  //   않으므로 캐럿·조합이 끊기지 않는다. 칸을 벗어날 때(onChange) 한 번만 전체를 다시 그려 동기화한다.
+  function echoName(id) {
+    var n = byId(id); if (!n) return;
+    var t = n.name || "(이름 없음)";
+    var c = contentEl.querySelector('.card[data-id="' + id + '"] .nm'); if (c) c.textContent = t;
+    var r = contentEl.querySelector('.rowmain[data-id="' + id + '"] .rowname'); if (r) r.textContent = t;
+    var p = contentEl.querySelector(".pname"); if (p) p.textContent = t;
+  }
+  function echoDesc(id) {
+    var n = byId(id); if (!n) return;
+    var c = contentEl.querySelector('.card[data-id="' + id + '"] .cdesc'); if (c) c.textContent = n.desc || "";
+    var r = contentEl.querySelector('.rowmain[data-id="' + id + '"] .rowdesc'); if (r) r.textContent = n.desc || "";
+  }
+
   function applyInput(el, doRender) {
     var f = el.dataset.fkey, id = el.dataset.id;
     if (f === "author") {
@@ -1660,8 +1678,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_0759";
       var ei = +el.dataset.idx, ek = f === "ev_offset_start" ? "offset_start" : "offset_days";
       return actEvSet(id, ei, ek, el.value, '[data-fkey="' + f + '"][data-idx="' + ei + '"]', !doRender);
     }
-    var FIELDS = { name: 1, desc: 1, owner: 1, outputs: 1, work_hours: 1, annual_count: 1,
-                   freq_count: 1 };
+    // 이름·설명 — rerender 없이 모델+메아리만. (칸을 벗어날 때 onChange 가 전체 동기화)
+    if (f === "name") { var nn = byId(id); if (nn) { nn.name = el.value; markDirty(id); echoName(id); } return; }
+    if (f === "desc") { var nd = byId(id); if (nd) { nd.desc = el.value; markDirty(id); echoDesc(id); } return; }
+    var FIELDS = { owner: 1, outputs: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
     if (FIELDS[f]) return actUpdate(id, f, el.value, '[data-fkey="' + f + '"]', !doRender);
     // ★ dom(도메인 값)은 여기서 처리하지 않는다 — onChange(칸을 벗어날 때)에서 한 번만
     //   커밋한다. 글자마다 커밋하면 미완성 값이 노드에 박힌다.
@@ -1690,6 +1710,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_0759";
                        '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
     }
     var f = el.dataset.fkey;
+    // 이름·설명은 타이핑 중엔 메아리만 갱신했으니, 칸을 벗어난 지금 전체를 한 번 동기화한다
+    // (빵부스러기·미저장 점·설명 카드 표시 등). 값은 이미 모델에 들어가 있다.
+    if (f === "name" || f === "desc") { rerender(); return; }
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
     if (f === "frequency") return actSetFrequency(el.dataset.id, el.value);

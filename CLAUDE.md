@@ -140,6 +140,13 @@ lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **
 - **`args.tree` 는 `tree_epoch` 이 바뀔 때만 채택한다.** 매 렌더마다 덮으면 `download`·`histpick`
   같은 조회성 왕복에도 화면이 저장본으로 돌아가 미저장 편집이 사라진다. 파이썬은 세션 트리를
   교체할 때 반드시 `_set_data()` 를 거쳐 epoch 을 올린다.
+- **자유 텍스트 입력(이름·설명)은 매 키 입력마다 `rerender()` 하지 않는다.** `rerender` 는
+  `contentEl.innerHTML` 을 통째로 교체하고 `wireDnD()` 로 Sortable 을 다시 붙이는데, 그 사이
+  포커스된 `<input>` 이 파괴돼 **빠르게 치면 글자가 사라진다**("계층 입력 시 한번씩"). 이름·설명은
+  모델만 갱신하고 화면의 메아리(`echoName`/`echoDesc` — 카드 `.nm`/`.cdesc`, 전체보기 `.rowname`/
+  `.rowdesc`, 패널 `.pname`)만 제자리에서 고치고, **칸을 벗어날 때(onChange) 한 번만** 전체를 다시
+  그려 동기화한다(미저장 점·빵부스러기·설명 카드 생성). 숫자 필드는 부하 배지 실시간 갱신이 필요해
+  기존 rerender 경로를 유지한다.
 - **되돌릴 수 없는 조작은 확인 모달**(`S.confirm`)을 거친다 — 자손 있는 삭제, 미저장 상태의 다시 읽기.
 - **드래그 콜백(onEnd/onAdd)에서 곧바로 `rerender()` 하지 말 것.** `rerender` → `wireDnD` 가
   드래그 중인 Sortable 을 destroy 해 `onEnd` 가 영영 오지 않고, `dragging` 클래스와 `_dragging`
