@@ -107,6 +107,10 @@
   .mc.dept { background: #e0e7ff; color: #3730a3; }
   .mc.kids { background: #fff7ed; color: #9a3412; font-weight: 700; }
   .mc.n { background: #f0ede6; color: #57534e; }
+  .mc.occ { background: #ede9fe; color: #5b21b6; font-weight: 700; }
+  .mc.load { background: #ccfbf1; color: #0f766e; font-weight: 800; }
+  .mc.auto { background: #fef9c3; color: #854d0e; }
+  .mc.ship { background: #e0f2fe; color: #075985; }
   .addbtn { border: 1.5px dashed #cabfb0; background: #fff; color: #78716c; border-radius: 8px;
     padding: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
   .addbtn:hover { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
@@ -943,14 +947,14 @@
   }
   function soloExportName() {
     var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); };
-    return "프로세스_" + (S.dept || "부서") + "_" + (S.author || "이름") + "_"
+    return "프로세스_" + (S.dept || "부서") + (S.author ? "_" + S.author : "") + "_"
       + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + ".json";
   }
   /** 내보내기 — 전 lv6 에 **소속만** 주입한다(카드마다 다시 묻지 않는 이유).
    *  ★ 이름은 업무에 넣지 않는다 — 취합은 소속별 집계이고 이름은 필요 없다.
    *    누가 낸 파일인지는 파일명과 exported_by 로 충분하다. */
   function soloExport() {
-    if (!S.dept || !S.author) { flash("상단에 소속과 이름을 먼저 입력하세요"); return; }
+    if (!S.dept) { flash("상단에 소속을 먼저 입력하세요"); return; }
     var mine = S.nodes.map(function (n) {
       var c = Object.assign({}, n);
       if (hasDetail(c.level)) { c.dept = S.dept; c.owner = ""; }
@@ -1007,6 +1011,7 @@
              { k: "domain", label: "도메인 관리" },
              { k: "io", label: SOLO ? "내보내기 / 불러오기" : "엑셀 가져오기 / 내보내기" }];
     if (!SOLO) t.push({ k: "hist", label: "이력 · 복원" });
+    if (SOLO) t.push({ k: "manual", label: "📖 사용법" });
     return t;
   }
 
@@ -1018,14 +1023,14 @@
     var badge = SOLO
       ? (n ? '<div class="badge dirty">● 미제출 ' + n + "건</div>" : '<div class="badge clean">제출됨</div>')
       : (n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>');
-    var canSave = SOLO ? (!!S.author && !!S.dept) : (!!S.author && n > 0);
+    var canSave = SOLO ? (!!S.dept) : (!!S.author && n > 0);   // 개인: 소속만 필수, 이름은 선택
     // 개인 모드: 소속·이름을 한 번만 받고, 카드마다 부서·담당자를 묻지 않는다.
     var ident = SOLO
       ? '<div class="authwrap"><label>소속</label><select class="authinput" data-fkey="mydept" style="width:118px">'
         + '<option value="">— 선택 —</option>'
         + (S.domains.dept || []).map(function (d) { return '<option value="' + esc(d) + '"' + (d === S.dept ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("")
         + '</select></div>'
-        + '<div class="authwrap"><label>이름</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름" /></div>'
+        + '<div class="authwrap"><label>이름 <span style="color:#a8a29e;font-weight:600">(선택)</span></label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="선택 입력" /></div>'
       : '<div class="authwrap"><label>작성자</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름 입력" /></div>';
     return '<div class="top">'
       + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계' + (SOLO ? " · 개인 작성용" : "") + '</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
@@ -1085,6 +1090,18 @@
     if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
     if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
     if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
+    // 개인 배포판 lv6 — 발생패턴·부하·자동화·선종을 카드에 요약해 세부 패널을 짧게 유지한다
+    if (SOLO && detail) {
+      var _p = occurOf(nn), _pl = { "상시루틴": "상시", "호선루틴": "호선R", "호선이벤트": "이벤트" }[_p] || _p;
+      chips += '<span class="mc occ">' + esc(_pl) + "</span>";
+      var _L = loadOf(nn);
+      if (_L.kind === "annual" && _L.hours) chips += '<span class="mc load">연 ' + _L.hours + "h</span>";
+      else if (_L.kind === "per_ship" && _L.hours) chips += '<span class="mc load">호선당 ' + _L.hours + "h</span>";
+      else if (_L.kind === "unresolved") chips += '<span class="mc load">구간부하</span>';
+      if (nn.automation_level) chips += '<span class="mc auto">' + esc(nn.automation_level) + "</span>";
+      var _st = shipTypesOf(nn.id);
+      if (_st.length) chips += '<span class="mc ship">' + esc(_st.map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join("·")) + "</span>";
+    }
     var kids = childrenOf(nn.id).length;
     if (kids) chips += '<span class="mc kids">▸' + kids + "</span>";
     var sel = S.selectedId === nn.id;
@@ -1213,25 +1230,15 @@
       }
     }
 
-    // 부하 표시 — 단위를 명시한다. 호선루틴은 구간길이를 몰라 가짜 숫자를 만들지 않는다
+    // 부하 수치·적용 선종은 왼쪽 카드 배지로 옮겼다 (패널 스크롤 축소).
+    // 여기선 아직 못 채운 경우에만 한 줄로 안내한다.
     var L = loadOf(n);
-    var freqTxt = n.freq_unit && num(n.freq_count) ? n.freq_unit + " " + n.freq_count + "회" : "";
-    if (L.kind === "annual") {
-      h += '<div class="mh">연간 <b>' + (L.hours ? L.hours + " 시간" : "—") + "</b>"
-        + "<span>" + (freqTxt ? freqTxt + " → 연 " + routineAnnualCount(n) + "회 × 1회 소요시간" : "기간단위·횟수·소요시간을 채우세요") + "</span></div>";
-    } else if (L.kind === "per_ship") {
-      h += '<div class="mh">호선당 <b>' + (L.hours ? L.hours + " 시간" : "—") + "</b>"
-        + "<span>연간은 건조 척수를 곱해 나중에 산출합니다</span></div>";
-    } else {
-      h += '<div class="mh">호선당 <b>' + (freqTxt || "—") + "</b>"
-        + "<span>구간 길이 × 주기 → 나중에 호선 일정으로 산출합니다</span></div>";
-    }
-    var st = shipTypesOf(id);
-    if (p !== OCCUR.ROUTINE) {
-      h += '<div class="solohint" style="padding-top:6px">적용 선종: <b>'
-        + (st.length ? esc(st.map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join(", ")) : "전 선종")
-        + "</b> · 상위 대분류에서 지정합니다</div>";
-    }
+    if (L.kind === "annual" && !L.hours)
+      h += '<div class="solohint" style="padding-top:8px">기간단위·횟수·소요시간을 채우면 왼쪽 카드에 <b>연간 부하</b>가 표시됩니다.</div>';
+    else if (L.kind === "per_ship" && !L.hours)
+      h += '<div class="solohint" style="padding-top:8px">소요시간과 발생 시점을 채우면 왼쪽 카드에 <b>호선당 부하</b>가 표시됩니다.</div>';
+    else if (L.kind === "unresolved")
+      h += '<div class="solohint" style="padding-top:8px">구간 길이는 나중에 호선 일정으로 산출합니다. 카드엔 <b>구간부하</b>로 표시됩니다.</div>';
     return h;
   }
 
@@ -1315,7 +1322,9 @@
   }
 
   function pageDomain() {
-    var keys = ["dept", "tech", "automation_level", "frequency"];
+    // 개인 배포판은 '수행 주기'를 발생 패턴으로 대체했으므로 그 목록은 감춘다 (안 쓰는 도메인).
+    var keys = SOLO ? ["dept", "tech", "automation_level"] : ["dept", "tech", "automation_level", "frequency"];
+    if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
     var rows = (S.domains[dk] || []).map(function (v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" /><span class="use ' + (u > 0 ? "y" : "n") + '">' + u + '개 업무</span><button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }).join("");
@@ -1392,17 +1401,18 @@
   /** 개인 모드 IO — 서버가 없으니 제출 파일 내보내기 / 이어서 작성하기만 있다. */
   function pageSoloIO() {
     var st = stats();
-    var ready = !!S.dept && !!S.author;
+    var ready = !!S.dept;   // 소속만 필수, 이름은 선택
     return '<div class="page scroll"><div class="pw"><div class="h1">내보내기 / 불러오기</div>'
       + '<div class="sub">작성이 끝나면 파일로 내보내 관리자에게 전달하세요. 편집 내용은 이 브라우저에 자동 저장됩니다.</div>'
       + '<div class="cardbox" style="padding:22px;margin-top:18px">'
       + '<div style="font-size:13px;font-weight:800;color:#0f766e;margin-bottom:10px">⬇ 제출 파일 내보내기</div>'
       + (ready
-          ? '<div style="font-size:12.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b> · 이름 <b>' + esc(S.author)
-            + '</b> 으로 내보냅니다. 세부업무 ' + st.detail + "개"
+          ? '<div style="font-size:12.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b>'
+            + (S.author ? ' · 이름 <b>' + esc(S.author) + "</b>" : "")
+            + ' 으로 내보냅니다. 세부업무 ' + st.detail + "개"
             + (st.hoursMissing ? ' <span style="color:#92400e">(작업시간 미입력 ' + st.hoursMissing + "개)</span>" : "")
             + "</div>"
-          : '<div class="warn">상단에 <b>소속</b>과 <b>이름</b>을 먼저 입력하세요. 취합할 때 누구 것인지 구분하는 기준입니다.</div>')
+          : '<div class="warn">상단에 <b>소속</b>을 먼저 입력하세요. 취합은 소속별로 집계합니다. (이름은 선택)</div>')
       + '<div style="margin-top:14px"><button class="' + (ready ? "primary" : "secondary") + '" data-act="save">⬇ 제출 파일 내보내기 (.json)</button></div>'
       + '<div class="solohint">· 카드마다 부서를 적지 않아도 됩니다 — 내보낼 때 위 소속이 자동으로 들어갑니다.<br/>'
       + '· 업무에는 <b>소속만</b> 들어가고 이름은 들어가지 않습니다. 취합은 소속별로 집계합니다.</div></div>'
@@ -1421,6 +1431,33 @@
       + '<div style="margin-top:10px"><button class="primary" data-act="skelapply">📋 붙여넣기 반영</button></div>'
       + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 대분류를 비우고 중분류만 있으면 그 줄은 건너뜁니다.<br/>'
       + '· 첫 줄이 머리글(부문/대분류/중분류)이면 자동으로 건너뜁니다.</div></div>'
+      + "</div></div>";
+  }
+
+  // 개인 배포판 사용법 — 처음 여는 사람이 이 탭만 보고 작성할 수 있게 한다.
+  function pageManual() {
+    function step(no, title, bodyHtml) {
+      return '<div class="cardbox" style="padding:20px;margin-top:14px">'
+        + '<div style="display:flex;align-items:baseline;gap:9px;margin-bottom:8px">'
+        + '<span style="flex:none;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#0f766e;color:#fff;font-size:12px;font-weight:800">' + no + "</span>"
+        + '<span style="font-size:14px;font-weight:800;color:#292524">' + title + "</span></div>"
+        + '<div style="font-size:12.8px;color:#57534e;line-height:1.75">' + bodyHtml + "</div></div>";
+    }
+    var patTbl = '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:12.3px">'
+      + '<tr style="background:#faf8f3;color:#78716c;font-weight:800"><td style="padding:7px 9px;border:1px solid #eee">발생 패턴</td><td style="padding:7px 9px;border:1px solid #eee">언제</td><td style="padding:7px 9px;border:1px solid #eee">무엇을 입력</td></tr>'
+      + '<tr><td style="padding:7px 9px;border:1px solid #eee"><b>상시루틴</b></td><td style="padding:7px 9px;border:1px solid #eee">호선과 무관하게 늘</td><td style="padding:7px 9px;border:1px solid #eee">기간 단위 + 횟수 (예: 주 3회)</td></tr>'
+      + '<tr><td style="padding:7px 9px;border:1px solid #eee"><b>호선루틴</b></td><td style="padding:7px 9px;border:1px solid #eee">호선 도는 동안 반복</td><td style="padding:7px 9px;border:1px solid #eee">기간 단위 + 횟수 + <b>반복 구간</b>(복수)</td></tr>'
+      + '<tr><td style="padding:7px 9px;border:1px solid #eee"><b>호선이벤트</b></td><td style="padding:7px 9px;border:1px solid #eee">특정 시점에만</td><td style="padding:7px 9px;border:1px solid #eee"><b>시점</b>(마일스톤 ±일)을 여러 개 → 줄 수 = 호선당 횟수</td></tr>'
+      + "</table>";
+    return '<div class="page scroll"><div class="pw"><div class="h1">📖 사용법</div>'
+      + '<div class="sub">내 업무를 프로세스 계층으로 적어 관리자에게 제출하는 <b>개인 작성용</b> 화면입니다. 입력은 이 브라우저에 <b>자동 저장</b>되고, 마지막에 파일 한 개로 내보냅니다. (저장 버튼은 따로 없습니다.)</div>'
+      + step(1, "소속을 고릅니다", '상단 <b>소속</b>을 선택하세요. <b>이름은 선택 사항</b>입니다 — 제출 파일에는 이름이 들어가지 않고, 취합은 <b>소속별</b>로만 합니다.')
+      + step(2, "업무 계층을 만듭니다", '<b>계층 편집</b> 탭에서 <b>부문(lv3) › 대분류(lv4) › 중분류(lv5) › 세부업무(lv6)</b> 순으로 각 컬럼의 <b>＋</b> 를 눌러 추가합니다. 카드를 드래그해 순서를 바꾸거나 상위를 바꿀 수 있습니다.<br/>업무가 많으면 <b>내보내기/불러오기</b> 탭의 <b>📋 엑셀에서 계층 붙여넣기</b>로 부문·대분류·중분류를 한 번에 만드세요.')
+      + step(3, "세부업무(lv6)에 내용을 채웁니다", '세부업무 카드를 클릭하면 오른쪽에서 편집합니다. <b>AI 에이전트 적용 여부</b>, <b>자동화 수준</b>, <b>1회 소요시간</b>, 그리고 <b>발생 패턴</b>을 고릅니다.' + patTbl
+        + '<div style="margin-top:8px">· <b>선종</b>은 대분류(lv4)에서 지정하면 그 아래 세부업무가 물려받습니다 — 업무마다 다시 고르지 않아도 됩니다.<br/>· 채운 요약(발생패턴·부하·자동화·선종)은 <b>왼쪽 카드 배지</b>로 바로 보여, 보드에서 한눈에 확인됩니다.</div>')
+      + step(4, "제출 파일을 내보냅니다", '<b>내보내기/불러오기</b> 탭에서 <b>⬇ 제출 파일 내보내기(.json)</b> 를 눌러 파일을 받고 관리자에게 전달합니다. 소속만 자동으로 채워지고 이름은 들어가지 않습니다.')
+      + step(5, "이어서 작성 / PC 변경", '내보낸 <b>.json</b> 을 <b>내보내기/불러오기</b> 탭에서 다시 불러오면 그 시점부터 이어서 씁니다. PC 를 바꾸거나 브라우저를 초기화했을 때 사용하세요.')
+      + '<div class="solohint" style="margin-top:16px">궁금한 점은 관리자에게 문의하세요. 입력값은 부하 분석(건조 계획 × 업무 → 일 단위 부하, AI 도입 효과)에 쓰입니다.</div>'
       + "</div></div>";
   }
 
@@ -1512,6 +1549,7 @@
     var body;
     if (S.activeTab === "domain") body = pageDomain();
     else if (S.activeTab === "io") body = pageExcel();
+    else if (S.activeTab === "manual" && SOLO) body = pageManual();
     else if (S.activeTab === "hist" && !SOLO) body = pageHistory();
     else body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
@@ -1603,7 +1641,7 @@
     if (f === "author") {
       S.author = el.value;
       var sv = contentEl.querySelector(".save");
-      if (sv) { var can = SOLO ? (!!S.author && !!S.dept) : (!!S.author && S.dirty.length > 0); sv.className = "save " + (can ? "on" : "off"); }
+      if (sv) { var can = SOLO ? (!!S.dept) : (!!S.author && S.dirty.length > 0); sv.className = "save " + (can ? "on" : "off"); }
       soloSaveSoon();
       return;
     }
