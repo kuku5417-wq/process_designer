@@ -77,10 +77,16 @@ uv run streamlit run app.py --server.port 8540
 |---|---|---|
 | 상시루틴 | `freq_unit` + `freq_count` | 연간 = 횟수 × 단위연간수 × 소요시간 |
 | 호선루틴 | `freq_unit` + `freq_count` + `apply_phases[]`(복수) | **구간길이 미상 → 보류.** 나중에 trial_schedule 조인 |
-| 호선이벤트 | `base_event` + `offset_start` + `offset_days` + `per_ship_count` | 호선당 = 횟수 × 소요시간. 연간은 척수 곱해 나중에 |
+| 호선이벤트 | `events[]` — 각 `{event, offset_start, offset_days}` (마일스톤 기준 ±일) | 호선당 = **지정한 시점 수** × 소요시간. 연간은 척수 곱해 나중에 |
 
 lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **lv6 이 상속**한다
 (`shipTypesOf` → `ancestors`). lv6 에 선종 필드를 두지 말 것 — 중복되면 어긋난다.
+
+- `TRIAL_PHASES`(호선루틴 반복 구간) = 안벽→앵카링→시운전 순 7종:
+  `LC~GT+1 · GT+1~IE · AC · 통합시운전 · GasT · ST,DP · 인도준비`. trial_schedule 일정구분과 조인.
+- **lv3~lv5 붙여넣기**(`actPasteSkeleton`, `pageSoloIO`): 엑셀에서 세 열을 복사해 붙여넣으면
+  뼈대를 한 번에 만든다. 브라우저는 `.xlsx` 를 못 읽어 **탭 구분 TSV** 로 받는다(라이브러리 없음).
+  이름 경로로 dedup·병합하고 lv3 은 시드 부문 이름과 같으면 그 노드로 합쳐진다 — 두 번 붙여도 안 는다.
 
 **지켜야 할 규칙:**
 - **원자값만 저장, 곱셈은 저장 안 함.** 척수·구간길이·마일스톤 날짜·근무일은 전부 외부
@@ -89,8 +95,10 @@ lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **
   더하면 거짓이다. `stats()`·상단 지표가 버킷을 나눠 쓴다.
 - **호선루틴은 호선당 횟수를 저장하지 않는다** — `구간길이 × 주기` 파생. 그래서 주기는
   반드시 **단위당 N회(비율)** 로 받는다. 총량으로 받으면 구간길이와 합성 불가.
-- **`per_ship_count`(호선당) 를 `annual_count`(연간) 와 섞지 말 것.** 단위가 달라 한 칸에
-  담으면 엑셀 컬럼 충돌·취합 오염·집계 단위혼합이 난다.
+- **호선당 횟수를 숫자 칸으로 받지 않는다** — `events[]` 에 시점을 여러 개 지정하면 **줄 수가
+  곧 호선당 횟수**다(GT-7, AC-7 → 2줄 = 2회). "2회" 라고만 적으면 *언제* 2번인지 안 남아
+  일 단위 부하로 못 편다. 시점을 남기면 횟수·타이밍이 함께 잡힌다. 이 호선당 값을
+  `annual_count`(연간) 와 섞지 말 것 — 단위가 달라 취합 오염·집계 단위혼합이 난다.
 - `freq_unit`+`freq_count` 를 나눈 이유 — 기존 `frequency` 열거형은 `주 1회` 뿐이라 **`주 3회`
   를 표현 못 했다.** 이 분리로 상시·호선루틴이 같은 형태가 된다.
 - **`MILESTONE_EVENTS` 는 운영 12종 전부**(tbm `_PJTEVNT_MAP` 키). 사외망 더미 milestone 에
@@ -106,7 +114,8 @@ lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **
   `stats` 버킷 분리 + `GROUP_META_FIELDS`(lv4 필드를 `DETAIL_FIELDS` 에 넣으면 AI·부서
   적용률 분모가 오염된다)
 - `excel_io.py`: 신규 컬럼. **엑셀 업로드는 data_manager 패턴 참조** — 엑셀을 열어 DataFrame
-  으로 만들어 저장 (`esg_converter.py`, `parquet_io.save_parquet_atomic`)
+  으로 만들어 저장 (`esg_converter.py`, `parquet_io.save_parquet_atomic`). `events[]` 는
+  객체 배열이라 엑셀 한 칸에 못 담는다 — JSON 문자열로 직렬화하거나 시점당 행 전개를 정할 것.
 - `app.py`: 취합 시 신규 필드 미리보기·반영, **소속별 집계**
 - 부하 엔진: costplan `cost_model.compute`/`_milestone_phase_starts`/`_dates` 이식.
   척수는 pjtlist 읽기전용 + 수동 시나리오 (스키마에 넣지 말 것)

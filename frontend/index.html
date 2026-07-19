@@ -338,7 +338,8 @@
   //   호선루틴   그 호선 도는 동안 반복. 기간단위 × 횟수 + 적용구간(복수)
   //              ★ 호선당 총횟수는 저장 안 함 — 구간길이 × 주기 파생. 구간길이는 나중에
   //                trial_schedule 조인. 그래서 주기는 반드시 "단위당 N회"(비율)로 받는다.
-  //   호선이벤트 마일스톤 시점. 기준이벤트 + 오프셋 + 호선당 횟수
+  //   호선이벤트 (기준이벤트 + 오프셋) 을 **여러 개** 지정. 지정한 개수가 곧 호선당 횟수다
+  //              (GT-7일, AC-7일 각각 해야 하면 두 줄 추가 → 호선당 2회). 시점도 정확히 남는다.
   // ★ 척수는 여기 저장하지 않는다 — 시나리오마다 바뀌므로 원자값만 두고 나중에 곱한다.
   var OCCUR = { ROUTINE: "상시루틴", SHIP_ROUTINE: "호선루틴", SHIP_EVENT: "호선이벤트" };
   var OCCUR_PATTERNS = [OCCUR.ROUTINE, OCCUR.SHIP_ROUTINE, OCCUR.SHIP_EVENT];
@@ -348,8 +349,8 @@
   var FREQ_UNITS = { "일": 250, "주": 52, "월": 12, "분기": 4, "년": 1 };   // 일 = 근무일 기준
   var FREQ_UNIT_KEYS = ["일", "주", "월", "분기", "년"];
 
-  // trial_schedule.parquet 의 일정구분 — 호선루틴이 어느 구간에 걸리는지
-  var TRIAL_PHASES = ["LC~GT+1", "AC", "통합시운전", "ST,DP", "인도준비"];
+  // trial_schedule.parquet 의 일정구분 — 호선루틴이 어느 구간에 걸리는지 (안벽→앵카링→시운전 순)
+  var TRIAL_PHASES = ["LC~GT+1", "GT+1~IE", "AC", "통합시운전", "GasT", "ST,DP", "인도준비"];
 
   // tbm _PJTEVNT_MAP 12종과 동일. 사외망 더미 milestone 에 G/T 가 없는 건 나중 조인 시
   // 결측 문제일 뿐, 작성자가 고를 옵션에서 뺄 이유가 아니다.
@@ -373,7 +374,9 @@
   function loadOf(n) {
     var p = occurOf(n), h = num(n.work_hours);
     if (p === OCCUR.SHIP_EVENT) {
-      return { kind: "per_ship", hours: Math.round(h * num(n.per_ship_count) * 10) / 10 };
+      // 호선당 횟수 = 지정한 시점 수. 곱셈이 아니라 개수 세기 — 척수는 나중에 곱한다
+      var cnt = (n.events || []).length;
+      return { kind: "per_ship", hours: Math.round(h * cnt * 10) / 10 };
     }
     if (p === OCCUR.SHIP_ROUTINE) {
       // 구간길이를 모르므로 가짜 숫자를 만들지 않는다
@@ -434,8 +437,8 @@
              work_type: "", ship_types: [],
              // lv6 발생 패턴 — 부하의 원자값
              occur_pattern: "", freq_unit: "", freq_count: "",
-             apply_phases: [], base_event: "", offset_start: "", offset_days: "",
-             per_ship_count: "" };
+             apply_phases: [],                        // 호선루틴: 반복 구간(복수)
+             events: [] };                            // 호선이벤트: [{event, offset_start, offset_days}] 여러 개
   }
   /** ★ 연간(상시)과 호선당(이벤트)은 단위가 달라 한 숫자로 더하면 거짓이다. 버킷을 나눈다.
    *  호선루틴은 구간길이를 몰라 아직 연간화가 안 되므로 건수만 센다. */
@@ -600,6 +603,74 @@
     n.work_type = (n.work_type === v) ? "" : v;
     if (n.work_type !== "호선업무") n.ship_types = [];    // 일상업무엔 선종이 없다
     markDirty(id); rerender();
+  }
+  /** 호선이벤트 시점 추가/삭제/수정. 지정한 줄 수 = 호선당 횟수 (곱하기 대신 개수). */
+  function actEvAdd(id) {
+    var n = byId(id); if (!n) return;
+    if (!Array.isArray(n.events)) n.events = [];
+    n.events.push({ event: "", offset_start: "", offset_days: "" });
+    markDirty(id); rerender();
+  }
+  function actEvDel(id, idx) {
+    var n = byId(id); if (!n || !Array.isArray(n.events)) return;
+    n.events.splice(idx, 1);
+    markDirty(id); rerender();
+  }
+  function actEvSet(id, idx, key, val, refocus, noRender) {
+    var n = byId(id); if (!n || !Array.isArray(n.events) || !n.events[idx]) return;
+    n.events[idx][key] = val;
+    markDirty(id);
+    if (noRender) return;      // IME/타이핑 중 — DOM 을 갈아엎으면 캐럿·조합이 끊긴다
+    rerender(refocus);
+  }
+  /** 구버전 초안 호환 — base_event/per_ship_count 단일 필드를 events 배열로 옮긴다. */
+  function coerceEvents(n) {
+    if (!Array.isArray(n.events)) {
+      n.events = n.base_event ? [{ event: n.base_event, offset_start: n.offset_start || "", offset_days: n.offset_days || "" }] : [];
+    }
+    delete n.base_event; delete n.offset_start; delete n.offset_days; delete n.per_ship_count;
+    return n;
+  }
+  /** 엑셀에서 복사한 lv3~lv5 계층을 붙여넣어 트리에 추가한다 (탭 구분 TSV).
+   *  이름 경로로 dedup·병합 — 이미 있는 부문/대분류/중분류는 재사용하므로 두 번 붙여도 안 는다.
+   *  lv3 은 시드 부문(고정 id)과 이름이 같으면 그 노드로 합쳐진다. 라이브러리 없이 브라우저에서
+   *  도는 것이 요점 — 브라우저는 .xlsx 를 못 읽으므로 엑셀에서 Ctrl+C → 여기 Ctrl+V 한다. */
+  function actPasteSkeleton() {
+    var ta = document.getElementById("skelpaste");
+    var text = ta ? ta.value : "";
+    if (!text || !text.trim()) { flash("붙여넣은 내용이 없습니다"); return; }
+    var lines = text.split(/\r?\n/).filter(function (s) { return s.trim(); });
+    // 머리글 행 감지 — 첫 줄 셀이 라벨과 겹치면(2개 이상) 건너뛴다
+    var HEAD = { "부문": 1, "공종": 1, "lv3": 1, "대분류": 1, "lv4": 1, "중분류": 1, "소분류": 1, "lv5": 1 };
+    if (lines.length) {
+      var hit = lines[0].split("\t").map(function (c) { return c.trim(); }).filter(function (c) { return HEAD[c]; }).length;
+      if (hit >= 2) lines.shift();
+    }
+    function childByName(pid, name) {
+      for (var i = 0; i < S.nodes.length; i++) if (S.nodes[i].parent_id === pid && S.nodes[i].name === name) return S.nodes[i];
+      return null;
+    }
+    function nextOrder(pid) { var mx = -1; S.nodes.forEach(function (n) { if (n.parent_id === pid && n.order > mx) mx = n.order; }); return mx + 1; }
+    function ensure(pid, lv, name, cnt) {
+      var ex = childByName(pid, name);
+      if (ex) return ex;
+      var nn = makeNode(pid, lv, name); nn.order = nextOrder(pid);
+      S.nodes.push(nn); markDirty(nn.id); cnt[lv]++;
+      return nn;
+    }
+    var cnt = { 3: 0, 4: 0, 5: 0 }, skipped = 0, touched = false;
+    lines.forEach(function (ln) {
+      var c = ln.split("\t").map(function (x) { return x.trim(); });
+      var lv3 = c[0] || "", lv4 = c[1] || "", lv5 = c[2] || "";
+      if (!lv3) { skipped++; return; }             // 부문 없는 줄은 못 건다
+      if (lv5 && !lv4) { skipped++; return; }       // 왼쪽부터 연속이 아니면 건너뜀
+      var n3 = ensure(ROOT, 3, lv3, cnt); touched = true;
+      if (lv4) { var n4 = ensure(n3.id, 4, lv4, cnt); if (lv5) ensure(n4.id, 5, lv5, cnt); }
+    });
+    if (!touched) { flash("추가할 계층을 찾지 못했습니다 — 형식을 확인하세요"); return; }
+    if (ta) ta.value = "";
+    rerender();
+    flash("추가: 부문 " + cnt[3] + " · 대분류 " + cnt[4] + " · 중분류 " + cnt[5] + (skipped ? " (건너뜀 " + skipped + "줄)" : ""));
   }
   /** 목록에 없는 기술을 이 업무에 적용하면서 도메인 마스터에도 등록 (v1 tree_view 와 동일) */
   function actAddTech(id, raw) {
@@ -901,7 +972,7 @@
     try {
       var d = JSON.parse(text);
       if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
-      S.nodes = d.nodes.map(function (n) { return Object.assign({}, n); });
+      S.nodes = d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
       if (d.domains) S.domains = JSON.parse(JSON.stringify(d.domains));
       if (d.exported_dept) S.dept = d.exported_dept;
       if (d.exported_by) S.author = d.exported_by;
@@ -1109,18 +1180,24 @@
       + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>';
 
     if (p === OCCUR.SHIP_EVENT) {
-      // 호선당 횟수 — 연간이 아니다. 척수는 나중에 곱한다
-      h += '<div><div class="fl">호선당 횟수 <span style="color:#a8a29e;font-weight:600">· 한 척에 몇 번</span></div>'
-        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="per_ship_count" data-id="' + esc(id) + '" value="' + esc(n.per_ship_count) + '" placeholder="예: 2" /></div>'
-        + '<div><div class="fl">기준 시점</div><select class="fs" data-fkey="base_event" data-id="' + esc(id) + '">'
-        + '<option value="">— 선택 —</option>'
-        + MILESTONE_EVENTS.map(function (e) { return '<option value="' + esc(e) + '"' + (n.base_event === e ? " selected" : "") + ">" + esc(e) + "</option>"; }).join("")
-        + "</select></div>"
-        + '<div><div class="fl">시작 (기준일 ±일)</div>'
-        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="offset_start" data-id="' + esc(id) + '" value="' + esc(n.offset_start) + '" placeholder="예: -5" /></div>'
-        + '<div><div class="fl">며칠간</div>'
-        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="offset_days" data-id="' + esc(id) + '" value="' + esc(n.offset_days) + '" placeholder="예: 3" /></div>'
-        + "</div>";
+      h += "</div>";   // 1회 소요시간만 담고 grid2 닫기 — 시점은 아래에 목록으로
+      // 시점을 여러 개 지정한다. 줄 수가 곧 호선당 횟수 (GT-7, AC-7 → 2줄 = 2회).
+      var evs = n.events || [];
+      var evStyle = 'display:flex;gap:6px;align-items:center;margin-top:6px';
+      var rows = evs.map(function (ev, i) {
+        return '<div style="' + evStyle + '">'
+          + '<select class="fs" style="flex:1.4;font-size:12px;padding:7px 8px" data-fkey="ev_event" data-id="' + esc(id) + '" data-idx="' + i + '">'
+          + '<option value="">기준 시점 —</option>'
+          + MILESTONE_EVENTS.map(function (e) { return '<option value="' + esc(e) + '"' + (ev.event === e ? " selected" : "") + ">" + esc(e) + "</option>"; }).join("")
+          + "</select>"
+          + '<input class="fi" style="flex:1;font-size:12px;padding:7px 8px" data-fkey="ev_offset_start" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_start) + '" placeholder="±일 예:-7" />'
+          + '<input class="fi" style="flex:1;font-size:12px;padding:7px 8px" data-fkey="ev_offset_days" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_days) + '" placeholder="며칠 예:1" />'
+          + '<button data-act="evdel" data-id="' + esc(id) + '" data-idx="' + i + '" title="삭제" style="flex:none;border:1px solid #e7e1d6;background:#faf8f4;color:#b91c1c;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>'
+          + "</div>";
+      }).join("");
+      h += '<div style="margin-top:10px"><div class="fl">발생 시점 <span style="color:#a8a29e;font-weight:600">· 마일스톤 기준 ±일. 여러 번이면 줄 추가 (줄 수 = 호선당 횟수)</span></div>'
+        + (rows || '<div class="solohint" style="padding:6px 0">아직 시점이 없습니다. 아래 버튼으로 추가하세요.</div>')
+        + '<button data-act="evadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:12px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 시점 추가</button></div>';
     } else {
       // 상시·호선루틴 공통 — 기간단위 + 횟수. 나눠야 "주 3회" 가 표현된다
       h += '<div><div class="fl">기간 단위</div><select class="fs" data-fkey="freq_unit" data-id="' + esc(id) + '">'
@@ -1336,6 +1413,14 @@
       + '<div style="font-size:12.5px;font-weight:700;color:#57534e;margin-top:5px">내보낸 .json 파일 선택</div></label>'
       + '<input id="jsonup" type="file" accept=".json" style="display:none" data-fkey="jsonup" />'
       + '<div class="warn" style="margin-top:12px">⚠ 불러오면 지금 화면의 내용이 파일 내용으로 <b>바뀝니다</b>.</div></div>'
+      // 엑셀에서 계층(lv3~lv5)을 복사해 붙여넣기 — 카드 하나씩 만들지 않고 뼈대를 한 번에
+      + '<div class="cardbox" style="padding:22px;margin-top:14px">'
+      + '<div style="font-size:13px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv5</span></div>'
+      + '<div style="font-size:12.5px;color:#78716c;line-height:1.6">엑셀에서 <b>세 열(부문 · 대분류 · 중분류)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 세부업무(lv6)와 발생 패턴은 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
+      + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre" placeholder="선장운전	항해장비	레이더\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기"></textarea>'
+      + '<div style="margin-top:10px"><button class="primary" data-act="skelapply">📋 붙여넣기 반영</button></div>'
+      + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 대분류를 비우고 중분류만 있으면 그 줄은 건너뜁니다.<br/>'
+      + '· 첫 줄이 머리글(부문/대분류/중분류)이면 자동으로 건너뜁니다.</div></div>'
       + "</div></div>";
   }
 
@@ -1483,6 +1568,9 @@
     else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·구간 복수 선택
     else if (a === "occur") actSetOccur(d.id, d.v);
     else if (a === "worktype") actSetWorkType(d.id, d.v);
+    else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
+    else if (a === "evdel") actEvDel(d.id, +d.idx);
+    else if (a === "skelapply") actPasteSkeleton();             // lv3~lv5 붙여넣기 반영
     else if (a === "save") doSave();
     else if (a === "domtab") S.domTab = d.k, rerender();
     else if (a === "domadd") domAdd(d.k);
@@ -1521,8 +1609,13 @@
     }
     // 숫자로 강제하지 않고 **친 문자열 그대로** 저장한다. parseFloat 로 스냅시키면
     // "0." 이 "0" 이 돼 소수점을 아예 못 친다. 정리는 파이썬 normalize 가 한다.
+    // 호선이벤트 시점 목록의 오프셋 입력 — 인덱스별이라 별도 라우팅 (events[idx])
+    if (f === "ev_offset_start" || f === "ev_offset_days") {
+      var ei = +el.dataset.idx, ek = f === "ev_offset_start" ? "offset_start" : "offset_days";
+      return actEvSet(id, ei, ek, el.value, '[data-fkey="' + f + '"][data-idx="' + ei + '"]', !doRender);
+    }
     var FIELDS = { name: 1, desc: 1, owner: 1, outputs: 1, work_hours: 1, annual_count: 1,
-                   freq_count: 1, offset_start: 1, offset_days: 1, per_ship_count: 1 };
+                   freq_count: 1 };
     if (FIELDS[f]) return actUpdate(id, f, el.value, '[data-fkey="' + f + '"]', !doRender);
     // ★ dom(도메인 값)은 여기서 처리하지 않는다 — onChange(칸을 벗어날 때)에서 한 번만
     //   커밋한다. 글자마다 커밋하면 미완성 값이 노드에 박힌다.
@@ -1554,7 +1647,8 @@
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
     if (f === "frequency") return actSetFrequency(el.dataset.id, el.value);
-    if (f === "dept" || f === "automation_level" || f === "freq_unit" || f === "base_event")
+    if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
+    if (f === "dept" || f === "automation_level" || f === "freq_unit")
       return actUpdate(el.dataset.id, f, el.value);
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);
     if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
@@ -1637,7 +1731,7 @@
     // 개인 배포판: 파이썬을 기다릴 이유가 없다. localStorage 초안이 있으면 이어서, 없으면 시드로.
     var saved = soloLoad();
     if (saved) {
-      S.nodes = saved.nodes; S.domains = saved.domains || JSON.parse(JSON.stringify(DEF_DOMAINS));
+      S.nodes = saved.nodes.map(coerceEvents); S.domains = saved.domains || JSON.parse(JSON.stringify(DEF_DOMAINS));
       S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
     } else {
       S.nodes = soloSeed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS));
