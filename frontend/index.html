@@ -370,7 +370,6 @@
   var SHIP_TYPES = ["TEU", "KLNGC", "VLCC", "KBULK"];
   var SHIP_TYPE_LABEL = { TEU: "컨테이너", KLNGC: "LNG선", VLCC: "유조선", KBULK: "벌커" };
 
-  var WORK_TYPES = ["일상업무", "호선업무"];
 
   function occurOf(n) { return n.occur_pattern || OCCUR.ROUTINE; }
   /** 상시루틴의 연간 횟수 = 횟수 × 단위연간수. (호선 패턴은 척수를 몰라 연간화 불가) */
@@ -442,10 +441,8 @@
              dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "",
              frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
              work_hours: "", annual_count: "",
-             // lv4 그룹 메타 (일상/호선 + 선종 복수). lv6 은 이걸 상속만 한다.
-             work_type: "", ship_types: [],
-             // lv6 발생 패턴 — 부하의 원자값
-             occur_pattern: "", freq_unit: "", freq_count: "",
+             // lv6 발생 패턴 — 부하의 원자값. ship_types(선종)는 호선 패턴일 때 적용 필터
+             occur_pattern: "", freq_unit: "", freq_count: "", ship_types: [],
              apply_phases: [],                        // 호선루틴: 반복 구간(복수)
              events: [] };                            // 호선이벤트: [{event, offset_start, offset_days}] 여러 개
   }
@@ -605,12 +602,7 @@
   function actSetOccur(id, v) {
     var n = byId(id); if (!n) return;
     n.occur_pattern = (n.occur_pattern === v) ? "" : v;   // 다시 누르면 해제
-    markDirty(id); rerender();
-  }
-  function actSetWorkType(id, v) {
-    var n = byId(id); if (!n) return;
-    n.work_type = (n.work_type === v) ? "" : v;
-    if (n.work_type !== "호선업무") n.ship_types = [];    // 일상업무엔 선종이 없다
+    if (occurOf(n) === OCCUR.ROUTINE) n.ship_types = [];  // 상시루틴은 호선 무관 → 선종 없음
     markDirty(id); rerender();
   }
   /** 호선이벤트 시점 추가/삭제/수정. 지정한 줄 수 = 호선당 횟수 (곱하기 대신 개수). */
@@ -638,6 +630,7 @@
       n.events = n.base_event ? [{ event: n.base_event, offset_start: n.offset_start || "", offset_days: n.offset_days || "" }] : [];
     }
     delete n.base_event; delete n.offset_start; delete n.offset_days; delete n.per_ship_count;
+    delete n.work_type;   // 폐지된 필드 정리 (발생 패턴이 대신함)
     return n;
   }
   /** 엑셀에서 복사한 lv3~lv5 계층을 붙여넣어 트리에 추가한다 (탭 구분 TSV).
@@ -1241,7 +1234,14 @@
       }
     }
 
-    // 부하 수치·적용 선종은 왼쪽 카드 배지로 옮겼다 (패널 스크롤 축소).
+    // 선종 — 호선 패턴(호선루틴·호선이벤트)에서만. 부하 계산이 "호선.선종 ∈ 업무.선종" 으로
+    // 조인하는 적용 필터다. 상시루틴은 호선 무관이라 선종이 없다. (예전 work_type 게이트 폐지)
+    if (p === OCCUR.SHIP_ROUTINE || p === OCCUR.SHIP_EVENT) {
+      h += chipRow(id, "ship_types", SHIP_TYPES.map(function (s) { return { v: s, t: SHIP_TYPE_LABEL[s] + " " + s }; }),
+                   n.ship_types, '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>');
+    }
+
+    // 부하 수치는 왼쪽 카드 배지로 옮겼다 (패널 스크롤 축소).
     // 여기선 아직 못 채운 경우에만 한 줄로 안내한다.
     var L = loadOf(n);
     if (L.kind === "annual" && !L.hours)
@@ -1253,22 +1253,6 @@
     return h;
   }
 
-  /** lv4 그룹 메타 — 일상/호선 유형과 선종(복수). lv6 은 여기서 상속만 한다. */
-  /** 업무 유형(일상/호선) + 선종 — lv6 세부업무에서 입력한다 (예전엔 lv4 그룹에서 받았음). */
-  function typeShipBlock(n, id) {
-    var wt = n.work_type || "";
-    var typeChips = WORK_TYPES.map(function (t) {
-      return '<button class="tchip' + (wt === t ? " on" : "") + '" data-act="worktype" data-id="' + esc(id)
-        + '" data-v="' + esc(t) + '">' + esc(t) + "</button>";
-    }).join("");
-    var h = '<div style="margin-top:6px;padding-top:14px;border-top:1px dashed #e7e1d6">'
-      + '<div class="fl">업무 유형</div><div class="techrow">' + typeChips + "</div></div>";
-    if (wt === "호선업무") {
-      h += chipRow(id, "ship_types", SHIP_TYPES.map(function (s) { return { v: s, t: SHIP_TYPE_LABEL[s] + " " + s }; }),
-                   n.ship_types, '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>');
-    }
-    return h;
-  }
 
   function panel() {
     if (!S.selectedId) {
@@ -1308,7 +1292,7 @@
            + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
            + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>')
         + "</div>"
-        + (SOLO ? (typeShipBlock(n, id) + occurBlock(n, id))
+        + (SOLO ? occurBlock(n, id)
                 : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
                   + '<span>1회 소요시간 × 연간 횟수</span></div>')
         + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
@@ -1620,7 +1604,6 @@
     else if (a === "tech") actToggleTech(d.id, d.t);
     else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·구간 복수 선택
     else if (a === "occur") actSetOccur(d.id, d.v);
-    else if (a === "worktype") actSetWorkType(d.id, d.v);
     else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
     else if (a === "evdel") actEvDel(d.id, +d.idx);
     else if (a === "skelapply") actPasteSkeleton();             // lv3~lv5 붙여넣기 반영

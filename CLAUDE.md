@@ -79,9 +79,13 @@ uv run streamlit run app.py --server.port 8540
 | 호선루틴 | `freq_unit` + `freq_count` + `apply_phases[]`(복수) | **구간길이 미상 → 보류.** 나중에 trial_schedule 조인 |
 | 호선이벤트 | `events[]` — 각 `{event, offset_start, offset_days}` (마일스톤 기준 ±일) | 호선당 = **지정한 시점 수** × 소요시간. 연간은 척수 곱해 나중에 |
 
-`work_type`(일상/호선) + `ship_types[]`(선종 복수)는 **lv6 세부업무에서 직접 입력**한다
-(`typeShipBlock`). 예전엔 lv4 그룹에서 받아 lv6 이 상속했으나, lv4 구분이 무의미해 lv6 으로 옮겼다.
-`shipTypesOf(id)`는 이제 조상을 뒤지지 않고 **노드 자신의 `ship_types`**를 돌려준다(카드 배지용).
+`ship_types[]`(선종 복수)는 **lv6 발생 패턴 블록 안에서**, 호선 패턴(호선루틴·호선이벤트)일 때만
+입력한다. 부하 계산이 `호선.선종 ∈ 업무.선종`으로 조인하는 **적용 필터**다 — 호선 리스트의 선종("이
+배는 LNG선")과 역할이 다르다(없으면 모든 호선 업무가 전 선종에 적용돼 부하가 부풀려진다). 상시루틴은
+호선 무관이라 선종이 없다. `shipTypesOf(id)`는 **노드 자신의 `ship_types`**를 돌려준다(카드 배지용).
+
+> `work_type`(일상/호선)은 **폐지**했다 — 발생 패턴(상시루틴=일상, 호선루틴·호선이벤트=호선)과 완전히
+> 중복이고 부하 계산이 전부 발생 패턴으로 분기하므로 쓰이지 않는다. `coerceEvents`가 구 필드를 정리한다.
 
 - `TRIAL_PHASES`(호선루틴 반복 구간) = 안벽→앵카링→시운전 순 7종:
   `LC~GT+1 · GT+1~IE · AC · 통합시운전 · GasT · ST,DP · 인도준비`. trial_schedule 일정구분과 조인.
