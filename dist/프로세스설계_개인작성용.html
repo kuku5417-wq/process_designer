@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -52,31 +52,31 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .treewrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .brand { display: flex; align-items: center; gap: 10px; }
   .logo { width: 30px; height: 30px; border-radius: 8px; background: #0f766e; color: #fff;
-    display: flex; align-items: center; justify-content: center; font-size: 15px; }
-  .btitle { font-size: 14.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1.15; }
-  .bsub { font-size: 10.5px; color: #a8a29e; font-weight: 600; }
+    display: flex; align-items: center; justify-content: center; font-size: 17px; }
+  .btitle { font-size: 16.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1.15; }
+  .bsub { font-size: 12.5px; color: #a8a29e; font-weight: 600; }
   .tabs { display: flex; gap: 2px; background: #f0ede6; padding: 3px; border-radius: 9px; }
-  .tab { padding: 6px 13px; border-radius: 7px; font-size: 12px; font-weight: 700; cursor: pointer;
+  .tab { padding: 6px 13px; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer;
     white-space: nowrap; color: #78716c; border: none; background: transparent; }
   .tab.on { background: #fff; color: #0f766e; box-shadow: 0 1px 3px rgba(28,25,23,.13); }
   .seg { display: flex; gap: 3px; background: #f0ede6; padding: 3px; border-radius: 9px; }
-  .segb { padding: 6px 13px; border-radius: 7px; font-size: 11.5px; font-weight: 700; cursor: pointer;
+  .segb { padding: 6px 13px; border-radius: 7px; font-size: 13.5px; font-weight: 700; cursor: pointer;
     color: #78716c; border: none; background: transparent; }
   .segb.on { background: #fff; color: #0f766e; box-shadow: 0 1px 3px rgba(28,25,23,.12); }
   .grow { flex: 1; }
   .pill { display: flex; align-items: center; gap: 8px; padding: 5px 11px; background: #f0fdfa;
     border: 1px solid #99f6e4; border-radius: 9px; }
-  .pill b { font-size: 11px; color: #115e59; }
-  .pill span { font-size: 10.5px; color: #78716c; }
+  .pill b { font-size: 13px; color: #115e59; }
+  .pill span { font-size: 12.5px; color: #78716c; }
   .authwrap { display: flex; align-items: center; gap: 7px; }
-  .authwrap label { font-size: 11px; color: #a8a29e; font-weight: 600; }
-  .authinput { width: 104px; font-size: 12px; padding: 6px 9px; border: 1px solid #e7e1d6;
+  .authwrap label { font-size: 13px; color: #a8a29e; font-weight: 600; }
+  .authinput { width: 104px; font-size: 14px; padding: 6px 9px; border: 1px solid #e7e1d6;
     border-radius: 8px; outline: none; }
   .authinput:focus { border-color: #0f766e; }
-  .badge { font-size: 11.5px; font-weight: 700; padding: 6px 11px; border-radius: 9px; }
+  .badge { font-size: 13.5px; font-weight: 700; padding: 6px 11px; border-radius: 9px; }
   .badge.clean { color: #78716c; background: #f0ede6; }
   .badge.dirty { color: #92400e; background: #fef3c7; border: 1px solid #fde68a; font-weight: 800; }
-  .save { font-size: 12.5px; font-weight: 800; padding: 7px 16px; border-radius: 9px; border: none;
+  .save { font-size: 14.5px; font-weight: 800; padding: 7px 16px; border-radius: 9px; border: none;
     color: #fff; }
   .save.on { background: #0f766e; cursor: pointer; }
   .save.off { background: #cabfb0; cursor: not-allowed; }
@@ -84,14 +84,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
 
   .crumb { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 10px 20px;
     background: #faf8f3; border-bottom: 1px solid #f4f1ea; flex: none; }
-  .chip { border-radius: 999px; padding: 3px 11px; font-size: 11.5px; font-weight: 700; }
+  .chip { border-radius: 999px; padding: 3px 11px; font-size: 13.5px; font-weight: 700; }
   .chip.fix { background: #e7e1d6; color: #57534e; }
   .chip.cur { background: #0f766e; color: #fff; }
-  .sep { color: #cabfb0; font-size: 12px; }
-  .crumbtail { font-size: 11px; color: #a8a29e; }
-  .crumbsel { border: 1px solid #99f6e4; border-radius: 999px; padding: 3px 12px; font-size: 11.5px;
+  .sep { color: #cabfb0; font-size: 14px; }
+  .crumbtail { font-size: 13px; color: #a8a29e; }
+  .crumbsel { border: 1px solid #99f6e4; border-radius: 999px; padding: 3px 12px; font-size: 13.5px;
     font-weight: 800; color: #0f766e; background: #f0fdfa; cursor: pointer; outline: none; }
-  .crumbbtn { border: 1px solid #d8cfc0; border-radius: 999px; padding: 3px 9px; font-size: 11px;
+  .crumbbtn { border: 1px solid #d8cfc0; border-radius: 999px; padding: 3px 9px; font-size: 13px;
     font-weight: 700; cursor: pointer; background: #fff; color: #57534e; margin-left: 4px; }
   .crumbbtn.add { border-color: #99f6e4; color: #0f766e; background: #f0fdfa; }
   .crumbbtn.del { border-color: #f0d9d9; color: #b91c1c; }
@@ -106,10 +106,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .col.off { opacity: .6; }
   .colhead { display: flex; align-items: center; justify-content: space-between; gap: 6px;
     padding: 10px 12px; border-bottom: 1px solid #ece6da; }
-  .colhead .t { font-size: 11.5px; font-weight: 800; color: #57534e; }
-  .colhead .n { font-size: 11px; color: #a8a29e; font-weight: 700; }
+  .colhead .t { font-size: 13.5px; font-weight: 800; color: #57534e; }
+  .colhead .n { font-size: 13px; color: #a8a29e; font-weight: 700; }
   .list { flex: 1; overflow-y: auto; padding: 9px; display: flex; flex-direction: column; gap: 7px; }
-  .emptyhint { color: #b8b0a4; font-size: 11.5px; padding: 14px 6px; text-align: center; line-height: 1.5; }
+  .emptyhint { color: #b8b0a4; font-size: 13.5px; padding: 14px 6px; text-align: center; line-height: 1.5; }
   .card { background: #fff; border: 1px solid #e7e1d6; border-left: 3px solid #cabfb0;
     border-radius: 10px; padding: 11px 13px; cursor: pointer; transition: border-color .12s; }
   .card:hover { border-color: #5eead4; }
@@ -117,13 +117,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     box-shadow: 0 2px 8px rgba(15,118,110,.12); }
   .card.path { background: #f7fdfc; border-left-color: #5eead4; }
   .card .top1 { display: flex; align-items: flex-start; gap: 6px; }
-  .card .nm { flex: 1; font-size: 13px; font-weight: 700; line-height: 1.35; word-break: break-all; }
+  .card .nm { flex: 1; font-size: 15px; font-weight: 700; line-height: 1.35; word-break: break-all; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; margin-top: 4px; flex: none;
     box-shadow: 0 0 0 3px #fef3c7; }
-  .cdesc { margin-top: 3px; font-size: 10.5px; color: #a8a29e; line-height: 1.4; overflow: hidden;
+  .cdesc { margin-top: 3px; font-size: 12.5px; color: #a8a29e; line-height: 1.4; overflow: hidden;
     white-space: nowrap; text-overflow: ellipsis; }
   .meta { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 4px; }
-  .mc { font-size: 9.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; line-height: 16px; }
+  .mc { font-size: 11.5px; font-weight: 600; padding: 1px 6px; border-radius: 4px; line-height: 16px; }
   .mc.ai { background: #dcfce7; color: #166534; font-weight: 800; }
   .mc.dept { background: #e0e7ff; color: #3730a3; }
   .mc.kids { background: #fff7ed; color: #9a3412; font-weight: 700; }
@@ -133,24 +133,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .mc.auto { background: #fef9c3; color: #854d0e; }
   .mc.ship { background: #e0f2fe; color: #075985; }
   .addbtn { border: 1.5px dashed #cabfb0; background: #fff; color: #78716c; border-radius: 8px;
-    padding: 8px; font-size: 12px; font-weight: 700; cursor: pointer; }
+    padding: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
   .addbtn:hover { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
 
-  .revcap { font-size: 11px; font-weight: 700; color: #a8a29e; white-space: nowrap; }
+  .revcap { font-size: 13px; font-weight: 700; color: #a8a29e; white-space: nowrap; }
 
   /* 연간 공수 — 1회 소요시간 × 연간 횟수 (읽기 전용 파생값) */
   .mh { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; padding: 9px 12px;
     background: #f0fdfa; border: 1px solid #99f6e4; border-radius: 9px; }
-  .mh b { font-size: 13.5px; font-weight: 800; color: #0f766e; }
-  .mh span { font-size: 10.5px; color: #5eead4; font-weight: 600; }
-  .solohint { font-size: 11.5px; color: #a8a29e; padding: 10px 2px 0; line-height: 1.6; }
+  .mh b { font-size: 15.5px; font-weight: 800; color: #0f766e; }
+  .mh span { font-size: 12.5px; color: #5eead4; font-weight: 600; }
+  .solohint { font-size: 13.5px; color: #a8a29e; padding: 10px 2px 0; line-height: 1.6; }
 
   /* ── 검색 ── */
   .searchbox { position: relative; display: flex; align-items: center; gap: 6px; flex: none; }
-  .searchbox input { width: 190px; font-size: 12px; padding: 6px 10px; border: 1px solid #e7e1d6;
+  .searchbox input { width: 190px; font-size: 14px; padding: 6px 10px; border: 1px solid #e7e1d6;
     border-radius: 8px; outline: none; background: #fff; color: #44403c; }
   .searchbox input:focus { border-color: #0f766e; }
-  .searchbox .shits { font-size: 11px; font-weight: 800; color: #92400e; background: #fef3c7;
+  .searchbox .shits { font-size: 13px; font-weight: 800; color: #92400e; background: #fef3c7;
     border-radius: 6px; padding: 2px 7px; white-space: nowrap; }
   /* 검색어에 맞는 카드·행 강조 */
   .card.hit { box-shadow: 0 0 0 2px #f59e0b; }
@@ -161,10 +161,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     display: flex; align-items: center; justify-content: center; padding: 20px; }
   .modal { background: #fff; border-radius: 14px; padding: 24px; max-width: 440px; width: 100%;
     box-shadow: 0 12px 40px rgba(0,0,0,.24); }
-  .modal .mtitle { font-size: 15px; font-weight: 800; color: #1c1917; }
-  .modal .mbody { margin-top: 9px; font-size: 12.5px; color: #57534e; line-height: 1.6; }
+  .modal .mtitle { font-size: 17px; font-weight: 800; color: #1c1917; }
+  .modal .mbody { margin-top: 9px; font-size: 14.5px; color: #57534e; line-height: 1.6; }
   .modal .mbtns { margin-top: 20px; display: flex; gap: 8px; justify-content: flex-end; }
-  .modal button { font-size: 12.5px; font-weight: 800; padding: 9px 16px; border-radius: 9px;
+  .modal button { font-size: 14.5px; font-weight: 800; padding: 9px 16px; border-radius: 9px;
     border: none; cursor: pointer; }
   .modal .mcancel { background: #f0ede6; color: #57534e; }
   .modal .mdanger { background: #b91c1c; color: #fff; }
@@ -178,7 +178,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .cdrop { display: none; margin-top: 8px; border: 2px dashed #cabfb0; border-radius: 8px;
     min-height: 26px; background: #faf8f3; }
   .cdrop::after { content: "여기로 옮기기"; display: block; text-align: center;
-    font-size: 9.5px; color: #b8b0a4; line-height: 22px; }
+    font-size: 11.5px; color: #b8b0a4; line-height: 22px; }
   body.dragL4 .cdrop.acc4, body.dragL5 .cdrop.acc5, body.dragL6 .cdrop.acc6 { display: block; }
   /* forceFallback 이라 네이티브 dragenter 가 없다 — 고스트는 pointer-events 가 없어 :hover 가 걸린다 */
   body.dragging .cdrop:hover { border-color: #0f766e; background: #ccfbf1; }
@@ -189,24 +189,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     flex-direction: column; overflow: hidden; min-height: 0; }
   .outhead { display: flex; align-items: center; gap: 10px; padding: 11px 16px;
     border-bottom: 1px solid #f4f1ea; flex: none; }
-  .outhead .h1 { font-size: 12.5px; font-weight: 800; color: #44403c; }
-  .outhead .h2 { font-size: 11px; color: #a8a29e; }
-  .minibtn { font-size: 11px; font-weight: 700; color: #78716c; background: #f0ede6; border: none;
+  .outhead .h1 { font-size: 14.5px; font-weight: 800; color: #44403c; }
+  .outhead .h2 { font-size: 13px; color: #a8a29e; }
+  .minibtn { font-size: 13px; font-weight: 700; color: #78716c; background: #f0ede6; border: none;
     border-radius: 7px; padding: 6px 11px; cursor: pointer; }
   .minibtn.p { color: #fff; background: #0f766e; font-weight: 800; }
   .row { display: flex; align-items: center; border-radius: 8px; margin-bottom: 1px; }
   .row:hover { background: #faf8f3; }
   .row.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; }
-  .tog { width: 22px; text-align: center; font-size: 10px; color: #a8a29e; padding: 10px 0; flex: none; }
+  .tog { width: 22px; text-align: center; font-size: 12px; color: #a8a29e; padding: 10px 0; flex: none; }
   .rowmain { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; min-width: 0; }
-  .lvb { font-size: 9px; font-weight: 800; padding: 2px 5px; border-radius: 4px; flex: none; }
+  .lvb { font-size: 11px; font-weight: 800; padding: 2px 5px; border-radius: 4px; flex: none; }
   .lvb.d { background: #99f6e4; color: #115e59; }
   .lvb.g { background: #f0ede6; color: #78716c; }
-  .rowname { font-size: 12.5px; font-weight: 600; color: #1c1917; white-space: nowrap; overflow: hidden;
+  .rowname { font-size: 14.5px; font-weight: 600; color: #1c1917; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
-  .rowdesc { font-size: 10.5px; color: #a8a29e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .rowdesc { font-size: 12.5px; color: #a8a29e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     max-width: 240px; }
-  .rowadd { font-size: 15px; font-weight: 800; color: #b8b0a4; background: transparent; border: none;
+  .rowadd { font-size: 17px; font-weight: 800; color: #b8b0a4; background: transparent; border: none;
     cursor: pointer; padding: 4px 12px; }
   .rowadd:hover { color: #0f766e; }
 
@@ -216,26 +216,26 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .phead { padding: 15px 18px; border-bottom: 1px solid #f4f1ea; }
   .phead.d { background: #f0fdfa; }
   .prow { display: flex; align-items: center; gap: 8px; }
-  .ptag { font-size: 10px; font-weight: 800; color: #78716c; background: #f0ede6; padding: 2px 6px;
+  .ptag { font-size: 12px; font-weight: 800; color: #78716c; background: #f0ede6; padding: 2px 6px;
     border-radius: 5px; }
-  .plv { font-size: 10.5px; font-weight: 800; padding: 2px 8px; border-radius: 6px; }
+  .plv { font-size: 12.5px; font-weight: 800; padding: 2px 8px; border-radius: 6px; }
   .plv.d { background: #99f6e4; color: #115e59; }
   .plv.g { background: #f0ede6; color: #57534e; }
-  .punsaved { font-size: 10.5px; font-weight: 700; color: #92400e; background: #fef3c7; padding: 2px 7px;
+  .punsaved { font-size: 12.5px; font-weight: 700; color: #92400e; background: #fef3c7; padding: 2px 7px;
     border-radius: 5px; }
-  .pname { margin-top: 8px; font-size: 13.5px; font-weight: 800; line-height: 1.3; word-break: break-all; }
-  .ppath { margin-top: 3px; font-size: 10.5px; color: #a8a29e; }
+  .pname { margin-top: 8px; font-size: 15.5px; font-weight: 800; line-height: 1.3; word-break: break-all; }
+  .ppath { margin-top: 3px; font-size: 12.5px; color: #a8a29e; }
   .pbody { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 11px; }
-  .fl { font-size: 11.5px; font-weight: 700; color: #57534e; margin-bottom: 5px; }
-  .fi { width: 100%; font-size: 13px; padding: 9px 11px; border: 1px solid #d8cfc0; border-radius: 9px; outline: none; }
+  .fl { font-size: 13.5px; font-weight: 700; color: #57534e; margin-bottom: 5px; }
+  .fi { width: 100%; font-size: 15px; padding: 9px 11px; border: 1px solid #d8cfc0; border-radius: 9px; outline: none; }
   .fi:focus, .fa:focus, .fs:focus { border-color: #0f766e; }
-  .fa { width: 100%; height: 50px; font-size: 12.5px; padding: 8px 11px; border: 1px solid #d8cfc0;
+  .fa { width: 100%; height: 50px; font-size: 14.5px; padding: 8px 11px; border: 1px solid #d8cfc0;
     border-radius: 9px; outline: none; resize: none; line-height: 1.5; }
-  .fs { width: 100%; font-size: 12.5px; padding: 8px 10px; border: 1px solid #d8cfc0; border-radius: 8px;
+  .fs { width: 100%; font-size: 14.5px; padding: 8px 10px; border: 1px solid #d8cfc0; border-radius: 8px;
     outline: none; background: #fff; cursor: pointer; }
-  .note { font-size: 11.5px; color: #78716c; background: #f8f6f1; border: 1px solid #f0ede6;
+  .note { font-size: 13.5px; color: #78716c; background: #f8f6f1; border: 1px solid #f0ede6;
     border-radius: 10px; padding: 12px 13px; line-height: 1.6; }
-  .warn { font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
+  .warn { font-size: 13px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
     border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
@@ -246,13 +246,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
   .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
   .aiflex input { width: 17px; height: 17px; accent-color: #16a34a; cursor: pointer; }
-  .ait { font-size: 12.5px; font-weight: 800; }
-  .aih { font-size: 10.5px; color: #a8a29e; margin-top: 1px; }
+  .ait { font-size: 14.5px; font-weight: 800; }
+  .aih { font-size: 12.5px; color: #a8a29e; margin-top: 1px; }
   .techrow { display: flex; flex-wrap: wrap; gap: 6px; }
-  .tchip { font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+  .tchip { font-size: 13.5px; font-weight: 700; padding: 5px 11px; border-radius: 8px; cursor: pointer;
     border: 1px solid #d8cfc0; background: #fff; color: #78716c; }
   .tchip.on { border-color: #0f766e; background: #0f766e; color: #fff; }
-  .delbtn { font-size: 11.5px; color: #b91c1c; background: #fff; border: 1px solid #fecaca; border-radius: 8px;
+  .delbtn { font-size: 13.5px; color: #b91c1c; background: #fff; border: 1px solid #fecaca; border-radius: 8px;
     padding: 8px 13px; cursor: pointer; font-weight: 700; }
   .delbtn:hover { background: #fef2f2; }
   .pempty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -261,52 +261,52 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
   /* 일반 화면 (도메인/엑셀/이력) */
   .page { flex: 1; overflow-y: auto; padding: 24px 30px; min-height: 0; }
   .pw { max-width: 900px; }
-  .h1 { font-size: 17px; font-weight: 800; }
-  .sub { font-size: 12.5px; color: #78716c; margin-top: 4px; line-height: 1.55; }
+  .h1 { font-size: 19px; font-weight: 800; }
+  .sub { font-size: 14.5px; color: #78716c; margin-top: 4px; line-height: 1.55; }
   .subtabs { display: flex; gap: 8px; margin: 18px 0 16px; flex-wrap: wrap; }
-  .stab { padding: 8px 15px; border-radius: 9px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  .stab { padding: 8px 15px; border-radius: 9px; font-size: 14.5px; font-weight: 700; cursor: pointer;
     background: #f0ede6; color: #78716c; border: none; }
   .stab.on { background: #0f766e; color: #fff; }
   .cardbox { background: #fff; border: 1px solid #ece6da; border-radius: 14px; overflow: hidden; }
   .dhead, .drow { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; padding: 10px 16px; }
-  .dhead { background: #faf8f3; border-bottom: 1px solid #f4f1ea; font-size: 11px; font-weight: 800; color: #a8a29e; }
+  .dhead { background: #faf8f3; border-bottom: 1px solid #f4f1ea; font-size: 13px; font-weight: 800; color: #a8a29e; }
   .drow { border-bottom: 1px solid #f7f4ee; }
-  .dinput { font-size: 13px; font-weight: 600; padding: 8px 11px; border: 1px solid #e7e1d6; border-radius: 8px; outline: none; color: #1c1917; }
+  .dinput { font-size: 15px; font-weight: 600; padding: 8px 11px; border: 1px solid #e7e1d6; border-radius: 8px; outline: none; color: #1c1917; }
   .dinput:focus { border-color: #0f766e; }
-  .use { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .use { font-size: 13px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
   .use.y { background: #ccfbf1; color: #115e59; }
   .use.n { background: #f0ede6; color: #a8a29e; }
-  .dadd { font-size: 12.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1.5px dashed #5eead4;
+  .dadd { font-size: 14.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1.5px dashed #5eead4;
     border-radius: 9px; padding: 9px 14px; cursor: pointer; }
   .dadd:hover { background: #ccfbf1; }
   .drop { border: 2px dashed #d8cfc0; border-radius: 12px; padding: 34px; text-align: center; cursor: pointer; background: #faf8f3; }
   .drop:hover { border-color: #0f766e; background: #f0fdfa; }
   .metricgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
   .metric { background: #fff; border: 1px solid #ece6da; border-radius: 12px; padding: 15px 16px; }
-  .metric .l { font-size: 11.5px; color: #78716c; font-weight: 600; }
+  .metric .l { font-size: 13.5px; color: #78716c; font-weight: 600; }
   .metric .v { font-size: 26px; font-weight: 800; margin-top: 3px; }
-  .metric .h { font-size: 11px; color: #0f766e; font-weight: 700; margin-top: 1px; }
+  .metric .h { font-size: 13px; color: #0f766e; font-weight: 700; margin-top: 1px; }
   .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
   .tbl { background: #fff; border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
-  .tbl .th { padding: 10px 15px; font-size: 12px; font-weight: 800; color: #57534e; background: #faf8f3; border-bottom: 1px solid #f4f1ea; }
-  .tbl .tr { display: flex; justify-content: space-between; padding: 8px 15px; font-size: 12.5px; border-bottom: 1px solid #f7f4ee; }
-  .primary { font-size: 13px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
-  .secondary { font-size: 13px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
-  .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 12.5px; border-radius: 9px; }
+  .tbl .th { padding: 10px 15px; font-size: 14px; font-weight: 800; color: #57534e; background: #faf8f3; border-bottom: 1px solid #f4f1ea; }
+  .tbl .tr { display: flex; justify-content: space-between; padding: 8px 15px; font-size: 14.5px; border-bottom: 1px solid #f7f4ee; }
+  .primary { font-size: 15px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .secondary { font-size: 15px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
   .histrow.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; font-weight: 700; }
   .diffgrid { display: flex; gap: 12px; }
   .diff { flex: 1; border-radius: 11px; padding: 14px; text-align: center; }
   .diff .dv { font-size: 24px; font-weight: 800; }
-  .diff .dl { font-size: 11.5px; font-weight: 700; margin-top: 2px; }
-  .actx { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 6px; }
+  .diff .dl { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
+  .actx { font-size: 13px; font-weight: 700; padding: 2px 9px; border-radius: 6px; }
 
   /* 배너 / 플래시 */
-  .banner { padding: 12px 20px; font-size: 12.5px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .banner { padding: 12px 20px; font-size: 14.5px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .banner.info { background: #eff6ff; color: #1e40af; border-bottom: 1px solid #dbeafe; }
   .banner.conf { background: #fef2f2; color: #991b1b; border-bottom: 1px solid #fecaca; }
-  .banner button { font-size: 11.5px; font-weight: 700; padding: 5px 11px; border-radius: 7px; border: 1px solid currentColor; background: #fff; cursor: pointer; }
+  .banner button { font-size: 13.5px; font-weight: 700; padding: 5px 11px; border-radius: 7px; border: 1px solid currentColor; background: #fff; cursor: pointer; }
   .flash { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #1c1917;
-    color: #fff; font-size: 12.5px; font-weight: 600; padding: 10px 18px; border-radius: 10px;
+    color: #fff; font-size: 14.5px; font-weight: 600; padding: 10px 18px; border-radius: 10px;
     box-shadow: 0 6px 24px rgba(28,25,23,.28); z-index: 50; }
 </style>
 </head>
@@ -1222,7 +1222,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
 
     // 1회 소요시간은 세 패턴 공통 — 부하의 원자 단위
     var whCell = '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
-      + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>';
+      + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>';
 
     if (p === OCCUR.SHIP_EVENT) {
       h += '<div style="margin-top:10px">' + whCell + "</div>";   // 소요시간만 (시점은 아래 목록)
@@ -1231,18 +1231,18 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
       var evStyle = 'display:flex;gap:6px;align-items:center;margin-top:6px';
       var rows = evs.map(function (ev, i) {
         return '<div style="' + evStyle + '">'
-          + '<select class="fs" style="flex:1.4;font-size:12px;padding:7px 8px" data-fkey="ev_event" data-id="' + esc(id) + '" data-idx="' + i + '">'
+          + '<select class="fs" style="flex:1.4;font-size:14px;padding:7px 8px" data-fkey="ev_event" data-id="' + esc(id) + '" data-idx="' + i + '">'
           + '<option value="">기준 시점 —</option>'
           + MILESTONE_EVENTS.map(function (e) { return '<option value="' + esc(e) + '"' + (ev.event === e ? " selected" : "") + ">" + esc(e) + "</option>"; }).join("")
           + "</select>"
-          + '<input class="fi" style="flex:1;font-size:12px;padding:7px 8px" data-fkey="ev_offset_start" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_start) + '" placeholder="±일 예:-7" />'
-          + '<input class="fi" style="flex:1;font-size:12px;padding:7px 8px" data-fkey="ev_offset_days" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_days) + '" placeholder="며칠 예:1" />'
-          + '<button data-act="evdel" data-id="' + esc(id) + '" data-idx="' + i + '" title="삭제" style="flex:none;border:1px solid #e7e1d6;background:#faf8f4;color:#b91c1c;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>'
+          + '<input class="fi" style="flex:1;font-size:14px;padding:7px 8px" data-fkey="ev_offset_start" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_start) + '" placeholder="±일 예:-7" />'
+          + '<input class="fi" style="flex:1;font-size:14px;padding:7px 8px" data-fkey="ev_offset_days" data-id="' + esc(id) + '" data-idx="' + i + '" value="' + esc(ev.offset_days) + '" placeholder="며칠 예:1" />'
+          + '<button data-act="evdel" data-id="' + esc(id) + '" data-idx="' + i + '" title="삭제" style="flex:none;border:1px solid #e7e1d6;background:#faf8f4;color:#b91c1c;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:15px">✕</button>'
           + "</div>";
       }).join("");
       h += '<div style="margin-top:10px"><div class="fl">발생 시점 <span style="color:#a8a29e;font-weight:600">· 마일스톤 기준 ±일. 여러 번이면 줄 추가 (줄 수 = 호선당 횟수)</span></div>'
         + (rows || '<div class="solohint" style="padding:6px 0">아직 시점이 없습니다. 아래 버튼으로 추가하세요.</div>')
-        + '<button data-act="evadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:12px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 시점 추가</button></div>';
+        + '<button data-act="evadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:14px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 시점 추가</button></div>';
     } else {
       // 상시·호선루틴 공통 — 소요시간·기간단위·횟수를 한 줄(grid3)로. 나눠야 "주 3회" 가 표현된다
       h += '<div class="grid3" style="margin-top:10px">' + whCell
@@ -1251,7 +1251,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
         + FREQ_UNIT_KEYS.map(function (u) { return '<option value="' + esc(u) + '"' + (n.freq_unit === u ? " selected" : "") + ">" + esc(u) + "</option>"; }).join("")
         + "</select></div>"
         + '<div><div class="fl">횟수 <span style="color:#a8a29e;font-weight:600">· 단위당</span></div>'
-        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="freq_count" data-id="' + esc(id) + '" value="' + esc(n.freq_count) + '" placeholder="예: 3" /></div>'
+        + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="freq_count" data-id="' + esc(id) + '" value="' + esc(n.freq_count) + '" placeholder="예: 3" /></div>'
         + "</div>";
       if (p === OCCUR.SHIP_ROUTINE) {
         h += chipRow(id, "apply_phases", TRIAL_PHASES, n.apply_phases,
@@ -1281,7 +1281,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
 
   function panel() {
     if (!S.selectedId) {
-      return '<div class="panel"><div class="pempty"><div style="font-size:34px">👈</div><div style="font-size:13px;font-weight:700;color:#57534e">카드를 선택하면 여기서 편집합니다</div><div style="font-size:11.5px;color:#a8a29e;line-height:1.6">각 컬럼의 <b>＋</b> 로 새 업무를 추가하고,<br/>내용은 입력 즉시 반영됩니다. 마치면 상단 <b>저장</b>.</div></div></div>';
+      return '<div class="panel"><div class="pempty"><div style="font-size:34px">👈</div><div style="font-size:15px;font-weight:700;color:#57534e">카드를 선택하면 여기서 편집합니다</div><div style="font-size:13.5px;color:#a8a29e;line-height:1.6">각 컬럼의 <b>＋</b> 로 새 업무를 추가하고,<br/>내용은 입력 즉시 반영됩니다. 마치면 상단 <b>저장</b>.</div></div></div>';
     }
     var n = byId(S.selectedId); if (!n) return '<div class="panel"></div>';
     var detail = hasDetail(n.level), lv = n.level, id = n.id;
@@ -1289,7 +1289,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var head = '<div class="phead ' + (detail ? "d" : "g") + '"><div class="prow"><span class="ptag">지금 편집 중</span>'
       + '<span class="plv ' + (detail ? "d" : "g") + '">lv' + lv + " · " + esc(LABELS[lv]) + "</span>"
       + (dirty ? '<span class="punsaved">● 미저장</span>' : "") + "</div>"
-      + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:11px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
+      + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:13px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
       + '<div class="ppath">' + esc(pathNames(id).join("  ›  ")) + "</div></div>";
 
     // 상단 전폭: 이름 + 설명 (2열)
@@ -1318,24 +1318,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
       var nonSolo = SOLO ? "" :
              '<div class="grid2">'
            + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
-           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
+           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
            + '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
            + '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
-           + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
+           + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
            + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
-           + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
+           + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
            + "</div>";
       var occ = SOLO ? occurBlock(n, id)
                      : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
                        + '<span>1회 소요시간 × 연간 횟수</span></div>';
       var techBlock = '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
-        + '<input class="fi" style="font-size:12px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>';
-      var outputsBlock = '<div><div class="fl">산출물</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>';
+        + '<input class="fi" style="font-size:14px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>';
+      var outputsBlock = '<div><div class="fl">산출물</div><input class="fi" style="font-size:14.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>';
       var linkedBlock = '<div class="grid2">'
         + '<div><div class="fl">연계 시스템</div><select class="fs" data-fkey="linked_system" data-id="' + esc(id) + '">' + opt("linked_system", n.linked_system) + "</select></div>"
         + '<div><div class="fl">추가 정보 <span style="color:#a8a29e;font-weight:600">· 모듈·인터페이스 등</span></div>'
-        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="linked_system_detail" data-id="' + esc(id) + '" value="' + esc(n.linked_system_detail) + '" placeholder="예: MM모듈" /></div>'
+        + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="linked_system_detail" data-id="' + esc(id) + '" value="' + esc(n.linked_system_detail) + '" placeholder="예: MM모듈" /></div>'
         + "</div>";
       // 2열: 왼쪽 = 발생/부하(+비SOLO 필드), 오른쪽 = AI·자동화 / 기술 / 산출물 / 연계
       fields += '<div class="pgrid">'
@@ -1351,7 +1351,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
       + '<select class="fs" data-fkey="moveto" data-id="' + esc(id) + '">'
       + tg.map(function (t) { return '<option value="' + esc(t.id) + '"' + (t.id === n.parent_id ? " selected" : "") + ">" + esc(t.label) + "</option>"; }).join("")
       + "</select>"
-      + (kids ? '<div style="font-size:11.5px;color:#a8a29e;margin-top:5px">하위 업무 ' + kids + "개도 함께 이동하며 레벨이 다시 매겨집니다.</div>" : "")
+      + (kids ? '<div style="font-size:13.5px;color:#a8a29e;margin-top:5px">하위 업무 ' + kids + "개도 함께 이동하며 레벨이 다시 매겨집니다.</div>" : "")
       + "</div>";
 
     return '<div class="panel">' + head + '<div class="pbody scroll">' + fields + "</div></div>";
@@ -1369,7 +1369,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
       + '<div class="subtabs">' + tabs + "</div>"
       + '<div class="cardbox"><div class="dhead"><span>값</span><span>사용 중</span><span></span></div>' + rows
       + '<div style="padding:13px 16px"><button class="dadd" data-act="domadd" data-k="' + dk + '">＋ 값 추가</button></div></div>'
-      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:12px">값을 고친 뒤 <b>칸을 벗어나면</b> 반영됩니다. '
+      + '<div style="font-size:13.5px;color:#a8a29e;margin-top:12px">값을 고친 뒤 <b>칸을 벗어나면</b> 반영됩니다. '
       + (SOLO ? '제출하려면 상단 <b>⬇ 제출 파일 내보내기</b> 를 누르세요.'
               : '파일에 기록하려면 상단 <b>저장</b> 을 누르세요.') + "</div></div></div>";
   }
@@ -1381,16 +1381,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     if (errs.length) {
       return '<div class="cardbox" style="padding:22px">'
         + '<div class="warn" style="margin-bottom:12px">⚠ 엑셀에 문제가 있습니다. 고친 뒤 다시 올려주세요.</div>'
-        + '<div style="max-height:220px;overflow:auto;font-size:12px;color:#78716c;line-height:1.9">'
+        + '<div style="max-height:220px;overflow:auto;font-size:14px;color:#78716c;line-height:1.9">'
         + errs.map(function (e) { return "· " + esc(e); }).join("<br/>") + "</div>"
         + '<div style="margin-top:16px"><button class="secondary" data-act="impcancel">다른 파일 올리기</button></div></div>';
     }
 
     var p = S.importPreview;
     if (!p) {
-      return '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:13px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:11.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
+      return '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:15px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:13.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
         + '<input id="xlsxup" type="file" accept=".xlsx,.json" style="display:none" data-fkey="xlsxfile" />'
-        + '<div style="margin-top:18px;font-size:12px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:12px;color:#78716c;line-height:1.9">'
+        + '<div style="margin-top:18px;font-size:14px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:14px;color:#78716c;line-height:1.9">'
         + "<li>lv3~lv6 칸을 <b>왼쪽부터 연속으로</b> 채웁니다. (lv4 를 비우고 lv5 만 채우면 오류)</li>"
         + "<li>상위 업무는 자기 행이 반드시 있어야 합니다.</li>"
         + '<li><code style="background:#f0ede6;padding:1px 5px;border-radius:4px">id</code> 가 비어 있으면 새 업무로 등록됩니다. 기존 업무는 id 를 지우지 마세요.</li>'
@@ -1401,9 +1401,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
 
     function list(title, rows, color) {
       if (!rows || !rows.length) return "";
-      return '<div style="margin-top:12px"><div style="font-size:12px;font-weight:800;color:' + color + ';margin-bottom:6px">' + title + "</div>"
+      return '<div style="margin-top:12px"><div style="font-size:14px;font-weight:800;color:' + color + ';margin-bottom:6px">' + title + "</div>"
         + '<div class="cardbox" style="max-height:140px;overflow:auto">'
-        + rows.map(function (r) { return '<div style="padding:6px 12px;border-bottom:1px solid #f7f4ee;font-size:12px"><span class="lvb g">lv' + esc(r.level) + "</span> " + esc(r.path) + "</div>"; }).join("")
+        + rows.map(function (r) { return '<div style="padding:6px 12px;border-bottom:1px solid #f7f4ee;font-size:14px"><span class="lvb g">lv' + esc(r.level) + "</span> " + esc(r.path) + "</div>"; }).join("")
         + "</div></div>";
     }
     var cells = [["추가", p.added, "#166534", "#dcfce7"], ["변경", p.changed, "#92400e", "#fef3c7"], ["삭제", p.removed, "#b91c1c", "#fee2e2"]]
@@ -1414,25 +1414,25 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     if (ukeys.length) {
       unknownBox = '<div class="warn" style="margin-top:14px">도메인 목록에 없는 값이 있습니다 — '
         + ukeys.map(function (k) { return esc((p.labels || {})[k] || k) + ": " + esc(unknown[k].join(", ")); }).join(" / ") + "</div>"
-        + '<label style="display:flex;align-items:center;gap:9px;margin-top:10px;cursor:pointer"><input type="checkbox" data-fkey="adddomains"' + (S.addDomains ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:12.5px;color:#44403c">이 값들을 도메인 목록에 추가</span></label>';
+        + '<label style="display:flex;align-items:center;gap:9px;margin-top:10px;cursor:pointer"><input type="checkbox" data-fkey="adddomains"' + (S.addDomains ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;color:#44403c">이 값들을 도메인 목록에 추가</span></label>';
     }
     var delBox = '<label style="display:flex;align-items:center;gap:9px;margin-top:14px;cursor:' + (p.removed ? "pointer" : "not-allowed") + ';opacity:' + (p.removed ? "1" : ".5") + '">'
       + '<input type="checkbox" data-fkey="delmissing"' + (S.delMissing ? " checked" : "") + (p.removed ? "" : " disabled")
-      + ' style="width:16px;height:16px;accent-color:#b91c1c" /><span style="font-size:12.5px;color:#44403c">엑셀에 없는 업무 '
+      + ' style="width:16px;height:16px;accent-color:#b91c1c" /><span style="font-size:14.5px;color:#44403c">엑셀에 없는 업무 '
       + esc(p.removed) + "개를 삭제합니다</span></label>"
-      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:4px;padding-left:25px">기본은 삭제하지 않습니다. 엑셀에서 행을 지운 것이 실수일 수 있습니다.</div>';
+      + '<div style="font-size:13.5px;color:#a8a29e;margin-top:4px;padding-left:25px">기본은 삭제하지 않습니다. 엑셀에서 행을 지운 것이 실수일 수 있습니다.</div>';
 
     var nothing = !p.added && !p.changed && !p.removed;
     return '<div class="cardbox" style="padding:22px">'
-      + '<div style="font-size:13px;font-weight:800;color:#0f766e;margin-bottom:12px">반영 전 확인</div>'
-      + (nothing ? '<div style="font-size:12.5px;color:#78716c">현재 데이터와 차이가 없습니다.</div>' : '<div class="diffgrid">' + cells + "</div>")
+      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:12px">반영 전 확인</div>'
+      + (nothing ? '<div style="font-size:14.5px;color:#78716c">현재 데이터와 차이가 없습니다.</div>' : '<div class="diffgrid">' + cells + "</div>")
       + list("추가될 업무 " + p.added + "개", p.added_list, "#166534")
       + list("변경될 업무 " + p.changed + "개", p.changed_list, "#92400e")
       + list("삭제될 업무 " + p.removed + "개", p.removed_list, "#b91c1c")
       + delBox + unknownBox
       + '<div style="display:flex;gap:8px;margin-top:20px"><button class="secondary" data-act="impcancel">취소</button>'
       + '<button class="primary" data-act="impapply">이 내용으로 반영</button></div>'
-      + '<div style="font-size:11.5px;color:#a8a29e;margin-top:10px">반영 후 상단 [저장] 을 눌러야 파일에 기록됩니다.</div></div>';
+      + '<div style="font-size:13.5px;color:#a8a29e;margin-top:10px">반영 후 상단 [저장] 을 눌러야 파일에 기록됩니다.</div></div>';
   }
 
   /** 개인 모드 IO — 서버가 없으니 제출 파일 내보내기 / 이어서 작성하기만 있다. */
@@ -1442,9 +1442,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     return '<div class="page scroll"><div class="pw"><div class="h1">내보내기 / 불러오기</div>'
       + '<div class="sub">작성이 끝나면 파일로 내보내 관리자에게 전달하세요. 편집 내용은 이 브라우저에 자동 저장됩니다.</div>'
       + '<div class="cardbox" style="padding:22px;margin-top:18px">'
-      + '<div style="font-size:13px;font-weight:800;color:#0f766e;margin-bottom:10px">⬇ 제출 파일 내보내기</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:10px">⬇ 제출 파일 내보내기</div>'
       + (ready
-          ? '<div style="font-size:12.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b>'
+          ? '<div style="font-size:14.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b>'
             + (S.author ? ' · 이름 <b>' + esc(S.author) + "</b>" : "")
             + ' 으로 내보냅니다. 세부업무 ' + st.detail + "개"
             + (st.hoursMissing ? ' <span style="color:#92400e">(작업시간 미입력 ' + st.hoursMissing + "개)</span>" : "")
@@ -1454,17 +1454,17 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
       + '<div class="solohint">· 카드마다 부서를 적지 않아도 됩니다 — 내보낼 때 위 소속이 자동으로 들어갑니다.<br/>'
       + '· 업무에는 <b>소속만</b> 들어가고 이름은 들어가지 않습니다. 취합은 소속별로 집계합니다.</div></div>'
       + '<div class="cardbox" style="padding:22px;margin-top:14px">'
-      + '<div style="font-size:13px;font-weight:800;color:#57534e;margin-bottom:10px">⬆ 이어서 작성하기</div>'
-      + '<div style="font-size:12.5px;color:#78716c;line-height:1.6">전에 내보낸 .json 을 불러오면 그 시점부터 이어서 쓸 수 있습니다. PC 를 바꿨거나 브라우저를 초기화했을 때 쓰세요.</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">⬆ 이어서 작성하기</div>'
+      + '<div style="font-size:14.5px;color:#78716c;line-height:1.6">전에 내보낸 .json 을 불러오면 그 시점부터 이어서 쓸 수 있습니다. PC 를 바꿨거나 브라우저를 초기화했을 때 쓰세요.</div>'
       + '<label class="drop" for="jsonup" style="margin-top:12px;padding:22px"><div style="font-size:22px">⬆</div>'
-      + '<div style="font-size:12.5px;font-weight:700;color:#57534e;margin-top:5px">내보낸 .json 파일 선택</div></label>'
+      + '<div style="font-size:14.5px;font-weight:700;color:#57534e;margin-top:5px">내보낸 .json 파일 선택</div></label>'
       + '<input id="jsonup" type="file" accept=".json" style="display:none" data-fkey="jsonup" />'
       + '<div class="warn" style="margin-top:12px">⚠ 불러오면 지금 화면의 내용이 파일 내용으로 <b>바뀝니다</b>.</div></div>'
       // 엑셀에서 계층(lv3~lv5)을 복사해 붙여넣기 — 카드 하나씩 만들지 않고 뼈대를 한 번에
       + '<div class="cardbox" style="padding:22px;margin-top:14px">'
-      + '<div style="font-size:13px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv5</span></div>'
-      + '<div style="font-size:12.5px;color:#78716c;line-height:1.6">엑셀에서 <b>세 열(부문 · 대분류 · 중분류)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 세부업무(lv6)와 발생 패턴은 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
-      + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:12px;white-space:pre" placeholder="선장운전	항해장비	레이더\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기"></textarea>'
+      + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv5</span></div>'
+      + '<div style="font-size:14.5px;color:#78716c;line-height:1.6">엑셀에서 <b>세 열(부문 · 대분류 · 중분류)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 세부업무(lv6)와 발생 패턴은 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
+      + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:14px;white-space:pre" placeholder="선장운전	항해장비	레이더\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기"></textarea>'
       + '<div style="margin-top:10px"><button class="primary" data-act="skelapply">📋 붙여넣기 반영</button></div>'
       + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 대분류를 비우고 중분류만 있으면 그 줄은 건너뜁니다.<br/>'
       + '· 첫 줄이 머리글(부문/대분류/중분류)이면 자동으로 건너뜁니다.</div></div>'
@@ -1476,11 +1476,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     function step(no, title, bodyHtml) {
       return '<div class="cardbox" style="padding:20px;margin-top:14px">'
         + '<div style="display:flex;align-items:baseline;gap:9px;margin-bottom:8px">'
-        + '<span style="flex:none;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#0f766e;color:#fff;font-size:12px;font-weight:800">' + no + "</span>"
-        + '<span style="font-size:14px;font-weight:800;color:#292524">' + title + "</span></div>"
-        + '<div style="font-size:12.8px;color:#57534e;line-height:1.75">' + bodyHtml + "</div></div>";
+        + '<span style="flex:none;width:22px;height:22px;line-height:22px;text-align:center;border-radius:50%;background:#0f766e;color:#fff;font-size:14px;font-weight:800">' + no + "</span>"
+        + '<span style="font-size:16px;font-weight:800;color:#292524">' + title + "</span></div>"
+        + '<div style="font-size:14.8px;color:#57534e;line-height:1.75">' + bodyHtml + "</div></div>";
     }
-    var patTbl = '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:12.3px">'
+    var patTbl = '<table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:14.3px">'
       + '<tr style="background:#faf8f3;color:#78716c;font-weight:800"><td style="padding:7px 9px;border:1px solid #eee">발생 패턴</td><td style="padding:7px 9px;border:1px solid #eee">언제</td><td style="padding:7px 9px;border:1px solid #eee">무엇을 입력</td></tr>'
       + '<tr><td style="padding:7px 9px;border:1px solid #eee"><b>상시루틴</b></td><td style="padding:7px 9px;border:1px solid #eee">호선과 무관하게 늘</td><td style="padding:7px 9px;border:1px solid #eee">기간 단위 + 횟수 (예: 주 3회)</td></tr>'
       + '<tr><td style="padding:7px 9px;border:1px solid #eee"><b>호선루틴</b></td><td style="padding:7px 9px;border:1px solid #eee">호선 도는 동안 반복</td><td style="padding:7px 9px;border:1px solid #eee">기간 단위 + 횟수 + <b>반복 구간</b>(복수)</td></tr>'
@@ -1506,8 +1506,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     if (S.excelTab === "up") {
       pane = importPane();
     } else {
-      pane = '<div class="cardbox" style="padding:22px"><div style="font-size:12.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀로 받습니다. 이 파일을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다. 시트 3장 — 계층도 / 도메인 / 요약.</div>'
-        + '<label style="display:flex;align-items:center;gap:9px;margin:16px 0;cursor:pointer"><input type="checkbox" data-fkey="mask"' + (S.mask ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:12.5px;font-weight:600;color:#44403c">담당자 이름 마스킹 (홍길동 → 홍*동)</span></label>'
+      pane = '<div class="cardbox" style="padding:22px"><div style="font-size:14.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀로 받습니다. 이 파일을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다. 시트 3장 — 계층도 / 도메인 / 요약.</div>'
+        + '<label style="display:flex;align-items:center;gap:9px;margin:16px 0;cursor:pointer"><input type="checkbox" data-fkey="mask"' + (S.mask ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;font-weight:600;color:#44403c">담당자 이름 마스킹 (홍길동 → 홍*동)</span></label>'
         + (!S.mask ? '<div class="warn" style="margin-bottom:14px">⚠ 마스킹을 끄면 개인정보가 담긴 파일이 됩니다. 외부 공유에 주의하세요.</div>' : "")
         + '<div style="display:flex;gap:10px"><button class="primary" style="flex:1" data-act="down" data-fmt="xlsx">엑셀 다운로드 (.xlsx)</button><button class="secondary" style="flex:1" data-act="down" data-fmt="json">JSON 원본 다운로드</button></div></div>';
     }
@@ -1518,7 +1518,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var byDept = Object.keys(dc).sort(function (a, b) { return dc[b] - dc[a]; }).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + dc[k] + "</b></div>"; }).join("");
     return '<div class="page scroll"><div class="pw"><div class="h1">엑셀 가져오기 / 내보내기</div><div class="sub">업무가 많을 때는 화면에서 하나씩 만들지 말고 엑셀로 한 번에 등록·수정하세요.</div>'
       + '<div class="subtabs">' + sub + "</div>" + pane
-      + '<div style="font-size:13.5px;font-weight:800;margin:24px 0 4px">요약</div><div style="font-size:11.5px;color:#a8a29e;margin-bottom:14px">AI·부서·자동화 지표는 lv6 세부업무만 셉니다.</div>'
+      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 4px">요약</div><div style="font-size:13.5px;color:#a8a29e;margin-bottom:14px">AI·부서·자동화 지표는 lv6 세부업무만 셉니다.</div>'
       + '<div class="metricgrid">' + metrics + "</div>"
       + '<div class="twocol"><div class="tbl"><div class="th">레벨별 업무 수</div>' + byLevel + '</div><div class="tbl"><div class="th">부서별 세부업무 수</div>' + byDept + "</div></div></div></div>";
   }
@@ -1530,7 +1530,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var head = '<div class="page scroll"><div class="pw"><div class="h1">이력 · 복원</div>'
       + '<div class="sub">저장할 때마다 직전 버전이 스냅샷으로 보관됩니다 (최근 90일 + 최신 50개).</div>';
     if (!hist.length) {
-      return head + '<div class="cardbox" style="padding:28px;margin-top:18px;text-align:center;color:#a8a29e;font-size:13px">'
+      return head + '<div class="cardbox" style="padding:28px;margin-top:18px;text-align:center;color:#a8a29e;font-size:15px">'
         + "아직 저장 이력이 없습니다. 저장을 하면 직전 버전이 여기에 쌓입니다.</div></div></div>";
     }
     var rows = hist.map(function (h, i) { return '<div class="histrow' + (S.histPick === i ? " sel" : "") + '" data-act="histpick" data-i="' + i + '"><span>' + esc(h.ts) + "</span><span>" + esc(maskName(h.author)) + "</span><span>rev" + esc(h.rev) + "</span><span>" + esc(h.n_nodes) + "개</span></div>"; }).join("");
@@ -1540,14 +1540,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var dp = S.diffPreview;
     var diffs, removedList = "";
     if (!dp) {
-      diffs = '<div style="grid-column:1/-1;color:#a8a29e;font-size:12px;padding:8px 0">차이를 계산하는 중…</div>';
+      diffs = '<div style="grid-column:1/-1;color:#a8a29e;font-size:14px;padding:8px 0">차이를 계산하는 중…</div>';
     } else {
       diffs = [["되살아남", dp.added, "#166534", "#dcfce7"], ["값이 바뀜", dp.changed, "#92400e", "#fef3c7"], ["사라짐", dp.removed, "#b91c1c", "#fee2e2"]]
         .map(function (d) { return '<div class="diff" style="background:' + d[3] + '"><div class="dv" style="color:' + d[2] + '">' + esc(d[1]) + '</div><div class="dl" style="color:' + d[2] + '">' + d[0] + "</div></div>"; }).join("");
       if ((dp.removed_list || []).length) {
-        removedList = '<div style="margin-top:14px"><div style="font-size:12px;font-weight:800;color:#b91c1c;margin-bottom:7px">복원하면 사라질 업무 ' + dp.removed + "개</div>"
+        removedList = '<div style="margin-top:14px"><div style="font-size:14px;font-weight:800;color:#b91c1c;margin-bottom:7px">복원하면 사라질 업무 ' + dp.removed + "개</div>"
           + '<div class="cardbox" style="max-height:150px;overflow:auto">'
-          + dp.removed_list.map(function (r) { return '<div style="padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:12px"><span class="lvb g">lv' + esc(r.level) + "</span> " + esc(r.path) + "</div>"; }).join("")
+          + dp.removed_list.map(function (r) { return '<div style="padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:14px"><span class="lvb g">lv' + esc(r.level) + "</span> " + esc(r.path) + "</div>"; }).join("")
           + "</div></div>";
       }
     }
@@ -1557,16 +1557,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var can = S.restoreOk && !!S.author;
     var ACT = { save: "저장", force: "강제 덮어쓰기", restore: "복원" };
     var auditRows = aud.length
-      ? aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:12.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("")
-      : '<div style="padding:16px;text-align:center;color:#a8a29e;font-size:12px">기록이 없습니다.</div>';
+      ? aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:14.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("")
+      : '<div style="padding:16px;text-align:center;color:#a8a29e;font-size:14px">기록이 없습니다.</div>';
     return head
-      + '<div class="cardbox" style="margin-top:18px"><div class="histrow" style="background:#faf8f3;color:#a8a29e;font-size:11px;font-weight:800;cursor:default"><span>시각</span><span>작성자</span><span>rev</span><span>업무 수</span></div>' + rows + "</div>"
-      + '<div class="cardbox" style="padding:20px;margin-top:16px"><div style="font-size:12px;font-weight:800;color:#57534e">복원할 시점</div><div style="font-size:13px;font-weight:700;color:#0f766e;margin:6px 0 16px">' + esc(hp.ts) + " · " + esc(maskName(hp.author)) + " · rev" + esc(hp.rev) + "</div>"
+      + '<div class="cardbox" style="margin-top:18px"><div class="histrow" style="background:#faf8f3;color:#a8a29e;font-size:13px;font-weight:800;cursor:default"><span>시각</span><span>작성자</span><span>rev</span><span>업무 수</span></div>' + rows + "</div>"
+      + '<div class="cardbox" style="padding:20px;margin-top:16px"><div style="font-size:14px;font-weight:800;color:#57534e">복원할 시점</div><div style="font-size:15px;font-weight:700;color:#0f766e;margin:6px 0 16px">' + esc(hp.ts) + " · " + esc(maskName(hp.author)) + " · rev" + esc(hp.rev) + "</div>"
       + dirtyWarn + authWarn
-      + '<div style="font-size:12px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>" + removedList
-      + '<label style="display:flex;align-items:center;gap:9px;margin:18px 0 0;cursor:pointer"><input type="checkbox" data-fkey="restoreok"' + (S.restoreOk ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:12.5px;color:#44403c">위 내용을 확인했고 이 시점으로 되돌립니다</span></label>'
+      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>" + removedList
+      + '<label style="display:flex;align-items:center;gap:9px;margin:18px 0 0;cursor:pointer"><input type="checkbox" data-fkey="restoreok"' + (S.restoreOk ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;color:#44403c">위 내용을 확인했고 이 시점으로 되돌립니다</span></label>'
       + '<div style="margin-top:14px"><button class="' + (can ? "primary" : "") + '" style="' + (can ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:800;cursor:not-allowed") + 'padding:9px 18px" data-act="restore">이 시점으로 복원</button></div></div>'
-      + '<div style="font-size:13.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:11px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div></div></div>";
+      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:13px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div></div></div>";
   }
 
   // 되돌릴 수 없는 조작 앞의 확인 모달 (삭제 / 디스크 다시 읽기)
@@ -1683,6 +1683,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
     var c = contentEl.querySelector('.card[data-id="' + id + '"] .nm'); if (c) c.textContent = t;
     var r = contentEl.querySelector('.rowmain[data-id="' + id + '"] .rowname'); if (r) r.textContent = t;
     var p = contentEl.querySelector(".pname"); if (p) p.textContent = t;
+    // 부문(lv3)은 카드가 없다 — 빵부스러기 드롭다운 옵션을 바로 갱신해 이름 편집이 즉시 보이게 한다
+    var op = contentEl.querySelector('[data-fkey="crumblv3"] option[value="' + id + '"]'); if (op) op.textContent = t;
   }
   function echoDesc(id) {
     var n = byId(id); if (!n) return;
