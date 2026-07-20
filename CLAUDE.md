@@ -79,8 +79,9 @@ uv run streamlit run app.py --server.port 8540
 | 호선루틴 | `freq_unit` + `freq_count` + `apply_phases[]`(복수) | **구간길이 미상 → 보류.** 나중에 trial_schedule 조인 |
 | 호선이벤트 | `events[]` — 각 `{event, offset_start, offset_days}` (마일스톤 기준 ±일) | 호선당 = **지정한 시점 수** × 소요시간. 연간은 척수 곱해 나중에 |
 
-lv4 는 `work_type`(일상/호선) + `ship_types[]`(선종 복수) 를 받고 **lv6 이 상속**한다
-(`shipTypesOf` → `ancestors`). lv6 에 선종 필드를 두지 말 것 — 중복되면 어긋난다.
+`work_type`(일상/호선) + `ship_types[]`(선종 복수)는 **lv6 세부업무에서 직접 입력**한다
+(`typeShipBlock`). 예전엔 lv4 그룹에서 받아 lv6 이 상속했으나, lv4 구분이 무의미해 lv6 으로 옮겼다.
+`shipTypesOf(id)`는 이제 조상을 뒤지지 않고 **노드 자신의 `ship_types`**를 돌려준다(카드 배지용).
 
 - `TRIAL_PHASES`(호선루틴 반복 구간) = 안벽→앵카링→시운전 순 7종:
   `LC~GT+1 · GT+1~IE · AC · 통합시운전 · GasT · ST,DP · 인도준비`. trial_schedule 일정구분과 조인.

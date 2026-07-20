@@ -78,6 +78,8 @@
   .chip.cur { background: #0f766e; color: #fff; }
   .sep { color: #cabfb0; font-size: 12px; }
   .crumbtail { font-size: 11px; color: #a8a29e; }
+  .crumbsel { border: 1px solid #99f6e4; border-radius: 999px; padding: 3px 12px; font-size: 11.5px;
+    font-weight: 800; color: #0f766e; background: #f0fdfa; cursor: pointer; outline: none; }
 
   .body { flex: 1; display: flex; min-height: 0; }
   .board { flex: 1; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
@@ -95,6 +97,7 @@
   .card:hover { border-color: #5eead4; }
   .card.sel { background: #f0fdfa; border-color: #0f766e; border-left-color: #0f766e;
     box-shadow: 0 2px 8px rgba(15,118,110,.12); }
+  .card.path { background: #f7fdfc; border-left-color: #5eead4; }
   .card .top1 { display: flex; align-items: flex-start; gap: 6px; }
   .card .nm { flex: 1; font-size: 13px; font-weight: 700; line-height: 1.35; word-break: break-all; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; margin-top: 4px; flex: none;
@@ -190,7 +193,7 @@
   .rowadd:hover { color: #0f766e; }
 
   /* 사이드 패널 */
-  .panel { width: 392px; flex: none; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
+  .panel { width: 468px; flex: none; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
     flex-direction: column; min-height: 0; }
   .phead { padding: 15px 18px; border-bottom: 1px solid #f4f1ea; }
   .phead.d { background: #f0fdfa; }
@@ -217,6 +220,7 @@
   .warn { font-size: 11px; color: #92400e; background: #fffbeb; border: 1px solid #fde68a;
     border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   .aicard { border-radius: 10px; padding: 8px 12px; border: 1px solid #e7e1d6; background: #f8f6f1; }
   .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
   .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
@@ -389,11 +393,10 @@
     }
     return { kind: "annual", hours: Math.round(h * routineAnnualCount(n) * 10) / 10 };
   }
-  /** lv6 이 속한 lv4 의 선종을 상속받는다 (lv6 에 선종 필드를 두지 않는 이유). */
+  /** 이 세부업무의 선종. 이제 lv6 노드 자신이 ship_types 를 들고 있다 (lv4 상속 폐지). */
   function shipTypesOf(id) {
-    var chain = ancestors(id), lv4 = null;
-    for (var i = 0; i < chain.length; i++) if (chain[i].level === 4) lv4 = chain[i];
-    return (lv4 && lv4.ship_types) || [];
+    var n = byId(id);
+    return (n && n.ship_types) || [];
   }
   // schema.josa 와 동일 — 한글 받침에 따라 조사 선택 ("부문은" / "대분류는")
   function josa(w, pair) {
@@ -1107,9 +1110,11 @@
     var kids = childrenOf(nn.id).length;
     if (kids) chips += '<span class="mc kids">▸' + kids + "</span>";
     var sel = S.selectedId === nn.id;
+    // 현재 선택 체인 위의 조상 카드는 옅게 강조(.path) — "지금 어느 경로를 쓰는지" 한눈에 보이게.
+    var onPath = !sel && S.sel[lv] === nn.id;
     // lv6 아래는 없으므로 드롭존도 없다. 드롭존은 자기보다 한 단계 아래 레벨만 받는다.
     var drop = lv < 6 ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
-    return '<div class="card' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
+    return '<div class="card' + (sel ? " sel" : onPath ? " path" : "") + (isHit(nn) ? " hit" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
       + '<div class="top1"><div class="nm">' + esc(nn.name || "(이름 없음)") + "</div>" + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot" title="저장 안 됨"></span>' : "") + "</div>"
       + (nn.desc ? '<div class="cdesc">' + esc(nn.desc) + "</div>" : "")
       + (chips ? '<div class="meta">' + chips + "</div>" : "")
@@ -1157,12 +1162,16 @@
 
   function crumbBar() {
     var chips = FIXED.map(function (f) { return '<span class="chip fix">🔒 ' + esc(f) + "</span><span class=\"sep\">›</span>"; }).join("");
-    var tail = '<span class="crumbtail">· 카드를 선택하면 경로가 표시됩니다</span>';
-    if (S.selectedId) { tail = ""; pathNames(S.selectedId).slice(3).forEach(function (nm) { chips += '<span class="chip cur">' + esc(nm || "(이름 없음)") + "</span><span class=\"sep\">›</span>"; }); }
+    // lv3(부문)은 드롭다운으로 고른다 — 경로 전체를 늘어놓지 않고 여기서 바로 부문 전환.
+    // lv4~lv6 위치는 컬럼의 조상 카드 하이라이트(.path)로 표시하므로 여기 칩으로 붙이지 않는다.
+    var lv3s = childrenOf(ROOT), cur3 = S.sel[3] || "";
+    var lv3sel = '<select class="crumbsel" data-fkey="crumblv3"><option value="">부문 선택 —</option>'
+      + lv3s.map(function (n) { return '<option value="' + esc(n.id) + '"' + (n.id === cur3 ? " selected" : "") + ">" + esc(n.name || "(이름 없음)") + "</option>"; }).join("")
+      + "</select>";
     var q = (S.query || "").trim();
     var search = '<div class="searchbox"><input data-fkey="query" value="' + esc(S.query || "") + '" placeholder="🔎 업무명 검색" />'
       + (q ? '<span class="shits">' + hitCount() + "건</span>" : "") + "</div>";
-    return '<div class="crumb">' + chips + tail + '<div class="grow"></div>' + search + "</div>";
+    return '<div class="crumb">' + chips + lv3sel + '<div class="grow"></div>' + search + "</div>";
   }
 
   /** 복수 선택 칩. 기존 활용기술 칩(.tchip)과 같은 모양·같은 토글 방식을 쓴다. */
@@ -1194,12 +1203,11 @@
       + esc(HINT[p] || "") + '</span></div><div class="techrow">' + pat + "</div></div>";
 
     // 1회 소요시간은 세 패턴 공통 — 부하의 원자 단위
-    h += '<div class="grid2" style="margin-top:10px">'
-      + '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
+    var whCell = '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
       + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>';
 
     if (p === OCCUR.SHIP_EVENT) {
-      h += "</div>";   // 1회 소요시간만 담고 grid2 닫기 — 시점은 아래에 목록으로
+      h += '<div style="margin-top:10px">' + whCell + "</div>";   // 소요시간만 (시점은 아래 목록)
       // 시점을 여러 개 지정한다. 줄 수가 곧 호선당 횟수 (GT-7, AC-7 → 2줄 = 2회).
       var evs = n.events || [];
       var evStyle = 'display:flex;gap:6px;align-items:center;margin-top:6px';
@@ -1218,12 +1226,13 @@
         + (rows || '<div class="solohint" style="padding:6px 0">아직 시점이 없습니다. 아래 버튼으로 추가하세요.</div>')
         + '<button data-act="evadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:12px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 시점 추가</button></div>';
     } else {
-      // 상시·호선루틴 공통 — 기간단위 + 횟수. 나눠야 "주 3회" 가 표현된다
-      h += '<div><div class="fl">기간 단위</div><select class="fs" data-fkey="freq_unit" data-id="' + esc(id) + '">'
+      // 상시·호선루틴 공통 — 소요시간·기간단위·횟수를 한 줄(grid3)로. 나눠야 "주 3회" 가 표현된다
+      h += '<div class="grid3" style="margin-top:10px">' + whCell
+        + '<div><div class="fl">기간 단위</div><select class="fs" data-fkey="freq_unit" data-id="' + esc(id) + '">'
         + '<option value="">— 선택 —</option>'
         + FREQ_UNIT_KEYS.map(function (u) { return '<option value="' + esc(u) + '"' + (n.freq_unit === u ? " selected" : "") + ">" + esc(u) + "</option>"; }).join("")
         + "</select></div>"
-        + '<div><div class="fl">횟수 <span style="color:#a8a29e;font-weight:600">· 단위당 몇 번</span></div>'
+        + '<div><div class="fl">횟수 <span style="color:#a8a29e;font-weight:600">· 단위당</span></div>'
         + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="freq_count" data-id="' + esc(id) + '" value="' + esc(n.freq_count) + '" placeholder="예: 3" /></div>'
         + "</div>";
       if (p === OCCUR.SHIP_ROUTINE) {
@@ -1245,7 +1254,8 @@
   }
 
   /** lv4 그룹 메타 — 일상/호선 유형과 선종(복수). lv6 은 여기서 상속만 한다. */
-  function lv4Meta(n, id) {
+  /** 업무 유형(일상/호선) + 선종 — lv6 세부업무에서 입력한다 (예전엔 lv4 그룹에서 받았음). */
+  function typeShipBlock(n, id) {
     var wt = n.work_type || "";
     var typeChips = WORK_TYPES.map(function (t) {
       return '<button class="tchip' + (wt === t ? " on" : "") + '" data-act="worktype" data-id="' + esc(id)
@@ -1255,8 +1265,7 @@
       + '<div class="fl">업무 유형</div><div class="techrow">' + typeChips + "</div></div>";
     if (wt === "호선업무") {
       h += chipRow(id, "ship_types", SHIP_TYPES.map(function (s) { return { v: s, t: SHIP_TYPE_LABEL[s] + " " + s }; }),
-                   n.ship_types, '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>')
-        + '<div class="solohint" style="padding-top:4px">이 아래 세부업무는 여기 선종을 따릅니다 — 업무마다 다시 고르지 않아도 됩니다.</div>';
+                   n.ship_types, '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>');
     }
     return h;
   }
@@ -1282,8 +1291,6 @@
       var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
       fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무</b>에서 입력합니다.</div>';
       if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
-      // lv4 그룹 메타 — 유형·선종은 여기서만 받고 아래 lv6 이 상속한다 (lv6 에 선종 칸 없음)
-      if (SOLO && lv === 4) fields += lv4Meta(n, id);
     } else {
       var opt = function (key, cur) { var base = (S.domains[key] || []).slice(); if (cur && base.indexOf(cur) < 0) base.push(cur); return '<option value="">— 선택 —</option>' + base.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join(""); };
       var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
@@ -1301,7 +1308,7 @@
            + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
            + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>')
         + "</div>"
-        + (SOLO ? occurBlock(n, id)
+        + (SOLO ? (typeShipBlock(n, id) + occurBlock(n, id))
                 : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
                   + '<span>1회 소요시간 × 연간 횟수</span></div>')
         + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
@@ -1719,6 +1726,7 @@
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
     if (f === "dept" || f === "automation_level" || f === "freq_unit" || f === "linked_system")
       return actUpdate(el.dataset.id, f, el.value);
+    if (f === "crumblv3") { if (el.value) actSelect(el.value); return; }   // 빵부스러기 부문 드롭다운
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);
     if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
     if (f === "mask") { S.mask = el.checked; rerender(); return; }
