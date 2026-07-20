@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1307";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -213,7 +213,6 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
   /* 사이드 패널 */
   .panel { flex: 1 1 520px; min-width: 480px; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
     flex-direction: column; min-height: 0; }
-  .pbody > * { max-width: 860px; }   /* 초광폭에서만 입력칸이 과하게 늘어나지 않게 (일반 화면은 꽉 채움) */
   .phead { padding: 15px 18px; border-bottom: 1px solid #f4f1ea; }
   .phead.d { background: #f0fdfa; }
   .prow { display: flex; align-items: center; gap: 8px; }
@@ -240,6 +239,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
     border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  /* 상세 폼 2열 배치 — 넓은 패널의 가로를 채우고 세로 높이를 줄인다 (스크롤 최소화) */
+  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: start; }
+  .pcol { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
   .aicard { border-radius: 10px; padding: 8px 12px; border: 1px solid #e7e1d6; background: #f8f6f1; }
   .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
   .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
@@ -1290,9 +1292,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
       + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:11px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
       + '<div class="ppath">' + esc(pathNames(id).join("  ›  ")) + "</div></div>";
 
-    var fields = ""
+    // 상단 전폭: 이름 + 설명 (2열)
+    var fields = '<div class="grid2" style="align-items:start">'
       + '<div><div class="fl">' + esc(LABELS[lv]) + '명</div><input class="fi" data-fkey="name" data-id="' + esc(id) + '" value="' + esc(n.name) + '" placeholder="이름을 입력하세요" /></div>'
-      + '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>";
+      + '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>"
+      + "</div>";
 
     if (!detail) {
       var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
@@ -1303,15 +1307,15 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
       var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
       var aiOn = n.has_ai_agent;
       // AI 에이전트 토글 + 자동화 수준 — 한 줄. AI 는 aicard 스타일을 콤팩트하게 재사용.
-      fields += '<div class="grid2">'
+      var aiAutoRow = '<div class="grid2">'
         + '<div><div class="fl">AI 에이전트 <span style="color:#a8a29e;font-weight:600">· 적용 시 집계</span></div>'
         +   '<label class="aicard ' + (aiOn ? "on" : "") + '" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;padding:9px 12px">'
         +   '<input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (aiOn ? " checked" : "") + ' style="width:15px;height:15px" />'
         +   '<span class="ait" style="color:' + (aiOn ? "#166534" : "#334155") + '">🤖 ' + (aiOn ? "적용됨" : "적용") + "</span></label></div>"
         + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
-        + "</div>"
-        // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
-        + (SOLO ? "" :
+        + "</div>";
+      // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
+      var nonSolo = SOLO ? "" :
              '<div class="grid2">'
            + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
            + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
@@ -1320,18 +1324,23 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
            + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
            + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
            + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
-           + "</div>")
-        + (SOLO ? occurBlock(n, id)
-                : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
-                  + '<span>1회 소요시간 × 연간 횟수</span></div>')
-        + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
+           + "</div>";
+      var occ = SOLO ? occurBlock(n, id)
+                     : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
+                       + '<span>1회 소요시간 × 연간 횟수</span></div>';
+      var techBlock = '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
-        + '<input class="fi" style="font-size:12px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>'
-        + '<div><div class="fl">산출물</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>'
-        + '<div class="grid2">'
+        + '<input class="fi" style="font-size:12px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>';
+      var outputsBlock = '<div><div class="fl">산출물</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>';
+      var linkedBlock = '<div class="grid2">'
         + '<div><div class="fl">연계 시스템</div><select class="fs" data-fkey="linked_system" data-id="' + esc(id) + '">' + opt("linked_system", n.linked_system) + "</select></div>"
         + '<div><div class="fl">추가 정보 <span style="color:#a8a29e;font-weight:600">· 모듈·인터페이스 등</span></div>'
         + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="linked_system_detail" data-id="' + esc(id) + '" value="' + esc(n.linked_system_detail) + '" placeholder="예: MM모듈" /></div>'
+        + "</div>";
+      // 2열: 왼쪽 = 발생/부하(+비SOLO 필드), 오른쪽 = AI·자동화 / 기술 / 산출물 / 연계
+      fields += '<div class="pgrid">'
+        + '<div class="pcol">' + nonSolo + occ + "</div>"
+        + '<div class="pcol">' + aiAutoRow + techBlock + outputsBlock + linkedBlock + "</div>"
         + "</div>";
     }
 
