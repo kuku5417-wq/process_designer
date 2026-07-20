@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0852";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -46,7 +46,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
 
   /* 상단바 */
   .top { display: flex; align-items: center; gap: 16px; padding: 11px 20px; background: #fff;
-    border-bottom: 1px solid #e7e1d6; flex: none; }
+    border-bottom: 1px solid #e7e1d6; flex: none; flex-wrap: wrap; row-gap: 8px; }
   .top > * { flex: none; }
   .top .grow { flex: 1 1 auto; }
   .treewrap { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -222,6 +222,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
   .plv { font-size: 12.5px; font-weight: 800; padding: 2px 8px; border-radius: 6px; }
   .plv.d { background: #99f6e4; color: #115e59; }
   .plv.g { background: #f0ede6; color: #57534e; }
+  .pdept { font-size: 12.5px; font-weight: 800; padding: 2px 9px; border-radius: 6px;
+    background: #e0e7ff; color: #3730a3; }
+  .pdept.none { background: #fef3c7; color: #92400e; }
   .punsaved { font-size: 12.5px; font-weight: 700; color: #92400e; background: #fef3c7; padding: 2px 7px;
     border-radius: 5px; }
   .pname { margin-top: 8px; font-size: 15.5px; font-weight: 800; line-height: 1.3; word-break: break-all; }
@@ -280,7 +283,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
   .dadd { font-size: 14.5px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1.5px dashed #5eead4;
     border-radius: 9px; padding: 9px 14px; cursor: pointer; }
   .dadd:hover { background: #ccfbf1; }
-  .drop { border: 2px dashed #d8cfc0; border-radius: 12px; padding: 34px; text-align: center; cursor: pointer; background: #faf8f3; }
+  .drop { display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border: 2px dashed #d8cfc0; border-radius: 12px; padding: 34px; text-align: center; cursor: pointer; background: #faf8f3; }
   .drop:hover { border-color: #0f766e; background: #f0fdfa; }
   .metricgrid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
   .metric { background: #fff; border: 1px solid #ece6da; border-radius: 12px; padding: 15px 16px; }
@@ -1288,8 +1292,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
     var n = byId(S.selectedId); if (!n) return '<div class="panel"></div>';
     var detail = hasDetail(n.level), lv = n.level, id = n.id;
     var dirty = S.dirty.indexOf(id) >= 0;
+    // 웹(메인앱): 선택한 세부업무의 부서/과를 헤드에 크게 표시 — 작성 중 "어느 부서 업무인지" 바로 보이게
+    var deptChip = (!SOLO && detail)
+      ? '<span class="pdept' + (n.dept ? "" : " none") + '">🏢 ' + esc(n.dept || "부서 미지정") + "</span>"
+      : "";
     var head = '<div class="phead ' + (detail ? "d" : "g") + '"><div class="prow"><span class="ptag">지금 편집 중</span>'
       + '<span class="plv ' + (detail ? "d" : "g") + '">lv' + lv + " · " + esc(LABELS[lv]) + "</span>"
+      + deptChip
       + (dirty ? '<span class="punsaved">● 미저장</span>' : "") + "</div>"
       + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:13px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
       + '<div class="ppath">' + esc(pathNames(id).join("  ›  ")) + "</div></div>";
@@ -1427,7 +1436,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_0824";
 
     var nothing = !p.added && !p.changed && !p.removed;
     return '<div class="cardbox" style="padding:22px">'
-      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:12px">반영 전 확인</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">반영 전 확인</div>'
+      + (p.filename ? '<div style="font-size:13px;color:#78716c;margin-bottom:12px">📄 <b>' + esc(p.filename) + "</b></div>" : '<div style="margin-bottom:8px"></div>')
       + (nothing ? '<div style="font-size:14.5px;color:#78716c">현재 데이터와 차이가 없습니다.</div>' : '<div class="diffgrid">' + cells + "</div>")
       + list("추가될 업무 " + p.added + "개", p.added_list, "#166534")
       + list("변경될 업무 " + p.changed + "개", p.changed_list, "#92400e")

@@ -119,13 +119,14 @@ def _preview_import(raw_bytes: bytes, filename: str = "") -> None:
     else:
         parsed, errs = excel_io.parse_excel(raw_bytes, data)
     if errs:
-        st.session_state["import_errors"] = errs[:20]
+        st.session_state["import_errors"] = ([f"📄 {filename}"] if filename else []) + errs[:20]
         st.session_state.pop("pending_import", None)
         return
     st.session_state.pop("import_errors", None)
     d = schema.diff(data, parsed)
     st.session_state["pending_import"] = parsed
     st.session_state["import_preview"] = {
+        "filename": filename,
         "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
         "added_list": _node_brief(d["added"], parsed),
         "changed_list": _node_brief(d["changed"], parsed),
