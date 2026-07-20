@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1407";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -103,6 +103,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
   .board { flex: 0 1 auto; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
   .col { flex: 0 0 194px; display: flex; flex-direction: column; background: #f8f6f1;
     border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
+  .col.wide { flex-basis: 233px; }   /* lv5·lv6 은 lv4(194) 의 1.2배 */
   .col.off { opacity: .6; }
   .colhead { display: flex; align-items: center; justify-content: space-between; gap: 6px;
     padding: 10px 12px; border-bottom: 1px solid #ece6da; }
@@ -1061,7 +1062,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
           ? '<div class="pill"><b>연간 ' + st.hours + ' 시간</b><span>세부업무 ' + st.detail + "개"
             + (st.perShipHours ? " · 호선당 " + st.perShipHours + "시간" : "")
             + (st.unresolved ? " · 호선루틴 " + st.unresolved + "건" : "")
-            + (st.hoursMissing ? " · 시간 미입력 " + st.hoursMissing + "개" : "") + "</span></div>"
+            + (st.hoursMissing ? " · 미완성 " + st.hoursMissing + "개" : "") + "</span></div>"
           : '<div class="pill"><b>AI 적용률 ' + st.rate + '%</b><span>세부업무 ' + st.detail + "개 중 " + st.ai + "개</span></div>")
       + ident
       + (!SOLO && S.rev ? '<span class="revcap">rev ' + esc(S.rev) + "</span>" : "")
@@ -1091,7 +1092,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
     for (var lv = 4; lv <= 6; lv++) {
       var pid = S.sel[lv - 1];
       var enabled = !!pid;
-      html += '<div class="col' + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
+      html += '<div class="col' + (lv > 4 ? " wide" : "") + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
         + '<div class="list scroll" data-lv="' + lv + '" data-parent="' + esc(pid || "") + '">';
       if (!enabled) html += '<div class="emptyhint">' + (lv === 4 ? "위에서 부문을<br/>먼저 고르세요" : "상위 항목을<br/>먼저 선택하세요") + "</div>";
       else {
@@ -1364,10 +1365,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
     if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
-    var rows = (S.domains[dk] || []).map(function (v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" /><span class="use ' + (u > 0 ? "y" : "n") + '">' + u + '개 업무</span><button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }).join("");
+    // 사용 수 표시는 개인 배포판에선 숨긴다(부서가 늘 0이라 혼란) — 삭제 잠금 계산은 유지.
+    var rows = (S.domains[dk] || []).map(function (v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + (SOLO ? "<span></span>" : '<span class="use ' + (u > 0 ? "y" : "n") + '">' + u + "개 업무</span>") + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }).join("");
     return '<div class="page scroll"><div class="pw"><div class="h1">도메인 관리</div><div class="sub">카드 상세에서 고르는 선택 목록입니다. 값 이름을 바꾸면 그 값을 쓰는 업무도 함께 바뀝니다. 사용 중인 값은 삭제할 수 없습니다.</div>'
       + '<div class="subtabs">' + tabs + "</div>"
-      + '<div class="cardbox"><div class="dhead"><span>값</span><span>사용 중</span><span></span></div>' + rows
+      + '<div class="cardbox"><div class="dhead"><span>값</span>' + (SOLO ? "<span></span>" : "<span>사용 중</span>") + '<span></span></div>' + rows
       + '<div style="padding:13px 16px"><button class="dadd" data-act="domadd" data-k="' + dk + '">＋ 값 추가</button></div></div>'
       + '<div style="font-size:13.5px;color:#a8a29e;margin-top:12px">값을 고친 뒤 <b>칸을 벗어나면</b> 반영됩니다. '
       + (SOLO ? '제출하려면 상단 <b>⬇ 제출 파일 내보내기</b> 를 누르세요.'
@@ -1447,7 +1449,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1333";
           ? '<div style="font-size:14.5px;color:#78716c;line-height:1.6">소속 <b>' + esc(S.dept) + '</b>'
             + (S.author ? ' · 이름 <b>' + esc(S.author) + "</b>" : "")
             + ' 으로 내보냅니다. 세부업무 ' + st.detail + "개"
-            + (st.hoursMissing ? ' <span style="color:#92400e">(작업시간 미입력 ' + st.hoursMissing + "개)</span>" : "")
+            + (st.hoursMissing ? ' <span style="color:#92400e">(미완성 ' + st.hoursMissing + "개)</span>" : "")
             + "</div>"
           : '<div class="warn">상단에 <b>소속</b>을 먼저 입력하세요. 취합은 소속별로 집계합니다. (이름은 선택)</div>')
       + '<div style="margin-top:14px"><button class="' + (ready ? "primary" : "secondary") + '" data-act="save">⬇ 제출 파일 내보내기 (.json)</button></div>'
