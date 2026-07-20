@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1007";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1207";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -88,6 +88,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1007";
   .crumbtail { font-size: 11px; color: #a8a29e; }
   .crumbsel { border: 1px solid #99f6e4; border-radius: 999px; padding: 3px 12px; font-size: 11.5px;
     font-weight: 800; color: #0f766e; background: #f0fdfa; cursor: pointer; outline: none; }
+  .crumbbtn { border: 1px solid #d8cfc0; border-radius: 999px; padding: 3px 9px; font-size: 11px;
+    font-weight: 700; cursor: pointer; background: #fff; color: #57534e; margin-left: 4px; }
+  .crumbbtn.add { border-color: #99f6e4; color: #0f766e; background: #f0fdfa; }
+  .crumbbtn.del { border-color: #f0d9d9; color: #b91c1c; }
+  .crumbbtn:hover { filter: brightness(.97); }
 
   .body { flex: 1; display: flex; min-height: 0; }
   .board { flex: 1; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
@@ -1073,13 +1078,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1007";
   }
 
   function columns() {
+    // lv3(부문)은 빵부스러기 드롭다운으로 고른다 — 컬럼은 lv4~lv6 만 (lv3 컬럼 제거).
     var html = '<div class="board scroll">';
-    for (var lv = 3; lv <= 6; lv++) {
-      var pid = lv === 3 ? ROOT : S.sel[lv - 1];
+    for (var lv = 4; lv <= 6; lv++) {
+      var pid = S.sel[lv - 1];
       var enabled = !!pid;
       html += '<div class="col' + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
         + '<div class="list scroll" data-lv="' + lv + '" data-parent="' + esc(pid || "") + '">';
-      if (!enabled) html += '<div class="emptyhint">상위 항목을<br/>먼저 선택하세요</div>';
+      if (!enabled) html += '<div class="emptyhint">' + (lv === 4 ? "위에서 부문을<br/>먼저 고르세요" : "상위 항목을<br/>먼저 선택하세요") + "</div>";
       else {
         var cards = childrenOf(pid);
         cards.forEach(function (nn) { html += cardHTML(nn, lv); });
@@ -1169,10 +1175,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1007";
     var lv3sel = '<select class="crumbsel" data-fkey="crumblv3"><option value="">부문 선택 —</option>'
       + lv3s.map(function (n) { return '<option value="' + esc(n.id) + '"' + (n.id === cur3 ? " selected" : "") + ">" + esc(n.name || "(이름 없음)") + "</option>"; }).join("")
       + "</select>";
+    // 부문은 추가/삭제만 — 컬럼 대신 드롭다운 옆 버튼으로. 삭제는 부문이 선택됐을 때만.
+    var lv3btns = '<button class="crumbbtn add" data-act="add" data-pid="' + ROOT + '" data-lv="3" title="새 부문 추가">＋ 부문</button>'
+      + (cur3 ? '<button class="crumbbtn del" data-act="del" data-id="' + esc(cur3) + '" title="이 부문 삭제">🗑</button>' : "");
     var q = (S.query || "").trim();
     var search = '<div class="searchbox"><input data-fkey="query" value="' + esc(S.query || "") + '" placeholder="🔎 업무명 검색" />'
       + (q ? '<span class="shits">' + hitCount() + "건</span>" : "") + "</div>";
-    return '<div class="crumb">' + chips + lv3sel + '<div class="grow"></div>' + search + "</div>";
+    return '<div class="crumb">' + chips + lv3sel + lv3btns + '<div class="grow"></div>' + search + "</div>";
   }
 
   /** 복수 선택 칩. 기존 활용기술 칩(.tchip)과 같은 모양·같은 토글 방식을 쓴다. */
