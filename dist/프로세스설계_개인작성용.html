@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1224";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1256";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -40,6 +40,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1224";
   .scroll::-webkit-scrollbar-thumb { background: #d8cfc0; border-radius: 5px; }
   .app { display: flex; flex-direction: column; background: #eceae5; border-radius: 14px;
     overflow: hidden; border: 1px solid #ddd6ca; }
+  /* 단독 배포판(Streamlit iframe 밖)은 창 전체를 채운다 — 모서리 라운드·테두리 제거해 딱 맞춤 */
+  html.solo, html.solo body { height: 100%; overflow: hidden; }
+  html.solo .app { border: none; border-radius: 0; }
 
   /* 상단바 */
   .top { display: flex; align-items: center; gap: 16px; padding: 11px 20px; background: #fff;
@@ -1794,7 +1797,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260720_1224";
     contentEl = document.createElement("div");
     contentEl.style.display = "flex";
     contentEl.style.flexDirection = "column";
-    contentEl.style.height = IN_ST ? "820px" : "820px";
+    // Streamlit iframe 안에선 setFrameHeight 로 820 고정. 단독 배포판은 뷰포트 전체를 채운다
+    // (안 그러면 큰 모니터에서 하단에 빈 여백이 크게 남는다).
+    if (!IN_ST) document.documentElement.classList.add("solo");
+    contentEl.style.height = IN_ST ? "820px" : "100vh";
     appEl.appendChild(contentEl);
     appEl.addEventListener("click", onClick);
     appEl.addEventListener("input", onInput);
