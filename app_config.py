@@ -122,9 +122,19 @@ else:
     OCR_API_KEY, OCR_API_URL, OCR_MODEL = OCR_UPSTAGE_API_KEY, OCR_UPSTAGE_API_URL, OCR_UPSTAGE_MODEL
 
 # ── 프록시 / SSL (사내망 + VDI 사외망은 프록시 사용, 일반 사외망은 직접연결) ──
+def _normalize_proxy(v: str | None) -> str | None:
+    """프록시 URL 정규화 — 스킴(http://) 없으면 부착. httpx는 스킴 없는 프록시를
+    'Unknown scheme for proxy URL' 예외로 거부하므로(requests와 달리), 여기서 통일한다.
+    빈값/미설정은 None, 이미 스킴이 있으면 그대로(동작 중 설정 무영향)."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    return v if "://" in v else "http://" + v
+
+
 if IS_INTERNAL or IS_VDI:
-    HTTP_PROXY  = _get("HTTP_PROXY")  or None
-    HTTPS_PROXY = _get("HTTPS_PROXY") or None
+    HTTP_PROXY  = _normalize_proxy(_get("HTTP_PROXY"))
+    HTTPS_PROXY = _normalize_proxy(_get("HTTPS_PROXY"))
 else:
     for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
         os.environ.pop(_k, None)
