@@ -87,8 +87,10 @@
   .crumbbtn:hover { filter: brightness(.97); }
 
   .body { flex: 1; display: flex; min-height: 0; }
-  .board { flex: 1; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
-  .col { flex: 1; min-width: 210px; display: flex; flex-direction: column; background: #f8f6f1;
+  /* 보드는 컬럼 폭만큼만 차지(flex:0) → 남는 폭은 패널이 먹어 상세 입력이 넓어지고, 컬럼~패널 사이
+     빈틈이 안 생긴다. 컬럼은 좁게 고정(basis 200, 필요 시 축소). */
+  .board { flex: 0 1 auto; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
+  .col { flex: 0 0 194px; display: flex; flex-direction: column; background: #f8f6f1;
     border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
   .col.off { opacity: .6; }
   .colhead { display: flex; align-items: center; justify-content: space-between; gap: 6px;
@@ -198,8 +200,9 @@
   .rowadd:hover { color: #0f766e; }
 
   /* 사이드 패널 */
-  .panel { width: 468px; flex: none; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
+  .panel { flex: 1 1 520px; min-width: 480px; background: #fff; border-left: 1px solid #e7e1d6; display: flex;
     flex-direction: column; min-height: 0; }
+  .pbody > * { max-width: 860px; }   /* 초광폭에서만 입력칸이 과하게 늘어나지 않게 (일반 화면은 꽉 채움) */
   .phead { padding: 15px 18px; border-bottom: 1px solid #f4f1ea; }
   .phead.d { background: #f0fdfa; }
   .prow { display: flex; align-items: center; gap: 8px; }
@@ -1287,20 +1290,26 @@
     } else {
       var opt = function (key, cur) { var base = (S.domains[key] || []).slice(); if (cur && base.indexOf(cur) < 0) base.push(cur); return '<option value="">— 선택 —</option>' + base.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join(""); };
       var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
-      fields += '<div class="aicard ' + (n.has_ai_agent ? "on" : "") + '"><label class="aiflex" style="gap:8px"><input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (n.has_ai_agent ? " checked" : "") + ' style="width:15px;height:15px" /><span class="ait" style="color:' + (n.has_ai_agent ? "#166534" : "#334155") + '">🤖 AI 에이전트 적용</span><span class="aih" style="margin:0">' + (n.has_ai_agent ? "이 업무에 AI 에이전트가 적용됩니다" : "적용 시 요약 통계에 집계됩니다") + "</span></label></div>"
-        + '<div class="grid2">'
+      var aiOn = n.has_ai_agent;
+      // AI 에이전트 토글 + 자동화 수준 — 한 줄. AI 는 aicard 스타일을 콤팩트하게 재사용.
+      fields += '<div class="grid2">'
+        + '<div><div class="fl">AI 에이전트 <span style="color:#a8a29e;font-weight:600">· 적용 시 집계</span></div>'
+        +   '<label class="aicard ' + (aiOn ? "on" : "") + '" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;padding:9px 12px">'
+        +   '<input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (aiOn ? " checked" : "") + ' style="width:15px;height:15px" />'
+        +   '<span class="ait" style="color:' + (aiOn ? "#166534" : "#334155") + '">🤖 ' + (aiOn ? "적용됨" : "적용") + "</span></label></div>"
+        + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
+        + "</div>"
         // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
         + (SOLO ? "" :
-             '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
-           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>')
-        + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
-        + (SOLO ? "" :
-             '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
+             '<div class="grid2">'
+           + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
+           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
+           + '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
            + '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
            + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
            + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
-           + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>')
-        + "</div>"
+           + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
+           + "</div>")
         + (SOLO ? occurBlock(n, id)
                 : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
                   + '<span>1회 소요시간 × 연간 횟수</span></div>')
