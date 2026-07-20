@@ -36,6 +36,7 @@ LEVEL_LABELS: Final[dict[int, str]] = {
 FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "dept", "has_ai_agent", "tech", "automation_level", "owner", "frequency", "outputs",
+    "linked_system", "linked_system_detail",
     "work_hours", "annual_count",
 )
 
@@ -120,6 +121,7 @@ DEFAULT_DOMAINS: Final[dict[str, list[str]]] = {
     "tech": ["LLM", "OCR", "RPA", "예측모델", "이상탐지", "BI/대시보드", "챗봇", "음성인식", "컴퓨터비전"],
     "automation_level": ["수동", "부분자동", "완전자동", "AI자동"],
     "frequency": ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
+    "linked_system": ["SAP", "NONSAP"],
 }
 
 DOMAIN_LABELS: Final[dict[str, str]] = {
@@ -127,6 +129,7 @@ DOMAIN_LABELS: Final[dict[str, str]] = {
     "tech": "활용기술",
     "automation_level": "자동화 수준",
     "frequency": "수행 주기",
+    "linked_system": "연계시스템",
 }
 
 # 노드 필드 기본값 (누락 필드 보정용)
@@ -139,7 +142,9 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "automation_level": "",
     "owner": "",
     "frequency": "",
-    "outputs": "",
+    "outputs": "",              # 산출물
+    "linked_system": "",        # 연계시스템 — 도메인 선택 (SAP/NONSAP 등)
+    "linked_system_detail": "", # 연계시스템 추가정보 (자유 텍스트)
     "work_hours": "",       # 1회 소요시간 (시간, 0.5 = 30분)
     "annual_count": "",     # 연간 횟수
 }

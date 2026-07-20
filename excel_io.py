@@ -35,7 +35,9 @@ FIELD_COLS: dict[str, str] = {
     "수행주기": "frequency",
     "1회소요시간(h)": "work_hours",
     "연간횟수": "annual_count",
-    "산출물/연계시스템": "outputs",
+    "산출물": "outputs",
+    "연계시스템": "linked_system",
+    "연계시스템 추가정보": "linked_system_detail",
     "업무설명": "desc",
 }
 
@@ -80,7 +82,9 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["연간횟수"] = n.get("annual_count", "")
         ah = schema.annual_hours(n)
         row["연간공수(h)"] = ah if ah else ""
-        row["산출물/연계시스템"] = n.get("outputs", "")
+        row["산출물"] = n.get("outputs", "")
+        row["연계시스템"] = n.get("linked_system", "")
+        row["연계시스템 추가정보"] = n.get("linked_system_detail", "")
         row["업무설명"] = n.get("desc", "")
         row["작성자"] = mask_name(n.get("updated_by", "")) if mask else n.get("updated_by", "")
         row["수정일시"] = n.get("updated_at", "")
@@ -266,7 +270,9 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             # 연간공수(h) 컬럼은 파생값이라 읽지 않는다 — 두 원본만 읽고 다시 계산한다
             "work_hours": _cell(r.get("1회소요시간(h)")),
             "annual_count": _cell(r.get("연간횟수")),
-            "outputs": _cell(r.get("산출물/연계시스템")),
+            "outputs": _cell(r.get("산출물")),
+            "linked_system": _cell(r.get("연계시스템")),
+            "linked_system_detail": _cell(r.get("연계시스템 추가정보")),
             "created_at": (base or {}).get("created_at", schema.now_iso()),
             "updated_at": (base or {}).get("updated_at", schema.now_iso()),
             "updated_by": (base or {}).get("updated_by", ""),
@@ -363,9 +369,10 @@ def parse_json(raw: bytes, current: dict) -> tuple[dict, list[str]]:
 def unknown_domain_values(data: dict) -> dict[str, list[str]]:
     """도메인 마스터에 없는 값 수집 (업로드 후 '도메인에 추가할까요?' 안내용)."""
     doms = data.get("domains", {})
-    found: dict[str, set[str]] = {"dept": set(), "tech": set(), "automation_level": set(), "frequency": set()}
+    found: dict[str, set[str]] = {"dept": set(), "tech": set(), "automation_level": set(),
+                                   "frequency": set(), "linked_system": set()}
     for n in data.get("nodes", []):
-        for k in ("dept", "automation_level", "frequency"):
+        for k in ("dept", "automation_level", "frequency", "linked_system"):
             v = n.get(k)
             if v and v not in doms.get(k, []):
                 found[k].add(v)

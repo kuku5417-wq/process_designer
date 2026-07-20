@@ -319,8 +319,9 @@
     tech: ["LLM", "OCR", "RPA", "예측모델", "이상탐지", "BI/대시보드", "챗봇", "음성인식", "컴퓨터비전"],
     automation_level: ["수동", "부분자동", "완전자동", "AI자동"],
     frequency: ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
+    linked_system: ["SAP", "NONSAP"],
   };
-  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기" };
+  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템" };
 
   function hasDetail(lv) { return Number(lv) >= 6; }
 
@@ -436,7 +437,8 @@
   function makeNode(pid, lv, name) {
     return { id: newId(), parent_id: pid, level: lv, order: 999, name: name || "", desc: "",
              dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "",
-             frequency: "", outputs: "", work_hours: "", annual_count: "",
+             frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
+             work_hours: "", annual_count: "",
              // lv4 그룹 메타 (일상/호선 + 선종 복수). lv6 은 이걸 상속만 한다.
              work_type: "", ship_types: [],
              // lv6 발생 패턴 — 부하의 원자값
@@ -1277,7 +1279,7 @@
       + '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>";
 
     if (!detail) {
-      var hidden = ["dept", "owner", "outputs", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
+      var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
       fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무</b>에서 입력합니다.</div>';
       if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
       // lv4 그룹 메타 — 유형·선종은 여기서만 받고 아래 lv6 이 상속한다 (lv6 에 선종 칸 없음)
@@ -1305,7 +1307,12 @@
         + '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
         + '<input class="fi" style="font-size:12px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>'
-        + '<div><div class="fl">산출물 / 연계 시스템</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서 / SAP" /></div>';
+        + '<div><div class="fl">산출물</div><input class="fi" style="font-size:12.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>'
+        + '<div class="grid2">'
+        + '<div><div class="fl">연계 시스템</div><select class="fs" data-fkey="linked_system" data-id="' + esc(id) + '">' + opt("linked_system", n.linked_system) + "</select></div>"
+        + '<div><div class="fl">추가 정보 <span style="color:#a8a29e;font-weight:600">· 모듈·인터페이스 등</span></div>'
+        + '<input class="fi" style="font-size:12.5px;padding:8px 10px" data-fkey="linked_system_detail" data-id="' + esc(id) + '" value="' + esc(n.linked_system_detail) + '" placeholder="예: MM모듈" /></div>'
+        + "</div>";
     }
 
     // 상위 업무 바꾸기 — 드래그로 불가능한 레벨 변경(승격/강등)의 유일한 경로
@@ -1323,7 +1330,8 @@
 
   function pageDomain() {
     // 개인 배포판은 '수행 주기'를 발생 패턴으로 대체했으므로 그 목록은 감춘다 (안 쓰는 도메인).
-    var keys = SOLO ? ["dept", "tech", "automation_level"] : ["dept", "tech", "automation_level", "frequency"];
+    var keys = SOLO ? ["dept", "tech", "automation_level", "linked_system"]
+                    : ["dept", "tech", "automation_level", "frequency", "linked_system"];
     if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
@@ -1673,7 +1681,7 @@
     // 이름·설명 — rerender 없이 모델+메아리만. (칸을 벗어날 때 onChange 가 전체 동기화)
     if (f === "name") { var nn = byId(id); if (nn) { nn.name = el.value; markDirty(id); echoName(id); } return; }
     if (f === "desc") { var nd = byId(id); if (nd) { nd.desc = el.value; markDirty(id); echoDesc(id); } return; }
-    var FIELDS = { owner: 1, outputs: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
+    var FIELDS = { owner: 1, outputs: 1, linked_system_detail: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
     if (FIELDS[f]) return actUpdate(id, f, el.value, '[data-fkey="' + f + '"]', !doRender);
     // ★ dom(도메인 값)은 여기서 처리하지 않는다 — onChange(칸을 벗어날 때)에서 한 번만
     //   커밋한다. 글자마다 커밋하면 미완성 값이 노드에 박힌다.
@@ -1709,7 +1717,7 @@
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
     if (f === "frequency") return actSetFrequency(el.dataset.id, el.value);
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
-    if (f === "dept" || f === "automation_level" || f === "freq_unit")
+    if (f === "dept" || f === "automation_level" || f === "freq_unit" || f === "linked_system")
       return actUpdate(el.dataset.id, f, el.value);
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);
     if (f === "query") { S.query = el.value; rerender('[data-fkey="query"]'); return; }
