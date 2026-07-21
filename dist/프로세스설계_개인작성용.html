@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1452";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1099,6 +1099,55 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1452";
     flash("내보냈습니다 — 이 파일을 관리자에게 전달하세요");
     rerender();
   }
+
+  // ── 엑셀(CSV) 다운로드 — 개인 배포판엔 파이썬이 없어 브라우저에서 CSV 로 만든다.
+  //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 최대한 맞춘다.
+  var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "레벨", "이름",
+    "부서/과", "상위부서", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
+    "AI에이전트", "활용기술", "자동화수준", "적용선종", "반복구간", "산출물", "연계시스템", "추가정보", "업무설명"];
+  function _csvCell(v) {
+    v = (v == null) ? "" : String(v);
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  function soloCsvRows() {
+    var rows = [CSV_COLS.slice()];
+    (function walk(pid, names) {
+      childrenOf(pid).forEach(function (n) {
+        var path = names.concat([n.name || ""]);
+        var full = FIXED.concat(path);                 // lv0~lv2 고정단 재부착
+        var lvc = []; for (var i = 0; i < 7; i++) lvc.push(full[i] || "");
+        var leaf = hasDetail(n.level);
+        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6 은 내보내기처럼 소속 주입
+        var ship = leaf ? (shipTypesOf(n.id) || []).map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join("·") : "";
+        rows.push(lvc.concat([
+          n.level, n.name || "", dept, dept ? deptParent(dept) : "",
+          leaf ? occurOf(n) : "", n.freq_unit || "", n.freq_count || "", n.work_hours || "",
+          leaf && annualHours(n) ? annualHours(n) : "",
+          leaf ? (n.has_ai_agent ? "Y" : "N") : "",
+          (n.tech || []).join(", "), n.automation_level || "", ship,
+          (n.apply_phases || []).join(", "),
+          n.outputs || "", n.linked_system || "", n.linked_system_detail || "", n.desc || "",
+        ]));
+        walk(n.id, path);
+      });
+    })(ROOT, []);
+    return rows;
+  }
+  function soloCsvDownload() {
+    var rows = soloCsvRows();
+    if (rows.length <= 1) { flash("내보낼 업무가 없습니다"); return; }
+    var csv = rows.map(function (r) { return r.map(_csvCell).join(","); }).join("\r\n");
+    var blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });   // BOM = 엑셀 한글
+    var name = "프로세스_" + (S.author || "이름") + "_" + (S.dept || "부서") + "_"
+      + (function () { var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); };
+                       return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); })() + ".csv";
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    flash("엑셀(CSV)로 내려받았습니다 — 엑셀에서 바로 열립니다");
+  }
+
   function soloImport(text) {
     try {
       var d = JSON.parse(text);
@@ -1662,8 +1711,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1452";
             + (st.hoursMissing ? ' <span style="color:#92400e">(미완성 ' + st.hoursMissing + "개)</span>" : "")
             + '<br/><span style="color:#a8a29e">파일명: <b>' + esc(soloExportName()) + "</b></span></div>"
           : '<div class="warn">상단에 <b>소속</b>과 <b>이름</b>을 먼저 입력하세요. 이름은 파일명 구분자라 <b>필수</b>입니다. 취합은 소속별로 집계합니다.</div>')
-      + '<div style="margin-top:14px"><button class="' + (ready ? "primary" : "secondary") + '" data-act="save">⬇ 제출 파일 내보내기 (.json)</button></div>'
-      + '<div class="solohint">· 카드마다 부서를 적지 않아도 됩니다 — 내보낼 때 위 소속이 자동으로 들어갑니다.<br/>'
+      + '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">'
+      + '<button class="' + (ready ? "primary" : "secondary") + '" data-act="save">⬇ 제출 파일 내보내기 (.json)</button>'
+      + '<button class="secondary" data-act="solocsv" title="정리한 내용을 엑셀에서 열 수 있는 CSV 로">⬇ 엑셀(CSV) 다운로드</button></div>'
+      + '<div class="solohint">· 제출은 <b>.json</b>(관리자 취합용), 엑셀로 보려면 <b>CSV</b>(엑셀에서 바로 열림 · 내 검토용).<br/>'
+      + '· 카드마다 부서를 적지 않아도 됩니다 — 내보낼 때 위 소속이 자동으로 들어갑니다.<br/>'
       + '· <b>업무 데이터</b>에는 소속만 들어가고 이름은 없습니다(소속별 집계). 이름은 <b>파일명·제출자 식별</b>에만 씁니다.</div></div>'
       + '<div class="cardbox" style="padding:22px;margin-top:14px">'
       + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">⬆ 이어서 작성하기</div>'
@@ -1869,6 +1921,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1452";
     else if (a === "evdel") actEvDel(d.id, +d.idx);
     else if (a === "skelapply") actPasteSkeleton();             // lv3~lv5 붙여넣기 반영
     else if (a === "save") doSave();
+    else if (a === "solocsv") soloCsvDownload();       // 개인 배포판 — 정리한 내용 CSV(엑셀) 다운로드
     else if (a === "domtab") S.domTab = d.k, rerender();
     else if (a === "domadd") domAdd(d.k);
     else if (a === "domdel") domDelete(d.k, +d.i);
