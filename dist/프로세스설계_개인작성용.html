@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1723";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1739";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -414,6 +414,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1723";
     special_note: ["SG", "DF(LNG)", "메탄올", "LPG"],                    // 특이사항(다중)
   };
   var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템", ship_type: "적용 선종", special_note: "특이사항" };
+  /** 불러온 도메인에 **빠진 기본 도메인 키를 기본값으로 채운다**(신규 도메인: 적용선종·특이사항 등).
+   *  예전 초안·제출 파일·시드에는 새 도메인이 없어 칩이 비어 보인다 — 이 병합으로 항상 기본값이 뜬다.
+   *  (schema.normalize 의 도메인 백필과 같은 규칙: 리스트가 아니면 기본값으로.) */
+  function withDefaultDomains(dom) {
+    var out = dom ? JSON.parse(JSON.stringify(dom)) : {};
+    Object.keys(DEF_DOMAINS).forEach(function (k) { if (!Array.isArray(out[k])) out[k] = DEF_DOMAINS[k].slice(); });
+    return out;
+  }
 
   function hasDetail(lv) { return Number(lv) >= 6; }
 
@@ -1183,7 +1191,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1723";
       var d = JSON.parse(text);
       if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
       S.nodes = d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
-      if (d.domains) S.domains = JSON.parse(JSON.stringify(d.domains));
+      S.domains = withDefaultDomains(d.domains);   // 새 도메인(선종·특이사항) 기본값 병합
       if (d.exported_dept) S.dept = d.exported_dept;
       if (d.exported_by) S.author = d.exported_by;
       S.selectedId = null; S.sel = {}; S.dirty = []; S.exported = true;
@@ -2136,7 +2144,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1723";
     if (args.tree && (S.treeEpoch === null || ep !== S.treeEpoch)) {
       S.treeEpoch = ep;
       S.nodes = (args.tree.nodes || []).map(function (n) { return Object.assign({}, n); });
-      S.domains = JSON.parse(JSON.stringify(args.tree.domains || DEF_DOMAINS));
+      S.domains = withDefaultDomains(args.tree.domains);   // 새 도메인 기본값 병합
       S.rev = args.tree.rev || 0;
       S.dirty = [];             // 파이썬이 준 새 정본 = 미저장 변경 없음
       if (args.dirty_all) S.dirty = S.nodes.map(function (n) { return n.id; }).concat(["dom"]);  // 엑셀 반영 직후: 전부 미저장
@@ -2196,12 +2204,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1723";
     // 시드는 무시하고 이어서 — 이미 작성 중인 사람의 작업분을 골격이 덮지 않게 한다.
     var seedDept = "";
     if (saved) {
-      S.nodes = saved.nodes.map(coerceEvents); S.domains = saved.domains || JSON.parse(JSON.stringify(DEF_DOMAINS));
+      S.nodes = saved.nodes.map(coerceEvents); S.domains = withDefaultDomains(saved.domains);   // 새 도메인 기본값 병합
       S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
     } else if (window.__PD_SEED__ && Array.isArray(window.__PD_SEED__.nodes) && window.__PD_SEED__.nodes.length) {
       var sd = window.__PD_SEED__;
       S.nodes = sd.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
-      S.domains = sd.domains ? JSON.parse(JSON.stringify(sd.domains)) : JSON.parse(JSON.stringify(DEF_DOMAINS));
+      S.domains = withDefaultDomains(sd.domains);   // 새 도메인 기본값 병합
       S.dept = sd.dept || sd.exported_dept || "";   // 과 자동 지정(있으면)
       seedDept = S.dept;
     } else {
