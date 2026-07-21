@@ -610,6 +610,9 @@
   function actAdd(pid, lv) {
     if (!pid) return;
     var nn = makeNode(pid, lv, "");
+    // 메인앱: 상단 기본 부서를 새 세부업무(lv6)에 채운다 — '지정 이후 만든 내용에만' 반영(소급 없음).
+    //   개인 배포판은 내보낼 때 소속이 일괄 주입되므로 여기선 넣지 않는다.
+    if (!SOLO && lv === 6 && S.dept) nn.dept = S.dept;
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
     S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
@@ -678,6 +681,7 @@
    *  lv3 은 시드 부문(고정 id)과 이름이 같으면 그 노드로 합쳐진다. 라이브러리 없이 브라우저에서
    *  도는 것이 요점 — 브라우저는 .xlsx 를 못 읽으므로 엑셀에서 Ctrl+C → 여기 Ctrl+V 한다. */
   function actPasteSkeleton() {
+    if (!needIdent()) return;                 // 부서·이름 먼저
     var ta = document.getElementById("skelpaste");
     var text = ta ? ta.value : "";
     if (!text || !text.trim()) { flash("붙여넣은 내용이 없습니다"); return; }
@@ -968,6 +972,13 @@
     // 같은 PC 를 여러 명이 써도 섞이지 않게 신원을 키에 넣는다
     return LS_PREFIX + ((S.dept || "-") + "|" + (S.author || "-"));
   }
+  // 부서·이름을 먼저 지정했는가 — 일괄 반영(붙여넣기·가져오기·취합) 전에 요구한다(두 앱 공통).
+  function identReady() { return !!S.dept && !!S.author; }
+  function needIdent() {
+    if (identReady()) return true;
+    flash(SOLO ? "먼저 상단에 소속과 이름을 지정하세요" : "먼저 상단에 부서와 작성자를 지정하세요");
+    return false;
+  }
   function soloSave() {
     if (IN_ST) return;
     try {
@@ -1066,14 +1077,17 @@
       ? (n ? '<div class="badge dirty">● 미제출 ' + n + "건</div>" : '<div class="badge clean">제출됨</div>')
       : (n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>');
     var canSave = SOLO ? (!!S.dept && !!S.author) : (!!S.author && n > 0);   // 개인: 소속·이름 필수(파일명 구분자)
-    // 개인 모드: 소속·이름을 한 번만 받고, 카드마다 부서·담당자를 묻지 않는다.
+    // 부서/이름을 상단에서 먼저 받는다. 개인 모드는 카드마다 부서를 묻지 않고, 메인앱은
+    // 이 부서를 '기본 부서'로 삼아 이후 만든/고친 노드에 채운다(기존 노드는 소급하지 않음).
+    var deptSel = '<select class="authinput" data-fkey="mydept" style="width:118px"><option value="">— 선택 —</option>'
+      + (S.domains.dept || []).map(function (d) { return '<option value="' + esc(d) + '"' + (d === S.dept ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("")
+      + '</select>';
+    var reqStar = ' <span style="color:#dc2626;font-weight:700">*</span>';
     var ident = SOLO
-      ? '<div class="authwrap"><label>소속</label><select class="authinput" data-fkey="mydept" style="width:118px">'
-        + '<option value="">— 선택 —</option>'
-        + (S.domains.dept || []).map(function (d) { return '<option value="' + esc(d) + '"' + (d === S.dept ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("")
-        + '</select></div>'
-        + '<div class="authwrap"><label>이름 <span style="color:#dc2626;font-weight:700">*</span></label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" /></div>'
-      : '<div class="authwrap"><label>작성자</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름 입력" /></div>';
+      ? '<div class="authwrap"><label>소속' + reqStar + '</label>' + deptSel + "</div>"
+        + '<div class="authwrap"><label>이름' + reqStar + '</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" /></div>'
+      : '<div class="authwrap"><label>부서' + reqStar + '</label>' + deptSel + "</div>"
+        + '<div class="authwrap"><label>작성자' + reqStar + '</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" /></div>';
     return '<div class="top">'
       + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계' + (SOLO ? " · 개인 작성용" : "") + '</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
       + '<div class="tabs">' + tabs + "</div>" + toggle
@@ -1440,7 +1454,9 @@
 
     var p = S.importPreview;
     if (!p) {
-      return '<div class="cardbox" style="padding:22px"><label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:15px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:13.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
+      return '<div class="cardbox" style="padding:22px">'
+        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 일괄 반영이 되지 않습니다.</div>')
+        + '<label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:15px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:13.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
         + '<input id="xlsxup" type="file" accept=".xlsx,.json" style="display:none" data-fkey="xlsxfile" />'
         + '<div style="margin-top:18px;font-size:14px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:14px;color:#78716c;line-height:1.9">'
         + "<li>lv3~lv6 칸을 <b>왼쪽부터 연속으로</b> 채웁니다. (lv4 를 비우고 lv5 만 채우면 오류)</li>"
@@ -1504,6 +1520,7 @@
       return '<div class="cardbox" style="padding:22px">'
         + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">여러 제출을 한 번에 취합</div>'
         + '<div style="font-size:14px;color:#78716c;line-height:1.6;margin-bottom:16px">개인 배포판이 내보낸 <b>프로세스_이름_부서_날짜.json</b> 들을 모아, 같은 업무는 한 노드로 합치고 <b>제출 인원수</b>를 셉니다. 업무 데이터에는 소속만 들어갑니다(이름 미저장).</div>'
+        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 취합이 되지 않습니다.</div>')
         + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로</span></div>'
         + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07" />'
         + '<button class="primary" style="flex:none;padding:9px 18px" data-act="collectscan">스캔</button></div>'
@@ -1569,6 +1586,7 @@
       + '<div class="cardbox" style="padding:22px;margin-top:14px">'
       + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv5</span></div>'
       + '<div style="font-size:14.5px;color:#78716c;line-height:1.6">엑셀에서 <b>세 열(부문 · 대분류 · 중분류)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 세부업무(lv6)와 발생 패턴은 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
+      + (ready ? "" : '<div class="warn" style="margin-top:12px">⚠ 먼저 상단에 <b>소속</b>과 <b>이름</b>을 지정하세요. 지정 전에는 붙여넣기 반영이 되지 않습니다.</div>')
       + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:14px;white-space:pre" placeholder="선장운전	항해장비	레이더\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기"></textarea>'
       + '<div style="margin-top:10px"><button class="primary" data-act="skelapply">📋 붙여넣기 반영</button></div>'
       + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 대분류를 비우고 중분류만 있으면 그 줄은 건너뜁니다.<br/>'
@@ -1770,7 +1788,7 @@
     else if (a === "dismiss") { S.conflict = null; rerender(); }
     else if (a === "impapply") emit({ type: "import_apply", delete_missing: S.delMissing, add_domains: S.addDomains });
     else if (a === "impcancel") { S.importPreview = null; S.importErrors = []; S.delMissing = false; rerender(); emit({ type: "import_cancel" }); }
-    else if (a === "collectscan") { emit({ type: "collect_scan", folder: S.collectFolder || "" }); flash("폴더를 스캔하는 중…"); }
+    else if (a === "collectscan") { if (!needIdent()) return; emit({ type: "collect_scan", folder: S.collectFolder || "" }); flash("폴더를 스캔하는 중…"); }
     else if (a === "collectapply") emit({ type: "collect_apply" });
     else if (a === "collectcancel") { S.collectPreview = null; S.collectErrors = []; rerender(); emit({ type: "collect_cancel" }); }
     else if (a === "cxcancel") { S.confirm = null; rerender(); }
@@ -1887,6 +1905,7 @@
     if (f === "delmissing") { S.delMissing = el.checked; return; }
     if (f === "adddomains") { S.addDomains = el.checked; return; }
     if (f === "xlsxfile") {
+      if (!needIdent()) { el.value = ""; return; }        // 부서·이름 먼저
       var file = el.files && el.files[0]; if (!file) return;
       var rd = new FileReader();
       // 파싱/미리보기 요청일 뿐 — 반영은 사용자가 [이 내용으로 반영] 을 눌러야 일어난다
@@ -1900,6 +1919,7 @@
       jr.readAsText(jf, "utf-8");
     }
     if (f === "collectfiles") {       // 취합 — 여러 .json 을 한 번에 읽어 배열로 보낸다
+      if (!needIdent()) { el.value = ""; return; }        // 부서·이름 먼저
       var fl = el.files ? [].slice.call(el.files) : []; if (!fl.length) return;
       var out = [], done = 0;
       flash(fl.length + "개 파일을 읽는 중…");
