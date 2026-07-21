@@ -34,6 +34,8 @@ FIELD_COLS: dict[str, str] = {
     "담당자": "owner",
     "수행주기": "frequency",
     "1회소요시간(h)": "work_hours",
+    "기간단위": "freq_unit",
+    "횟수": "freq_count",
     "연간횟수": "annual_count",
     "산출물": "outputs",
     "연계시스템": "linked_system",
@@ -79,7 +81,10 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["담당자"] = mask_name(owner) if (mask and owner) else owner
         row["수행주기"] = n.get("frequency", "")
         row["1회소요시간(h)"] = n.get("work_hours", "")
-        row["연간횟수"] = n.get("annual_count", "")
+        row["기간단위"] = n.get("freq_unit", "")
+        row["횟수"] = n.get("freq_count", "")
+        ac = schema.annual_count_of(n)          # freq_unit×freq_count 파생, 없으면 annual_count 폴백
+        row["연간횟수"] = int(ac) if ac and ac == int(ac) else (ac or "")
         ah = schema.annual_hours(n)
         row["연간공수(h)"] = ah if ah else ""
         row["산출물"] = n.get("outputs", "")
@@ -267,8 +272,11 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             "automation_level": _cell(r.get("자동화수준")),
             "owner": owner,
             "frequency": _cell(r.get("수행주기")),
-            # 연간공수(h) 컬럼은 파생값이라 읽지 않는다 — 두 원본만 읽고 다시 계산한다
             "work_hours": _cell(r.get("1회소요시간(h)")),
+            "freq_unit": _cell(r.get("기간단위")),
+            "freq_count": _cell(r.get("횟수")),
+            # 연간공수(h)·연간횟수 는 freq_unit×freq_count 파생값이라 authoritative 하게 읽지 않는다
+            # (구 데이터 폴백용으로 annual_count 만 보존).
             "annual_count": _cell(r.get("연간횟수")),
             "outputs": _cell(r.get("산출물")),
             "linked_system": _cell(r.get("연계시스템")),

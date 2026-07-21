@@ -37,7 +37,7 @@ FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "dept", "has_ai_agent", "tech", "automation_level", "owner", "frequency", "outputs",
     "linked_system", "linked_system_detail",
-    "work_hours", "annual_count",
+    "work_hours", "freq_unit", "freq_count", "annual_count",
 )
 
 # ── 작업시간 ────────────────────────────────────────────
@@ -52,6 +52,10 @@ FREQ_ANNUAL: Final[dict[str, int]] = {
     "연 1회": 1,
 }
 
+# 기간 단위 → 연간 발생수 (기간칩+횟수 모델). 단위와 횟수를 나눠 "주 3회" 를 표현한다.
+# JS FREQ_UNITS 와 쌍둥이. 일 = 근무일 기준.
+FREQ_UNITS: Final[dict[str, int]] = {"일": 250, "주": 52, "월": 12, "분기": 4, "년": 1}
+
 
 def _num(v: object) -> float:
     """숫자로 못 읽으면 0 — 빈칸·문자·None 에 죽지 않는다."""
@@ -63,9 +67,18 @@ def _num(v: object) -> float:
         return 0.0
 
 
+def annual_count_of(node: dict) -> float:
+    """연간 횟수. 기간단위(freq_unit)가 있으면 freq_count × 단위연간수 로 파생,
+    없으면 구 데이터의 annual_count 폴백."""
+    u = FREQ_UNITS.get(str(node.get("freq_unit") or ""))
+    if u:
+        return _num(node.get("freq_count")) * u
+    return _num(node.get("annual_count"))
+
+
 def annual_hours(node: dict) -> float:
-    """이 업무의 연간 공수(시간). 둘 중 하나라도 비면 0."""
-    return round(_num(node.get("work_hours")) * _num(node.get("annual_count")), 1)
+    """이 업무의 연간 공수(시간) = 1회 소요시간 × 연간 횟수. 하나라도 비면 0."""
+    return round(_num(node.get("work_hours")) * annual_count_of(node), 1)
 
 
 def josa(word: str, pair: str = "은/는") -> str:
@@ -146,7 +159,9 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "linked_system": "",        # 연계시스템 — 도메인 선택 (SAP/NONSAP 등)
     "linked_system_detail": "", # 연계시스템 추가정보 (자유 텍스트)
     "work_hours": "",       # 1회 소요시간 (시간, 0.5 = 30분)
-    "annual_count": "",     # 연간 횟수
+    "freq_unit": "",        # 기간 단위 (일/주/월/분기/년) — 칩 택1
+    "freq_count": "",       # 단위당 횟수 (예: 주 3회 → freq_count=3)
+    "annual_count": "",     # 연간 횟수 (구 데이터 폴백; 신규는 freq_count×단위연간수로 파생)
 }
 
 SCHEMA_VERSION: Final[int] = 1

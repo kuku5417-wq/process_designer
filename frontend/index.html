@@ -347,17 +347,20 @@
 
   function hasDetail(lv) { return Number(lv) >= 6; }
 
-  // ── 작업시간 (schema.annual_hours / schema.FREQ_ANNUAL 의 쌍둥이) ─────────
+  // ── 작업시간 (schema.annual_hours / schema.annual_count_of 의 쌍둥이) ─────────
   // 연간 공수는 저장하지 않는다 — 두 원본과 어긋날 수 있어 항상 여기서 계산한다.
   function num(v) {
     if (v === null || v === undefined || v === "") return 0;
     var f = parseFloat(String(v).replace(/,/g, "").trim());
     return isFinite(f) ? f : 0;
   }
-  function annualHours(n) { return Math.round(num(n.work_hours) * num(n.annual_count) * 10) / 10; }
-  var FREQ_ANNUAL = { "일 1회": 250, "주 1회": 52, "월 1회": 12, "분기": 4, "연 1회": 1 };
-  //  ★ 기본값 자동 채움은 **JS(입력 보조)에서만** 한다. 파이썬 normalize/parse 가 채우면
-  //    연간횟수를 일부러 비운 엑셀이 조용히 52 를 얻는다.
+  // 연간 횟수 = 기간단위 있으면 횟수 × 단위연간수, 없으면 구 데이터의 annual_count 폴백 (schema.annual_count_of 쌍둥이)
+  function annualCountOf(n) {
+    var u = FREQ_UNITS[String(n.freq_unit || "")];
+    if (u) return num(n.freq_count) * u;
+    return num(n.annual_count);
+  }
+  function annualHours(n) { return Math.round(num(n.work_hours) * annualCountOf(n) * 10) / 10; }
 
   // ── 발생 패턴 (개인 배포판 SOLO 전용) ────────────────────────────────
   // 부하 = "언제·몇 번 하는가" 다. 세 갈래로 갈리고, 그에 따라 필요한 값이 다르다.
@@ -601,11 +604,10 @@
   }
   /** 주기 선택 → 연간 횟수 기본값. **비어 있을 때만** 채운다 — 손으로 친 숫자를
    *  드롭다운 조작이 날리면 안 된다. */
-  function actSetFrequency(id, v) {
+  /** 기간 단위 단일 선택 칩(택1). 다시 누르면 해제. 연간 횟수는 freq_count×단위로 파생한다. */
+  function actSetFreqUnit(id, v) {
     var n = byId(id); if (!n) return;
-    n.frequency = v;
-    var def = FREQ_ANNUAL[v];
-    if (def && !String(n.annual_count || "").trim()) n.annual_count = String(def);
+    n.freq_unit = (n.freq_unit === v) ? "" : v;   // 재클릭 해제
     markDirty(id); rerender();
   }
 
@@ -1202,6 +1204,16 @@
     return '<div><div class="fl">' + label + '</div><div class="techrow">' + chips + "</div></div>";
   }
 
+  /** 기간 단위 단일 선택 칩(택1). 칩 모양은 활용기술과 같되 한 번에 하나만 켜진다. */
+  function freqUnitChips(id, sel) {
+    var chips = FREQ_UNIT_KEYS.map(function (u) {
+      var on = (sel === u);
+      return '<button class="tchip' + (on ? " on" : "") + '" data-act="freqchip" data-id="' + esc(id)
+        + '" data-v="' + esc(u) + '">' + esc(u) + "</button>";
+    }).join("");
+    return '<div><div class="fl">기간 단위 <span style="color:#a8a29e;font-weight:600">· 택1</span></div><div class="techrow">' + chips + "</div></div>";
+  }
+
   /** lv6 발생 패턴 블록 — 패턴에 따라 필요한 필드만 보여준다.
    *  세 패턴이 요구하는 값이 서로 달라서, 다 늘어놓으면 작성자가 뭘 채워야 할지 모른다. */
   function occurBlock(n, id) {
@@ -1242,12 +1254,9 @@
         + (rows || '<div class="solohint" style="padding:6px 0">아직 시점이 없습니다. 아래 버튼으로 추가하세요.</div>')
         + '<button data-act="evadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:14px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 시점 추가</button></div>';
     } else {
-      // 상시·호선루틴 공통 — 소요시간·기간단위·횟수를 한 줄(grid3)로. 나눠야 "주 3회" 가 표현된다
-      h += '<div class="grid3" style="margin-top:10px">' + whCell
-        + '<div><div class="fl">기간 단위</div><select class="fs" data-fkey="freq_unit" data-id="' + esc(id) + '">'
-        + '<option value="">— 선택 —</option>'
-        + FREQ_UNIT_KEYS.map(function (u) { return '<option value="' + esc(u) + '"' + (n.freq_unit === u ? " selected" : "") + ">" + esc(u) + "</option>"; }).join("")
-        + "</select></div>"
+      // 상시·호선루틴 공통 — 기간 단위는 칩(택1) 한 줄, 그 아래 소요시간·횟수(grid2). 나눠야 "주 3회" 표현
+      h += '<div style="margin-top:10px">' + freqUnitChips(id, n.freq_unit) + "</div>"
+        + '<div class="grid2" style="margin-top:8px">' + whCell
         + '<div><div class="fl">횟수 <span style="color:#a8a29e;font-weight:600">· 단위당</span></div>'
         + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="freq_count" data-id="' + esc(id) + '" value="' + esc(n.freq_count) + '" placeholder="예: 3" /></div>'
         + "</div>";
@@ -1302,7 +1311,7 @@
       + "</div>";
 
     if (!detail) {
-      var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "frequency"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
+      var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "freq_unit", "freq_count"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
       fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무</b>에서 입력합니다.</div>';
       if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
     } else {
@@ -1322,15 +1331,18 @@
              '<div class="grid2">'
            + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
            + '<div><div class="fl">담당자</div><input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
-           + '<div><div class="fl">수행 주기</div><select class="fs" data-fkey="frequency" data-id="' + esc(id) + '">' + opt("frequency", n.frequency) + "</select></div>"
+           + "</div>"
+           // 수행 주기 = 기간 단위 칩(택1) + 횟수. 연간 횟수는 횟수×단위연간수로 파생하므로 별도 입력칸 없음
+           + '<div style="margin-top:9px">' + freqUnitChips(id, n.freq_unit) + "</div>"
+           + '<div class="grid2" style="margin-top:8px">'
            + '<div><div class="fl">1회 소요시간 <span style="color:#a8a29e;font-weight:600">· 시간 (30분=0.5)</span></div>'
            + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="work_hours" data-id="' + esc(id) + '" value="' + esc(n.work_hours) + '" placeholder="예: 2" /></div>'
-           + '<div><div class="fl">연간 횟수 <span style="color:#a8a29e;font-weight:600">· 주기 고르면 자동</span></div>'
-           + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="annual_count" data-id="' + esc(id) + '" value="' + esc(n.annual_count) + '" placeholder="예: 52" /></div>'
+           + '<div><div class="fl">횟수 <span style="color:#a8a29e;font-weight:600">· 단위당</span></div>'
+           + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="freq_count" data-id="' + esc(id) + '" value="' + esc(n.freq_count) + '" placeholder="예: 3" /></div>'
            + "</div>";
       var occ = SOLO ? occurBlock(n, id)
                      : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
-                       + '<span>1회 소요시간 × 연간 횟수</span></div>';
+                       + '<span>1회 소요시간 × (횟수 × 단위 연간수)</span></div>';
       var techBlock = '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
         + '<input class="fi" style="font-size:14px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>';
@@ -1361,9 +1373,8 @@
   }
 
   function pageDomain() {
-    // 개인 배포판은 '수행 주기'를 발생 패턴으로 대체했으므로 그 목록은 감춘다 (안 쓰는 도메인).
-    var keys = SOLO ? ["dept", "tech", "automation_level", "linked_system"]
-                    : ["dept", "tech", "automation_level", "frequency", "linked_system"];
+    // '수행 주기'는 두 앱 모두 기간단위 칩+횟수로 대체했으므로 도메인 목록에서 감춘다 (안 쓰는 도메인).
+    var keys = ["dept", "tech", "automation_level", "linked_system"];
     if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
@@ -1645,6 +1656,7 @@
     else if (a === "del") actDel(d.id);
     else if (a === "tech") actToggleTech(d.id, d.t);
     else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·구간 복수 선택
+    else if (a === "freqchip") actSetFreqUnit(d.id, d.v);        // 기간 단위 택1
     else if (a === "occur") actSetOccur(d.id, d.v);
     else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
     else if (a === "evdel") actEvDel(d.id, +d.idx);
@@ -1761,9 +1773,8 @@
     if (BLUR_SYNC[f]) { rerender(); return; }
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
-    if (f === "frequency") return actSetFrequency(el.dataset.id, el.value);
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
-    if (f === "dept" || f === "automation_level" || f === "freq_unit" || f === "linked_system")
+    if (f === "dept" || f === "automation_level" || f === "linked_system")
       return actUpdate(el.dataset.id, f, el.value);
     if (f === "crumblv3") { if (el.value) actSelect(el.value); return; }   // 빵부스러기 부문 드롭다운
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);

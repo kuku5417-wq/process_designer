@@ -224,6 +224,18 @@ def main() -> int:
     rt = schema.diff(reloaded, parsed)
     ck(not rt["added"] and not rt["removed"] and not rt["changed"],
        f"엑셀 왕복 무손실 (추가{len(rt['added'])}/삭제{len(rt['removed'])}/변경{len(rt['changed'])})")
+    # 14b. 기간단위·횟수 엑셀 왕복 (flatten 기간단위/횟수 컬럼 → parse 재읽기)
+    fr, _ = store.load_tree()
+    fr3 = [n for n in fr["nodes"] if n["level"] == 3][0]["id"]
+    fr4 = schema.add_node(fr, fr3, 4, "t", "왕복4")
+    fr5 = schema.add_node(fr, fr4, 5, "t", "왕복5")
+    fr6 = schema.add_node(fr, fr5, 6, "t", "왕복6")
+    schema.update_node(fr, fr6, {"freq_unit": "주", "freq_count": "3"}, "t")
+    dff = excel_io.flatten(fr, mask=False)
+    ck("기간단위" in dff.columns and "횟수" in dff.columns, "엑셀에 기간단위·횟수 컬럼 존재")
+    fr_rt, _ = excel_io.parse_excel(excel_io.build_xlsx(fr, mask=False), fr)
+    got = [n for n in fr_rt["nodes"] if n["id"] == fr6][0]
+    ck(got.get("freq_unit") == "주" and str(got.get("freq_count")) == "3", "기간단위·횟수 엑셀 왕복 보존")
 
     # 15. 엑셀 삭제 옵트인 — app.py _apply_import 의 병합 규칙과 동일 로직
     base, _ = store.load_tree()
@@ -277,6 +289,17 @@ def main() -> int:
     ck(all(f in schema.DETAIL_FIELDS for f in ("work_hours", "annual_count")), "작업시간이 lv6 전용 필드")
     ck(all(f in schema.NODE_DEFAULTS for f in ("work_hours", "annual_count")),
        "작업시간이 NODE_DEFAULTS 에 있음 (없으면 diff 가 변경을 못 잡는다)")
+    # 18b. 기간단위 칩 + 횟수 → 연간 횟수·공수 파생
+    ck(schema.FREQ_UNITS["주"] == 52 and schema.FREQ_UNITS["일"] == 250, "기간단위→연간 (일=근무일 250)")
+    ck(schema.annual_count_of({"freq_unit": "주", "freq_count": "3"}) == 156, "주 3회 = 연 156회")
+    ck(schema.annual_hours({"work_hours": "0.5", "freq_unit": "주", "freq_count": "3"}) == 78.0,
+       "연간 공수 = 0.5 × (3 × 52) = 78")
+    ck(schema.annual_count_of({"annual_count": "40"}) == 40, "freq_unit 없으면 annual_count 폴백")
+    ck(schema.annual_count_of({"freq_unit": "주", "freq_count": "", "annual_count": "40"}) == 0,
+       "freq_unit 있고 횟수 비면 0 (annual_count 로 안 샌다)")
+    ck(all(f in schema.DETAIL_FIELDS for f in ("freq_unit", "freq_count")), "기간단위·횟수가 lv6 전용 필드")
+    ck(all(f in schema.NODE_DEFAULTS for f in ("freq_unit", "freq_count")),
+       "기간단위·횟수가 NODE_DEFAULTS 에 있음 (없으면 diff·엑셀 누락)")
     # 시간만 바뀐 노드를 diff 가 잡는지 — 못 잡으면 엑셀 미리보기가 "변경 0건" 이라 거짓말한다
     h1, _ = store.load_tree()
     h1 = schema.normalize(h1)
