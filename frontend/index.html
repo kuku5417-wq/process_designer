@@ -265,9 +265,11 @@
     border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  /* 상세 폼 2열 배치 — 넓은 패널의 가로를 채우고 세로 높이를 줄인다 (스크롤 최소화) */
-  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: start; }
+  /* 상세 폼 2열 배치 — 넓은 패널의 가로를 채우고, 세로는 하단까지 늘려 여백을 없앤다.
+     align-items:stretch + flex:1 로 두 컬럼이 같은 높이가 되고, 설명 박스(.pcol-grow)가 남는 공간을 채운다. */
+  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
   .pcol { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
+  .pcol-grow { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 90px; }
   .aicard { border-radius: 10px; padding: 8px 12px; border: 1px solid #e7e1d6; background: #f8f6f1; }
   .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
   .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
@@ -1499,11 +1501,11 @@
       + '<div style="margin-top:8px;display:flex;align-items:flex-start;gap:10px"><div class="pname" style="flex:1;margin:0">' + esc(n.name || "(이름 없음)") + '</div><button class="delbtn" style="flex:none;font-size:13px;padding:6px 10px;white-space:nowrap" data-act="del" data-id="' + esc(id) + '">🗑 삭제 ' + (descCount(id) > 1 ? "(하위 " + (descCount(id) - 1) + "개 포함)" : "") + '</button></div>'
       + '<div class="ppath">' + esc(pathNames(id).join("  ›  ")) + "</div></div>";
 
-    // 상단 전폭: 이름 + 설명 (2열)
-    var fields = '<div class="grid2" style="align-items:start">'
-      + '<div><div class="fl">' + esc(LABELS[lv]) + '명</div><input class="fi" data-fkey="name" data-id="' + esc(id) + '" value="' + esc(n.name) + '" placeholder="이름을 입력하세요" /></div>'
-      + '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>"
-      + "</div>";
+    var nameField = '<div><div class="fl">' + esc(LABELS[lv]) + '명</div><input class="fi" data-fkey="name" data-id="' + esc(id) + '" value="' + esc(n.name) + '" placeholder="이름을 입력하세요" /></div>';
+    var descField = '<div><div class="fl">설명</div><textarea class="fa" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>";
+    // lv3~5 는 상단에 이름+설명(2열). lv6 은 이름만 상단, 설명은 좌측 컬럼으로 내려 하단 여백을 채운다.
+    var fields = detail ? nameField
+      : '<div class="grid2" style="align-items:start">' + nameField + descField + "</div>";
 
     if (!detail) {
       var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "freq_unit", "freq_count"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
@@ -1555,10 +1557,12 @@
                                      '특이사항 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택</span>');
       // 적용선종 — 메인앱은 여기(호선 패턴일 때만). SOLO 는 occurBlock 안에 이미 있다.
       var shipBlock = (!SOLO && (occurOf(n) === OCCUR.SHIP_ROUTINE || occurOf(n) === OCCUR.SHIP_EVENT)) ? shipTypeChips(id, n) : "";
-      // 2열: 왼쪽 = 발생/부하(+비SOLO 필드), 오른쪽 = 자동화·활용기술·산출물·연계(다건)·향후AI·특이사항·선종
+      // 설명 — lv6 은 좌측 컬럼에서, 하단 여백을 채우도록 키를 늘린다(flex:1)
+      var descBlock = '<div class="pcol-grow"><div class="fl">설명</div><textarea class="fa" style="min-height:96px;flex:1" data-fkey="desc" data-id="' + esc(id) + '" placeholder="이 업무가 무엇인지 간단히">' + esc(n.desc) + "</textarea></div>";
+      // 2열: 왼쪽 = 설명·발생/부하·자동화수준(+비SOLO 필드), 오른쪽 = 활용기술·산출물·연계(다건)·향후AI·특이사항·선종
       fields += '<div class="pgrid">'
-        + '<div class="pcol">' + nonSolo + occ + "</div>"
-        + '<div class="pcol">' + automationBlock + techBlock + outputsBlock + linkedBlock + futureTechBlock + specialNoteBlock + shipBlock + "</div>"
+        + '<div class="pcol">' + nonSolo + occ + automationBlock + descBlock + "</div>"
+        + '<div class="pcol">' + techBlock + outputsBlock + linkedBlock + futureTechBlock + specialNoteBlock + shipBlock + "</div>"
         + "</div>";
       // 취합 상세 — 여러 제출을 합칠 때 채워지는 읽기전용 요약(부서 기준, 이름 없음). 메인앱 전용.
       if (!SOLO && n.submit_detail) {
