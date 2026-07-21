@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1715";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -408,8 +408,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     automation_level: ["수동", "부분자동", "완전자동", "AI자동"],
     frequency: ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
     linked_system: ["SAP", "NONSAP"],
+    ship_type: ["CNT", "COT", "LNG", "SHTL", "VLAC", "VLCC", "FLNG"],   // 적용 선종(다중)
+    special_note: ["SG", "DF(LNG)", "메탄올", "LPG"],                    // 특이사항(다중)
   };
-  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템" };
+  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템", ship_type: "적용 선종", special_note: "특이사항" };
 
   function hasDetail(lv) { return Number(lv) >= 6; }
 
@@ -454,8 +456,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
                           "I/E", "S/T", "GasT", "ColdT", "D/L"];
 
   // pjtlist.parquet SHIPTYPE
-  var SHIP_TYPES = ["TEU", "KLNGC", "VLCC", "KBULK"];
-  var SHIP_TYPE_LABEL = { TEU: "컨테이너", KLNGC: "LNG선", VLCC: "유조선", KBULK: "벌커" };
+  // 적용 선종은 이제 ship_type 도메인(도메인관리)에서 값을 읽는다. (구 SHIP_TYPES/라벨맵 폐지)
 
 
   function occurOf(n) { return n.occur_pattern || OCCUR.ROUTINE; }
@@ -525,8 +526,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
   }
   function makeNode(pid, lv, name) {
     return { id: newId(), parent_id: pid, level: lv, order: 999, name: name || "", desc: "",
-             dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "",
+             dept: "", has_ai_agent: false, has_ai_future: false, tech: [], future_tech: [],
+             automation_level: "", owner: "",
              frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
+             linked_systems: [], special_note: [],   // 연계시스템 다건 / 특이사항(다중)
              work_hours: "", annual_count: "",
              submit_count: "", submit_detail: "",   // 취합 산출물(메인앱 전용) — SOLO 는 항상 빈값
              // lv6 발생 패턴 — 부하의 원자값. ship_types(선종)는 호선 패턴일 때 적용 필터
@@ -562,7 +565,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     if (!val) return 0;
     var c = 0;
     S.nodes.forEach(function (n) {
-      if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0) c++; }
+      if (key === "tech") { if ((n.tech || []).indexOf(val) >= 0 || (n.future_tech || []).indexOf(val) >= 0) c++; }
+      else if (key === "ship_type") { if ((n.ship_types || []).indexOf(val) >= 0) c++; }
+      else if (key === "special_note") { if ((n.special_note || []).indexOf(val) >= 0) c++; }
+      else if (key === "linked_system") { if (n.linked_system === val || (n.linked_systems || []).some(function (ls) { return ls.system === val; })) c++; }
       else if (n[key] === val) c++;
     });
     return c;
@@ -681,14 +687,20 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     markDirty(id); rerender();
   }
 
-  function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); actUpdate(id, "tech", a); }
-  /** 복수 선택 칩 토글 (선종·반복구간). 여러 개 고를 수 있어 카드를 쪼갤 필요가 없다. */
+  function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.tech = a; n.has_ai_agent = a.length > 0; markDirty(id); rerender(); }
+  /** 향후 AI 적용 기술 토글 — tech 도메인 공유, 파생 has_ai_future 갱신. */
+  function actToggleFuture(id, t) { var n = byId(id); if (!n) return; var a = (n.future_tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.future_tech = a; n.has_ai_future = a.length > 0; markDirty(id); rerender(); }
+  /** 복수 선택 칩 토글 (선종·특이사항·반복구간). 여러 개 고를 수 있어 카드를 쪼갤 필요가 없다. */
   function actToggleMulti(id, key, v) {
     var n = byId(id); if (!n) return;
     var a = (n[key] || []).slice(), i = a.indexOf(v);
     if (i >= 0) a.splice(i, 1); else a.push(v);
     actUpdate(id, key, a);
   }
+  /** 연계시스템 다건 — 줄 추가/삭제/수정. system=onChange, detail=applyInput(model-only). */
+  function actLinkAdd(id) { var n = byId(id); if (!n) return; if (!Array.isArray(n.linked_systems)) n.linked_systems = []; n.linked_systems.push({ system: "", detail: "" }); markDirty(id); rerender(); }
+  function actLinkDel(id, idx) { var n = byId(id); if (!n || !n.linked_systems) return; n.linked_systems.splice(idx, 1); markDirty(id); rerender(); }
+  function actLinkSet(id, idx, key, val) { var n = byId(id); if (!n || !n.linked_systems || !n.linked_systems[idx]) return; n.linked_systems[idx][key] = val; markDirty(id); }
   function actSetOccur(id, v) {
     var n = byId(id); if (!n) return;
     n.occur_pattern = (n.occur_pattern === v) ? "" : v;   // 다시 누르면 해제
@@ -1016,8 +1028,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     // ★ old 가 비어 있으면 노드를 건드리지 않는다. `n[key] === ""` 는 그 필드를 안 채운
     //   모든 노드와 일치해서, 전 노드에 새 값이 박힌다(실제로 13개 노드가 오염됐다).
     if (old) {
+      var remap = function (arr) { return (arr || []).map(function (t) { return t === old ? val : t; }); };
       S.nodes.forEach(function (n) {
-        if (key === "tech") n.tech = (n.tech || []).map(function (t) { return t === old ? val : t; });
+        if (key === "tech") { n.tech = remap(n.tech); n.future_tech = remap(n.future_tech); }   // 현재·향후 공유 도메인
+        else if (key === "ship_type") n.ship_types = remap(n.ship_types);
+        else if (key === "special_note") n.special_note = remap(n.special_note);
+        else if (key === "linked_system") { if (n.linked_system === old) n.linked_system = val; (n.linked_systems || []).forEach(function (ls) { if (ls.system === old) ls.system = val; }); }
         else if (n[key] === old) n[key] = val;
       });
     }
@@ -1113,7 +1129,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
   //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 맞춘다.
   var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "레벨", "이름",
     "부서/과", "상위부서", "담당자", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
-    "AI에이전트", "활용기술", "자동화수준", "적용선종", "반복구간", "산출물", "연계시스템", "추가정보", "업무설명"];
+    "현재AI", "향후AI", "현재활용기술", "향후AI적용기술", "자동화수준", "적용선종", "특이사항",
+    "반복구간", "산출물", "연계시스템(전체)", "업무설명"];
   function _csvCell(v) {
     v = (v == null) ? "" : String(v);
     return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
@@ -1128,15 +1145,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
         var leaf = hasDetail(n.level);
         var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6 은 소속(과) 반영
         var owner = leaf ? (n.owner ? (mask ? maskName(n.owner) : n.owner) : "") : "";
-        var ship = leaf ? (shipTypesOf(n.id) || []).map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join("·") : "";
+        var ship = leaf ? (n.ship_types || []).join(", ") : "";        // 도메인 값 그대로
+        var links = leaf ? (n.linked_systems || []).map(function (ls) { return (ls.system || "") + (ls.detail ? " · " + ls.detail : ""); }).filter(Boolean).join(" / ") : "";
         rows.push(lvc.concat([
           n.level, n.name || "", dept, dept ? deptParent(dept) : "", owner,
           leaf ? occurOf(n) : "", n.freq_unit || "", n.freq_count || "", n.work_hours || "",
           leaf && annualHours(n) ? annualHours(n) : "",
-          leaf ? (n.has_ai_agent ? "Y" : "N") : "",
-          (n.tech || []).join(", "), n.automation_level || "", ship,
-          (n.apply_phases || []).join(", "),
-          n.outputs || "", n.linked_system || "", n.linked_system_detail || "", n.desc || "",
+          leaf ? (n.has_ai_agent ? "Y" : "N") : "", leaf ? (n.has_ai_future ? "Y" : "N") : "",
+          (n.tech || []).join(", "), (n.future_tech || []).join(", "), n.automation_level || "", ship,
+          (n.special_note || []).join(", "), (n.apply_phases || []).join(", "),
+          n.outputs || "", links, n.desc || "",
         ]));
         walk(n.id, path);
       });
@@ -1292,7 +1310,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
       else if (_L.kind === "unresolved") chips += '<span class="mc load">구간부하</span>';
       if (nn.automation_level) chips += '<span class="mc auto">' + esc(nn.automation_level) + "</span>";
       var _st = shipTypesOf(nn.id);
-      if (_st.length) chips += '<span class="mc ship">' + esc(_st.map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join("·")) + "</span>";
+      if (_st.length) chips += '<span class="mc ship">' + esc(_st.join("·")) + "</span>";   // 선종 값=도메인값
     }
     var kids = childrenOf(nn.id).length;
     if (kids) chips += '<span class="mc kids">▸' + kids + "</span>";
@@ -1384,6 +1402,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     }).join("");
     return '<div><div class="fl">' + label + '</div><div class="techrow">' + chips + "</div></div>";
   }
+  /** 적용 선종 칩 — ship_type 도메인(도메인관리)에서 값을 읽는다. 두 앱 공용(SOLO occurBlock·메인앱 패널). */
+  function shipTypeChips(id, n) {
+    return chipRow(id, "ship_types", (S.domains.ship_type || []), n.ship_types,
+                   '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>');
+  }
 
   /** 기간 단위 단일 선택 칩(택1). 칩 모양은 활용기술과 같되 한 번에 하나만 켜진다. */
   function freqUnitChips(id, sel) {
@@ -1448,10 +1471,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     }
 
     // 선종 — 호선 패턴(호선루틴·호선이벤트)에서만. 부하 계산이 "호선.선종 ∈ 업무.선종" 으로
-    // 조인하는 적용 필터다. 상시루틴은 호선 무관이라 선종이 없다. (예전 work_type 게이트 폐지)
+    // 조인하는 적용 필터다. 상시루틴은 호선 무관이라 선종이 없다. 값은 ship_type 도메인(도메인관리).
     if (p === OCCUR.SHIP_ROUTINE || p === OCCUR.SHIP_EVENT) {
-      h += chipRow(id, "ship_types", SHIP_TYPES.map(function (s) { return { v: s, t: SHIP_TYPE_LABEL[s] + " " + s }; }),
-                   n.ship_types, '적용 선종 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택. 비우면 전 선종</span>');
+      h += shipTypeChips(id, n);
     }
 
     // 부하 수치는 왼쪽 카드 배지로 옮겼다 (패널 스크롤 축소).
@@ -1498,15 +1520,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     } else {
       var opt = function (key, cur) { var base = (S.domains[key] || []).slice(); if (cur && base.indexOf(cur) < 0) base.push(cur); return '<option value="">— 선택 —</option>' + base.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join(""); };
       var techChips = (S.domains.tech || []).map(function (t) { var on = (n.tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="tech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
-      var aiOn = n.has_ai_agent;
-      // AI 에이전트 토글 + 자동화 수준 — 한 줄. AI 는 aicard 스타일을 콤팩트하게 재사용.
-      var aiAutoRow = '<div class="grid2">'
-        + '<div><div class="fl">AI 에이전트 <span style="color:#a8a29e;font-weight:600">· 적용 시 집계</span></div>'
-        +   '<label class="aicard ' + (aiOn ? "on" : "") + '" style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:0;padding:9px 12px">'
-        +   '<input type="checkbox" data-fkey="ai" data-id="' + esc(id) + '"' + (aiOn ? " checked" : "") + ' style="width:15px;height:15px" />'
-        +   '<span class="ait" style="color:' + (aiOn ? "#166534" : "#334155") + '">🤖 ' + (aiOn ? "적용됨" : "적용") + "</span></label></div>"
-        + '<div><div class="fl">자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>"
-        + "</div>";
+      // 향후 AI 적용 기술 — 현재 활용기술(tech)과 같은 목록에서 다중 선택
+      var futureChips = (S.domains.tech || []).map(function (t) { var on = (n.future_tech || []).indexOf(t) >= 0; return '<button class="tchip' + (on ? " on" : "") + '" data-act="ftech" data-id="' + esc(id) + '" data-t="' + esc(t) + '">' + esc(t) + "</button>"; }).join("");
+      // AI 에이전트 적용여부 = **파생**. 현재 = 활용기술 있으면, 향후 = 향후 AI 적용 기술 있으면.
+      var aiCur = (n.tech || []).length > 0, aiFut = (n.future_tech || []).length > 0;
+      function aiBadge(on) { return '<span class="aicard ' + (on ? "on" : "") + '" style="display:inline-flex;align-items:center;gap:5px;margin:0;padding:2px 8px;font-size:12px;vertical-align:middle"><span class="ait" style="color:' + (on ? "#166534" : "#a8a29e") + '">🤖 ' + (on ? "AI 적용" : "미적용") + "</span></span>"; }
+      var automationBlock = '<div><div class="fl">현재 자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>";
       // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
       var nonSolo = SOLO ? "" :
              '<div class="grid2">'
@@ -1524,19 +1543,30 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
       var occ = SOLO ? occurBlock(n, id)
                      : '<div class="mh">연간 공수 <b>' + (annualHours(n) ? annualHours(n) + " 시간" : "—") + "</b>"
                        + '<span>1회 소요시간 × (횟수 × 단위 연간수)</span></div>';
-      var techBlock = '<div><div class="fl">활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span></div><div class="techrow">' + techChips + "</div>"
+      var techBlock = '<div><div class="fl">현재 활용 기술 <span style="color:#a8a29e;font-weight:600">· 눌러서 선택</span> ' + aiBadge(aiCur) + '</div><div class="techrow">' + techChips + "</div>"
         // 도메인 탭까지 가지 않고 여기서 바로 새 기술을 만든다 (v1 "목록에 없는 기술 추가")
         + '<input class="fi" style="font-size:14px;padding:7px 9px;margin-top:7px" data-fkey="newtech" data-id="' + esc(id) + '" value="" placeholder="목록에 없는 기술 추가 — 입력 후 Enter (쉼표로 여러 개)" /></div>';
       var outputsBlock = '<div><div class="fl">산출물</div><input class="fi" style="font-size:14.5px" data-fkey="outputs" data-id="' + esc(id) + '" value="' + esc(n.outputs) + '" placeholder="예: 시운전 결과보고서" /></div>';
-      var linkedBlock = '<div class="grid2">'
-        + '<div><div class="fl">연계 시스템</div><select class="fs" data-fkey="linked_system" data-id="' + esc(id) + '">' + opt("linked_system", n.linked_system) + "</select></div>"
-        + '<div><div class="fl">추가 정보 <span style="color:#a8a29e;font-weight:600">· 모듈·인터페이스 등</span></div>'
-        + '<input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="linked_system_detail" data-id="' + esc(id) + '" value="' + esc(n.linked_system_detail) + '" placeholder="예: MM모듈" /></div>'
-        + "</div>";
-      // 2열: 왼쪽 = 발생/부하(+비SOLO 필드), 오른쪽 = AI·자동화 / 기술 / 산출물 / 연계
+      // 연계 시스템 다건 — (연계시스템 select + 추가정보 input) 쌍을 여러 줄. 호선이벤트 events[] 식.
+      var linkRows = (n.linked_systems || []).map(function (ls, idx) {
+        return '<div class="grid2" style="margin-top:6px">'
+          + '<div><select class="fs" data-fkey="ls_system" data-id="' + esc(id) + '" data-idx="' + idx + '">' + opt("linked_system", ls.system) + "</select></div>"
+          + '<div style="display:flex;gap:6px;align-items:center"><input class="fi" style="flex:1;font-size:14.5px;padding:8px 10px" data-fkey="ls_detail" data-id="' + esc(id) + '" data-idx="' + idx + '" value="' + esc(ls.detail) + '" placeholder="추가 정보(예: MM모듈)" />'
+          + '<button class="cdel" data-act="lsdel" data-id="' + esc(id) + '" data-idx="' + idx + '" title="이 연계 삭제">🗑</button></div>'
+          + "</div>";
+      }).join("");
+      var linkedBlock = '<div><div class="fl">연계 시스템 <span style="color:#a8a29e;font-weight:600">· 시스템+추가정보, 여러 개 가능</span></div>'
+        + (linkRows || '<div class="solohint" style="padding:5px 0">아직 연계가 없습니다. 아래 버튼으로 추가하세요.</div>')
+        + '<button data-act="lsadd" data-id="' + esc(id) + '" style="margin-top:8px;font-size:14px;padding:7px 12px;border:1px dashed #14b8a6;background:#f0fdfa;color:#0f766e;border-radius:8px;cursor:pointer;font-weight:700">＋ 연계시스템 추가</button></div>';
+      var futureTechBlock = '<div><div class="fl">향후 AI 적용 기술 <span style="color:#a8a29e;font-weight:600">· 현재 기술과 같은 목록</span> ' + aiBadge(aiFut) + '</div><div class="techrow">' + futureChips + "</div></div>";
+      var specialNoteBlock = chipRow(id, "special_note", (S.domains.special_note || []), n.special_note,
+                                     '특이사항 <span style="color:#a8a29e;font-weight:600">· 여러 개 선택</span>');
+      // 적용선종 — 메인앱은 여기(호선 패턴일 때만). SOLO 는 occurBlock 안에 이미 있다.
+      var shipBlock = (!SOLO && (occurOf(n) === OCCUR.SHIP_ROUTINE || occurOf(n) === OCCUR.SHIP_EVENT)) ? shipTypeChips(id, n) : "";
+      // 2열: 왼쪽 = 발생/부하(+비SOLO 필드), 오른쪽 = 자동화·활용기술·산출물·연계(다건)·향후AI·특이사항·선종
       fields += '<div class="pgrid">'
         + '<div class="pcol">' + nonSolo + occ + "</div>"
-        + '<div class="pcol">' + aiAutoRow + techBlock + outputsBlock + linkedBlock + "</div>"
+        + '<div class="pcol">' + automationBlock + techBlock + outputsBlock + linkedBlock + futureTechBlock + specialNoteBlock + shipBlock + "</div>"
         + "</div>";
       // 취합 상세 — 여러 제출을 합칠 때 채워지는 읽기전용 요약(부서 기준, 이름 없음). 메인앱 전용.
       if (!SOLO && n.submit_detail) {
@@ -1562,7 +1592,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
 
   function pageDomain() {
     // '수행 주기'는 두 앱 모두 기간단위 칩+횟수로 대체했으므로 도메인 목록에서 감춘다 (안 쓰는 도메인).
-    var keys = ["dept", "tech", "automation_level", "linked_system"];
+    var keys = ["dept", "tech", "automation_level", "ship_type", "special_note", "linked_system"];
     if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
@@ -1924,7 +1954,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     else if (a === "collapse") actCollapseAll();
     else if (a === "del") actDel(d.id);
     else if (a === "tech") actToggleTech(d.id, d.t);
-    else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·구간 복수 선택
+    else if (a === "ftech") actToggleFuture(d.id, d.t);          // 향후 AI 적용 기술
+    else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·특이사항·구간 복수 선택
+    else if (a === "lsadd") actLinkAdd(d.id);                    // 연계시스템 줄 추가
+    else if (a === "lsdel") actLinkDel(d.id, +d.idx);
     else if (a === "freqchip") actSetFreqUnit(d.id, d.v);        // 기간 단위 택1
     else if (a === "occur") actSetOccur(d.id, d.v);
     else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
@@ -2007,6 +2040,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
       var ne = byId(id); if (ne && ne.events && ne.events[ei]) { ne.events[ei][ek] = el.value; markDirty(id); }
       return;
     }
+    if (f === "ls_detail") { actLinkSet(id, +el.dataset.idx, "detail", el.value); return; }   // 연계 추가정보 — 모델만
     var FIELDS = { owner: 1, outputs: 1, linked_system_detail: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
     if (FIELDS[f]) { var nf = byId(id); if (nf) { nf[f] = el.value; markDirty(id); } return; }
     // 도메인 값(dom)은 여기가 아니라 onChange(블러)에서 한 번만 커밋 — 글자마다 커밋하면 미완성 값이 박힌다.
@@ -2035,7 +2069,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     actAddTech(el.dataset.id, el.value);
   }
   // 타이핑 중엔 모델만 갱신하고, 블러(change) 때 rerender 로 동기화하는 자유 텍스트/숫자 필드들.
-  var BLUR_SYNC = { name: 1, desc: 1, owner: 1, outputs: 1, linked_system_detail: 1,
+  var BLUR_SYNC = { name: 1, desc: 1, owner: 1, outputs: 1, linked_system_detail: 1, ls_detail: 1,
                     work_hours: 1, annual_count: 1, freq_count: 1, ev_offset_start: 1, ev_offset_days: 1 };
   // change = 값이 확정된 시점(칸을 벗어나거나 Enter). select/checkbox 와 도메인 값 입력이 여기 온다.
   function onChange(e) {
@@ -2051,6 +2085,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
+    if (f === "ls_system") { actLinkSet(el.dataset.id, +el.dataset.idx, "system", el.value); rerender(); return; }
     if (f === "dept" || f === "automation_level" || f === "linked_system")
       return actUpdate(el.dataset.id, f, el.value);
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);

@@ -454,6 +454,44 @@ def main() -> int:
     ck(schema.dept_parent(byname["레이더동작시험"]["submit_detail"].split(" · ")[0]) in ("시운전1부", "시운전2부"),
        "submit_detail 은 과 기준(부서로 롤업 가능)")
 
+    # 25. lv6 상세 개편 — 신규 도메인·필드·파생·마이그레이션·왕복
+    ck("ship_type" in schema.DEFAULT_DOMAINS and "special_note" in schema.DEFAULT_DOMAINS,
+       "ship_type·special_note 도메인 존재")
+    ck(schema.DEFAULT_DOMAINS["ship_type"] == ["CNT", "COT", "LNG", "SHTL", "VLAC", "VLCC", "FLNG"],
+       "적용선종 도메인 값")
+    for f in ("future_tech", "has_ai_future", "special_note", "ship_types", "linked_systems"):
+        ck(f in schema.NODE_DEFAULTS and f in schema.DETAIL_FIELDS, f"{f} 가 NODE_DEFAULTS∧DETAIL_FIELDS")
+    # 파생 AI: 현재=tech, 향후=future_tech
+    dn = schema.normalize({"nodes": [{"id": "a", "parent_id": "__root__", "level": 6, "name": "a",
+                                      "tech": ["LLM"], "future_tech": []}]})["nodes"][0]
+    ck(dn["has_ai_agent"] is True and dn["has_ai_future"] is False, "현재 AI=활용기술, 향후 AI=향후기술 파생")
+    dn2 = schema.normalize({"nodes": [{"id": "b", "parent_id": "__root__", "level": 6, "name": "b",
+                                       "tech": [], "future_tech": ["OCR"], "has_ai_agent": True}]})["nodes"][0]
+    ck(dn2["has_ai_agent"] is False and dn2["has_ai_future"] is True, "tech 비면 현재 AI False(수동값 무시)")
+    # linked_systems 마이그레이션(구 단일 → 신 다건)
+    mig = schema.normalize({"nodes": [{"id": "c", "parent_id": "__root__", "level": 6, "name": "c",
+                                       "linked_system": "SAP", "linked_system_detail": "MM"}]})["nodes"][0]
+    ck(mig["linked_systems"] == [{"system": "SAP", "detail": "MM"}], "구 연계 단일 → 다건 마이그레이션")
+    # 엑셀 왕복(future_tech·special_note·ship_types)
+    e = schema.bootstrap()
+    e4 = schema.add_node(e, "lv3_seonjang", 4, "x", "A"); e5 = schema.add_node(e, e4, 5, "x", "B")
+    e6 = schema.add_node(e, e5, 6, "x", "C")
+    schema.update_node(e, e6, {"tech": ["LLM"], "future_tech": ["OCR", "RPA"],
+                               "special_note": ["SG", "LPG"], "ship_types": ["CNT", "LNG"]}, "x")
+    e = schema.normalize(e)
+    ert, _ = excel_io.parse_excel(excel_io.build_xlsx(e, mask=False), e)
+    r6 = [n for n in ert["nodes"] if n["level"] == 6][0]
+    ck(r6["future_tech"] == ["OCR", "RPA"] and r6["special_note"] == ["SG", "LPG"]
+       and r6["ship_types"] == ["CNT", "LNG"], "향후기술·특이사항·선종 엑셀 왕복")
+    ck(all(c in excel_io.FIELD_COLS.values() for c in ("future_tech", "special_note", "ship_types")),
+       "신규 다중필드가 FIELD_COLS")
+    # unknown_domain_values 가 신규 도메인 미등록값 감지
+    ud = excel_io.unknown_domain_values(schema.normalize({"domains": schema.DEFAULT_DOMAINS,
+        "nodes": [{"id": "u", "parent_id": "__root__", "level": 6, "name": "u",
+                   "ship_types": ["없선"], "special_note": ["없특"], "future_tech": ["없기"]}]}))
+    ck("없선" in ud.get("ship_type", []) and "없특" in ud.get("special_note", [])
+       and "없기" in ud.get("tech", []), "미등록 선종·특이사항·향후기술(=tech) 감지")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

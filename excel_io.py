@@ -38,7 +38,10 @@ FIELD_COLS: dict[str, str] = {
     "횟수": "freq_count",
     "연간횟수": "annual_count",
     "산출물": "outputs",
-    "연계시스템": "linked_system",
+    "향후AI적용기술": "future_tech",   # 다중 — tech 와 같은 도메인, ", " 조인
+    "특이사항": "special_note",        # 다중 — SG/DF(LNG)/메탄올/LPG
+    "적용선종": "ship_types",          # 다중 — CNT/COT/LNG/…
+    "연계시스템": "linked_system",     # (구) 단일 — back-compat
     "연계시스템 추가정보": "linked_system_detail",
     "업무설명": "desc",
     "제출인원": "submit_count",      # 취합 산출물 — 이 업무를 제출한 인원수 N
@@ -46,7 +49,8 @@ FIELD_COLS: dict[str, str] = {
 }
 
 # 파생 컬럼은 읽지 않고 쓰기만 한다 (역수입 금지). 연간공수=work_hours×annual_count, 상위부서=dept_parent(과)
-DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서"]
+# 연계시스템(전체)=linked_systems 다건 조인(객체배열이라 엑셀 한 칸에 못 담아 표시용 문자열; 정본은 JSON)
+DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서", "연계시스템(전체)"]
 
 TREE_COLS: list[str] = (LV_COLS + ["레벨", "이름"] + list(FIELD_COLS) + DERIVED_COLS
                         + ["작성자", "수정일시", "id"])
@@ -91,8 +95,15 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         ah = schema.annual_hours(n)
         row["연간공수(h)"] = ah if ah else ""
         row["산출물"] = n.get("outputs", "")
+        row["향후AI적용기술"] = ", ".join(n.get("future_tech") or [])
+        row["특이사항"] = ", ".join(n.get("special_note") or [])
+        row["적용선종"] = ", ".join(n.get("ship_types") or [])
         row["연계시스템"] = n.get("linked_system", "")
         row["연계시스템 추가정보"] = n.get("linked_system_detail", "")
+        # 연계시스템 다건 → "SAP · MM모듈 / NONSAP · …" (표시용, 역수입 안 함)
+        row["연계시스템(전체)"] = " / ".join(
+            (str(e.get("system") or "") + (" · " + str(e.get("detail")) if e.get("detail") else ""))
+            for e in (n.get("linked_systems") or []) if isinstance(e, dict) and (e.get("system") or e.get("detail")))
         row["업무설명"] = n.get("desc", "")
         row["제출인원"] = n.get("submit_count", "")            # 취합 산출물 (없으면 빈값)
         row["취합상세"] = n.get("submit_detail", "")           # 부서 기준, 이름 없음
@@ -264,6 +275,7 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
         owner = owner_old if (owner_in and owner_old and owner_in == mask_name(owner_old)) else owner_in
 
         tech_raw = _cell(r.get("활용기술"))
+        _split = lambda s: [t.strip() for t in _cell(s).split(",") if t.strip()]
         node = {
             "id": nid,
             "parent_id": parent_id,
@@ -284,8 +296,14 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             # (구 데이터 폴백용으로 annual_count 만 보존).
             "annual_count": _cell(r.get("연간횟수")),
             "outputs": _cell(r.get("산출물")),
+            "future_tech": _split(r.get("향후AI적용기술")),   # 다중 왕복
+            "special_note": _split(r.get("특이사항")),
+            "ship_types": _split(r.get("적용선종")),
             "linked_system": _cell(r.get("연계시스템")),
             "linked_system_detail": _cell(r.get("연계시스템 추가정보")),
+            # 연계시스템 다건(linked_systems)은 객체배열이라 엑셀에서 역수입하지 않는다(JSON 정본).
+            # base(기존 노드)에 있으면 보존한다.
+            "linked_systems": (base or {}).get("linked_systems", []),
             "submit_count": _cell(r.get("제출인원")),          # 취합 산출물 왕복 보존
             "submit_detail": _cell(r.get("취합상세")),
             "created_at": (base or {}).get("created_at", schema.now_iso()),
@@ -525,15 +543,25 @@ def unknown_domain_values(data: dict) -> dict[str, list[str]]:
     """도메인 마스터에 없는 값 수집 (업로드 후 '도메인에 추가할까요?' 안내용)."""
     doms = data.get("domains", {})
     found: dict[str, set[str]] = {"dept": set(), "tech": set(), "automation_level": set(),
-                                   "frequency": set(), "linked_system": set()}
+                                   "frequency": set(), "linked_system": set(),
+                                   "ship_type": set(), "special_note": set()}
+    # 다중값 노드필드 → 도메인 키 (future_tech 는 tech 도메인을 공유한다)
+    list_field_dom = {"tech": "tech", "future_tech": "tech",
+                      "ship_types": "ship_type", "special_note": "special_note"}
     for n in data.get("nodes", []):
         for k in ("dept", "automation_level", "frequency", "linked_system"):
             v = n.get(k)
             if v and v not in doms.get(k, []):
                 found[k].add(v)
-        for t in n.get("tech") or []:
-            if t not in doms.get("tech", []):
-                found["tech"].add(t)
+        # 연계시스템 다건의 system 값도 검사
+        for e in n.get("linked_systems") or []:
+            v = isinstance(e, dict) and e.get("system")
+            if v and v not in doms.get("linked_system", []):
+                found["linked_system"].add(v)
+        for fld, dk in list_field_dom.items():
+            for t in n.get(fld) or []:
+                if t not in doms.get(dk, []):
+                    found[dk].add(t)
     return {k: sorted(v) for k, v in found.items() if v}
 
 

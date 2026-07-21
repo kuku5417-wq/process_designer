@@ -35,8 +35,9 @@ LEVEL_LABELS: Final[dict[int, str]] = {
 # 레벨이 바뀌어도 값은 지우지 않는다 — 화면에서 숨길 뿐이라 다시 lv6 으로 내리면 되살아난다.
 FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
-    "dept", "has_ai_agent", "tech", "automation_level", "owner", "frequency", "outputs",
-    "linked_system", "linked_system_detail",
+    "dept", "has_ai_agent", "has_ai_future", "tech", "future_tech", "automation_level",
+    "owner", "frequency", "outputs",
+    "linked_system", "linked_system_detail", "linked_systems", "special_note", "ship_types",
     "work_hours", "freq_unit", "freq_count", "annual_count",
 )
 
@@ -160,6 +161,8 @@ DEFAULT_DOMAINS: Final[dict[str, list[str]]] = {
     "automation_level": ["수동", "부분자동", "완전자동", "AI자동"],
     "frequency": ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
     "linked_system": ["SAP", "NONSAP"],
+    "ship_type": ["CNT", "COT", "LNG", "SHTL", "VLAC", "VLCC", "FLNG"],   # 적용 선종(다중)
+    "special_note": ["SG", "DF(LNG)", "메탄올", "LPG"],                    # 특이사항(다중)
 }
 
 DOMAIN_LABELS: Final[dict[str, str]] = {
@@ -168,6 +171,8 @@ DOMAIN_LABELS: Final[dict[str, str]] = {
     "automation_level": "자동화 수준",
     "frequency": "수행 주기",
     "linked_system": "연계시스템",
+    "ship_type": "적용 선종",
+    "special_note": "특이사항",
 }
 
 # 노드 필드 기본값 (누락 필드 보정용)
@@ -181,8 +186,13 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "owner": "",
     "frequency": "",
     "outputs": "",              # 산출물
-    "linked_system": "",        # 연계시스템 — 도메인 선택 (SAP/NONSAP 등)
-    "linked_system_detail": "", # 연계시스템 추가정보 (자유 텍스트)
+    "linked_system": "",        # (구) 연계시스템 단일 — back-compat. 신규 UI 는 linked_systems 사용
+    "linked_system_detail": "", # (구) 연계시스템 추가정보 단일 — back-compat
+    "linked_systems": [],       # 연계시스템 다건 — [{system, detail}, ...] (호선이벤트 events[] 식)
+    "future_tech": [],          # 향후 AI 적용 기술 (다중) — 현재 활용기술(tech)과 같은 도메인
+    "has_ai_future": False,     # 향후 AI 적용 (파생: future_tech 비었나)
+    "special_note": [],         # 특이사항 (다중) — SG/DF(LNG)/메탄올/LPG
+    "ship_types": [],           # 적용 선종 (다중) — 호선 패턴일 때만 입력
     "work_hours": "",       # 1회 소요시간 (시간, 0.5 = 30분)
     "freq_unit": "",        # 기간 단위 (일/주/월/분기/년) — 칩 택1
     "freq_count": "",       # 단위당 횟수 (예: 주 3회 → freq_count=3)
@@ -362,10 +372,25 @@ def normalize(data: dict) -> dict:
         for k, dv in NODE_DEFAULTS.items():
             if k not in n or n[k] is None:
                 n[k] = list(dv) if isinstance(dv, list) else dv
-        if not isinstance(n.get("tech"), list):
-            n["tech"] = [s for s in str(n.get("tech") or "").split(",") if s.strip()]
-        n["tech"] = [str(t).strip() for t in n["tech"] if str(t).strip()]
-        n["has_ai_agent"] = bool(n.get("has_ai_agent"))
+        # 다중값 리스트 필드(활용기술·향후기술·특이사항·선종) — 쉼표문자열도 관용하고 공백 정리
+        for lk in ("tech", "future_tech", "special_note", "ship_types"):
+            if not isinstance(n.get(lk), list):
+                n[lk] = [s for s in str(n.get(lk) or "").split(",") if s.strip()]
+            n[lk] = [str(t).strip() for t in n[lk] if str(t).strip()]
+        # 연계시스템 다건 [{system, detail}] — 구 단일 필드(linked_system/detail)에서 1회 이관
+        ls = n.get("linked_systems")
+        if not isinstance(ls, list):
+            ls = []
+        ls = [{"system": str((e or {}).get("system") or "").strip(),
+               "detail": str((e or {}).get("detail") or "").strip()}
+              for e in ls if isinstance(e, dict) and ((e.get("system") or e.get("detail")))]
+        if not ls and (n.get("linked_system") or n.get("linked_system_detail")):
+            ls = [{"system": str(n.get("linked_system") or "").strip(),
+                   "detail": str(n.get("linked_system_detail") or "").strip()}]
+        n["linked_systems"] = ls
+        # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
+        n["has_ai_agent"] = len(n["tech"]) > 0
+        n["has_ai_future"] = len(n["future_tech"]) > 0
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())
