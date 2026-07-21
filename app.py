@@ -93,6 +93,8 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "diff_preview": st.session_state.get("diff_preview"),
         "import_preview": st.session_state.get("import_preview"),
         "import_errors": st.session_state.get("import_errors") or [],
+        "collect_preview": st.session_state.get("collect_preview"),
+        "collect_errors": st.session_state.get("collect_errors") or [],
     }
 
 
@@ -160,6 +162,85 @@ def _apply_import(delete_missing: bool, add_domains: bool) -> None:
         st.session_state.pop(k, None)
     st.session_state["flash"] = (f"엑셀 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])} · "
                                  f"삭제 {len(d['removed'])}. 상단 [저장]을 눌러야 파일에 기록됩니다.")
+
+
+def _collect_files_from_folder(folder: str) -> tuple[list[tuple[str, bytes]], list[str]]:
+    """폴더 경로의 *.json 을 읽어 [(파일명, bytes)] 로. 접근 불가·빈 폴더는 오류 목록으로."""
+    errs: list[str] = []
+    p = Path(folder)
+    if not folder.strip():
+        return [], ["폴더 경로를 입력하세요."]
+    if not p.exists() or not p.is_dir():
+        return [], [f"폴더를 찾을 수 없습니다: {folder}"]
+    files: list[tuple[str, bytes]] = []
+    try:
+        for fp in sorted(p.glob("*.json")):
+            try:
+                files.append((fp.name, fp.read_bytes()))
+            except Exception as e:
+                errs.append(f"{fp.name}: 읽기 실패 ({e})")
+    except Exception as e:
+        return [], [f"폴더를 읽을 수 없습니다: {e}"]
+    if not files:
+        errs.append(f"폴더에 .json 파일이 없습니다: {folder}")
+    return files, errs
+
+
+def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> None:
+    """제출 파일들을 취합해 **미리보기만** 한다 (반영은 collect_apply). import 미리보기와 동형."""
+    data = st.session_state["data"]
+    if not files:
+        st.session_state["collect_errors"] = base_errs or ["취합할 파일이 없습니다."]
+        st.session_state.pop("pending_collect", None)
+        st.session_state.pop("collect_preview", None)
+        return
+    merged, reports, errs = excel_io.collect_jsons(files, data)
+    if errs:
+        st.session_state["collect_errors"] = (base_errs or []) + errs[:20]
+        st.session_state.pop("pending_collect", None)
+        st.session_state.pop("collect_preview", None)
+        return
+    st.session_state.pop("collect_errors", None)
+    d = schema.diff(data, merged)
+    # "제출 N명" 상위 업무 — 인원 많은 순 (nmap 은 merged 기준 경로)
+    nmap = schema.node_map(merged.get("nodes", []))
+    subs = [n for n in merged.get("nodes", []) if str(n.get("submit_count") or "").isdigit()
+            and int(n["submit_count"]) >= 2]
+    subs.sort(key=lambda n: int(n["submit_count"]), reverse=True)
+    top = [{"path": " › ".join(schema.path_names(nmap, n["id"])[3:]) or n.get("name", ""),
+            "count": int(n["submit_count"])} for n in subs[:30]]
+    st.session_state["pending_collect"] = merged
+    st.session_state["collect_preview"] = {
+        "files": reports,
+        "added": len(d["added"]), "changed": len(d["changed"]),
+        "added_list": _node_brief(d["added"], merged),
+        "top_submits": top,
+        "unknown": excel_io.unknown_domain_values(merged),
+        "labels": schema.DOMAIN_LABELS,
+        "warns": base_errs,      # 일부 파일 읽기 실패 등 비치명적 경고
+    }
+
+
+def _apply_collect() -> None:
+    """취합 보류분을 반영. 취합은 항상 추가·병합만 하므로 삭제 옵트인이 없다."""
+    merged = st.session_state.get("pending_collect")
+    if not merged:
+        st.session_state["flash"] = "반영할 취합 결과가 없습니다. 파일을 다시 스캔하세요."
+        return
+    data = st.session_state["data"]
+    d = schema.diff(data, merged)
+    doms = merged.setdefault("domains", {})
+    for k, vals in excel_io.unknown_domain_values(merged).items():
+        for v in vals:
+            if v not in doms.setdefault(k, []):
+                doms[k].append(v)
+    merged["rev"] = data.get("rev", 0)
+    _set_data(merged)
+    st.session_state["dirty_all"] = True
+    for k in ("pending_collect", "collect_preview", "collect_errors"):
+        st.session_state.pop(k, None)
+    st.session_state["flash"] = (f"취합 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])}. "
+                                 f"상단 [저장]을 눌러야 파일에 기록됩니다.")
 
 
 def _preview_restore(name: str, nodes: list[dict] | None) -> None:
@@ -230,6 +311,30 @@ def _handle(evt: dict) -> None:
 
     elif t == "import_cancel":
         for k in ("pending_import", "import_preview", "import_errors"):
+            st.session_state.pop(k, None)
+
+    elif t == "collect_scan":               # 다수 제출 취합 — 파싱·미리보기만
+        try:
+            folder = evt.get("folder")
+            if folder is not None:
+                files, base_errs = _collect_files_from_folder(str(folder))
+            else:
+                files, base_errs = [], []
+                for f in evt.get("files") or []:
+                    try:
+                        files.append((f.get("name", ""), base64.b64decode(f.get("b64", ""))))
+                    except Exception as e:
+                        base_errs.append(f"{f.get('name', '')}: 디코드 실패 ({e})")
+            _preview_collect(files, base_errs)
+        except Exception as e:
+            st.session_state["collect_errors"] = [f"취합 중 오류: {e}"]
+            st.session_state.pop("pending_collect", None)
+
+    elif t == "collect_apply":
+        _apply_collect()
+
+    elif t == "collect_cancel":
+        for k in ("pending_collect", "collect_preview", "collect_errors"):
             st.session_state.pop(k, None)
 
     elif t == "histpick":                    # 복원 미리보기 (실제 diff 는 파이썬이 계산)

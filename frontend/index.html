@@ -143,6 +143,7 @@
   .mc.load { background: #ccfbf1; color: #0f766e; font-weight: 800; }
   .mc.auto { background: #fef9c3; color: #854d0e; }
   .mc.ship { background: #e0f2fe; color: #075985; }
+  .mc.submit { background: #fce7f3; color: #9d174b; font-weight: 800; }
   .addbtn { border: 1.5px dashed #cabfb0; background: #fff; color: #78716c; border-radius: 8px;
     padding: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
   .addbtn:hover { border-color: #0f766e; color: #0f766e; background: #f0fdfa; }
@@ -480,6 +481,7 @@
              dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "",
              frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
              work_hours: "", annual_count: "",
+             submit_count: "", submit_detail: "",   // 취합 산출물(메인앱 전용) — SOLO 는 항상 빈값
              // lv6 발생 패턴 — 부하의 원자값. ship_types(선종)는 호선 패턴일 때 적용 필터
              occur_pattern: "", freq_unit: "", freq_count: "", ship_types: [],
              apply_phases: [],                        // 호선루틴: 반복 구간(복수)
@@ -1131,6 +1133,9 @@
     if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
     if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
     if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
+    // 취합 인원수 배지 — lv4~6 어디서나(메인앱 취합 산출물). SOLO 노드는 값이 없어 안 뜬다.
+    var _sc = parseInt(nn.submit_count, 10);
+    if (_sc >= 2) chips += '<span class="mc submit">👥 ' + _sc + "명</span>";
     // 개인 배포판 lv6 — 발생패턴·부하·자동화·선종을 카드에 요약해 세부 패널을 짧게 유지한다
     if (SOLO && detail) {
       var _p = occurOf(nn), _pl = { "상시루틴": "상시", "호선루틴": "호선R", "호선이벤트": "이벤트" }[_p] || _p;
@@ -1382,6 +1387,13 @@
         + '<div class="pcol">' + nonSolo + occ + "</div>"
         + '<div class="pcol">' + aiAutoRow + techBlock + outputsBlock + linkedBlock + "</div>"
         + "</div>";
+      // 취합 상세 — 여러 제출을 합칠 때 채워지는 읽기전용 요약(부서 기준, 이름 없음). 메인앱 전용.
+      if (!SOLO && n.submit_detail) {
+        fields += '<div style="margin-top:12px"><div class="fl">🧩 취합 상세 <span style="color:#a8a29e;font-weight:600">· 제출 '
+          + esc(n.submit_count || "") + '명 (부서별)</span></div>'
+          + '<div class="cardbox" style="padding:10px 12px;font-size:13.5px;color:#57534e;line-height:1.7;white-space:pre-wrap">'
+          + esc(n.submit_detail) + "</div></div>";
+      }
     }
 
     // 상위 업무 바꾸기 — 드래그로 불가능한 레벨 변경(승격/강등)의 유일한 경로
@@ -1476,6 +1488,59 @@
       + '<div style="font-size:13.5px;color:#a8a29e;margin-top:10px">반영 후 상단 [저장] 을 눌러야 파일에 기록됩니다.</div></div>';
   }
 
+  /** 제출 취합 — 여러 개인 제출 JSON 을 폴더 스캔/다중 업로드로 모아 경로 기준 병합 + 제출 인원수 집계.
+   *  파싱·집계는 파이썬(collect_jsons)이 하고 여기선 결과(collect_preview)만 그린다. 메인앱 전용. */
+  function collectPane() {
+    var errs = S.collectErrors || [];
+    if (errs.length) {
+      return '<div class="cardbox" style="padding:22px">'
+        + '<div class="warn" style="margin-bottom:12px">⚠ 취합할 수 없습니다.</div>'
+        + '<div style="max-height:220px;overflow:auto;font-size:14px;color:#78716c;line-height:1.9">'
+        + errs.map(function (e) { return "· " + esc(e); }).join("<br/>") + "</div>"
+        + '<div style="margin-top:16px"><button class="secondary" data-act="collectcancel">다시 시도</button></div></div>';
+    }
+    var p = S.collectPreview;
+    if (!p) {
+      return '<div class="cardbox" style="padding:22px">'
+        + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">여러 제출을 한 번에 취합</div>'
+        + '<div style="font-size:14px;color:#78716c;line-height:1.6;margin-bottom:16px">개인 배포판이 내보낸 <b>프로세스_이름_부서_날짜.json</b> 들을 모아, 같은 업무는 한 노드로 합치고 <b>제출 인원수</b>를 셉니다. 업무 데이터에는 소속만 들어갑니다(이름 미저장).</div>'
+        + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로</span></div>'
+        + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07" />'
+        + '<button class="primary" style="flex:none;padding:9px 18px" data-act="collectscan">스캔</button></div>'
+        + '<div style="text-align:center;color:#a8a29e;font-size:13px;margin:14px 0 10px">— 또는 —</div>'
+        + '<label class="drop" for="collectup" style="padding:20px"><div style="font-size:22px">⬆</div><div style="font-size:14.5px;font-weight:700;color:#57534e;margin-top:5px">제출 .json 여러 개 선택 (다중 업로드)</div></label>'
+        + '<input id="collectup" type="file" accept=".json" multiple style="display:none" data-fkey="collectfiles" />'
+        + '</div>';
+    }
+    // ── 미리보기 (파일별 상태표 + 병합 요약 + 제출 N명 상위) ──
+    var files = p.files || [];
+    var okFiles = files.filter(function (f) { return !f.errors; });
+    var rowsHtml = files.map(function (f) {
+      var bad = !!f.errors;
+      return '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:13.5px;align-items:center'
+        + (bad ? ';background:#fef2f2' : '') + '">'
+        + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.filename) + '">' + esc(f.filename) + "</span>"
+        + '<span style="color:#57534e">' + esc(f.dept || "—") + "</span>"
+        + '<span style="color:#a8a29e">노드 ' + esc(f.nodes) + "</span>"
+        + (bad ? '<span style="color:#b91c1c">' + esc(f.errors) + "</span>" : '<span style="color:#166534">신규 ' + esc(f.new) + "</span>")
+        + "</div>";
+    }).join("");
+    var topHtml = (p.top_submits || []).map(function (t) {
+      return '<div style="display:flex;justify-content:space-between;padding:6px 12px;border-bottom:1px solid #f7f4ee;font-size:14px"><span>' + esc(t.path) + '</span><b style="color:#9d174b">👥 ' + esc(t.count) + "명</b></div>";
+    }).join("");
+    var cells = [["추가", p.added, "#166534", "#dcfce7"], ["변경", p.changed, "#92400e", "#fef3c7"]]
+      .map(function (d) { return '<div class="diff" style="background:' + d[3] + '"><div class="dv" style="color:' + d[2] + '">' + esc(d[1]) + '</div><div class="dl" style="color:' + d[2] + '">' + d[0] + "</div></div>"; }).join("");
+    return '<div class="cardbox" style="padding:22px">'
+      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:10px">반영 전 확인 — 제출 ' + okFiles.length + '건 취합</div>'
+      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:6px">파일별 상태</div>'
+      + '<div class="cardbox" style="max-height:200px;overflow:auto;margin-bottom:14px">' + (rowsHtml || '<div style="padding:10px;color:#a8a29e">파일 없음</div>') + "</div>"
+      + '<div class="diffgrid" style="grid-template-columns:1fr 1fr">' + cells + "</div>"
+      + (topHtml ? '<div style="font-size:14px;font-weight:800;color:#9d174b;margin:14px 0 6px">👥 여러 명이 하는 업무 (제출 인원 순)</div><div class="cardbox" style="max-height:200px;overflow:auto">' + topHtml + "</div>" : '<div style="font-size:13.5px;color:#a8a29e;margin-top:12px">2명 이상이 겹쳐 제출한 업무가 없습니다.</div>')
+      + '<div style="display:flex;gap:8px;margin-top:20px"><button class="secondary" data-act="collectcancel">취소</button>'
+      + '<button class="primary" data-act="collectapply">이 내용으로 취합 반영</button></div>'
+      + '<div style="font-size:13.5px;color:#a8a29e;margin-top:10px">반영 후 상단 [저장] 을 눌러야 파일에 기록됩니다. 업무 데이터에 이름은 저장되지 않습니다.</div></div>';
+  }
+
   /** 개인 모드 IO — 서버가 없으니 제출 파일 내보내기 / 이어서 작성하기만 있다. */
   function pageSoloIO() {
     var st = stats();
@@ -1541,10 +1606,13 @@
   function pageExcel() {
     if (SOLO) return pageSoloIO();
     var st = stats();
-    var sub = ["up", "down"].map(function (k) { return '<button class="stab' + (S.excelTab === k ? " on" : "") + '" data-act="exceltab" data-k="' + k + '">' + (k === "up" ? "⬆ 가져오기 (일괄등록)" : "⬇ 내보내기") + "</button>"; }).join("");
+    var subLabel = { up: "⬆ 가져오기 (일괄등록)", collect: "🧩 제출 취합", down: "⬇ 내보내기" };
+    var sub = ["up", "collect", "down"].map(function (k) { return '<button class="stab' + (S.excelTab === k ? " on" : "") + '" data-act="exceltab" data-k="' + k + '">' + subLabel[k] + "</button>"; }).join("");
     var pane = "";
     if (S.excelTab === "up") {
       pane = importPane();
+    } else if (S.excelTab === "collect") {
+      pane = collectPane();
     } else {
       pane = '<div class="cardbox" style="padding:22px"><div style="font-size:14.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀로 받습니다. 이 파일을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다. 시트 3장 — 계층도 / 도메인 / 요약.</div>'
         + '<label style="display:flex;align-items:center;gap:9px;margin:16px 0;cursor:pointer"><input type="checkbox" data-fkey="mask"' + (S.mask ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;font-weight:600;color:#44403c">담당자 이름 마스킹 (홍길동 → 홍*동)</span></label>'
@@ -1702,6 +1770,9 @@
     else if (a === "dismiss") { S.conflict = null; rerender(); }
     else if (a === "impapply") emit({ type: "import_apply", delete_missing: S.delMissing, add_domains: S.addDomains });
     else if (a === "impcancel") { S.importPreview = null; S.importErrors = []; S.delMissing = false; rerender(); emit({ type: "import_cancel" }); }
+    else if (a === "collectscan") { emit({ type: "collect_scan", folder: S.collectFolder || "" }); flash("폴더를 스캔하는 중…"); }
+    else if (a === "collectapply") emit({ type: "collect_apply" });
+    else if (a === "collectcancel") { S.collectPreview = null; S.collectErrors = []; rerender(); emit({ type: "collect_cancel" }); }
     else if (a === "cxcancel") { S.confirm = null; rerender(); }
     else if (a === "cxok") { var c = S.confirm; S.confirm = null; if (c && c.onOk) c.onOk(); else rerender(); }
   }
@@ -1748,6 +1819,7 @@
       soloSaveSoon();
       return;
     }
+    if (f === "collectfolder") { S.collectFolder = el.value; return; }   // 폴더 경로 — 모델만, 스캔 클릭 때 사용
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
     //   rerender 하면 contentEl.innerHTML 이 통째로 갈려 포커스된 input 이 파괴돼 글자가 사라진다.
     //   칸을 벗어날 때(onChange)에 한 번만 전체를 다시 그려 배지·힌트를 동기화한다. (name·desc 는
@@ -1827,6 +1899,19 @@
       jr.onload = function () { emit({ type: "import_local", text: String(jr.result) }); };
       jr.readAsText(jf, "utf-8");
     }
+    if (f === "collectfiles") {       // 취합 — 여러 .json 을 한 번에 읽어 배열로 보낸다
+      var fl = el.files ? [].slice.call(el.files) : []; if (!fl.length) return;
+      var out = [], done = 0;
+      flash(fl.length + "개 파일을 읽는 중…");
+      fl.forEach(function (file, i) {
+        var rd = new FileReader();
+        rd.onload = function () {
+          out[i] = { name: file.name, b64: String(rd.result).split(",")[1] || "" };
+          if (++done === fl.length) emit({ type: "collect_scan", files: out });
+        };
+        rd.readAsDataURL(file);
+      });
+    }
   }
 
   // ── 초기화 / Streamlit 렌더 수신 ────────────────────
@@ -1856,6 +1941,8 @@
     S.diffPreview = args.diff_preview || null;
     S.importPreview = args.import_preview || null;
     S.importErrors = args.import_errors || [];
+    S.collectPreview = args.collect_preview || null;
+    S.collectErrors = args.collect_errors || [];
     if (!S.importPreview) S.delMissing = false;   // 다음 업로드에 삭제 옵션이 딸려가지 않게
     if (typeof args.flash === "string" && args.flash) flash(args.flash);
     if (S.histPick >= (S.history.length || 1)) S.histPick = 0;

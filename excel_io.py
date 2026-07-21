@@ -41,6 +41,8 @@ FIELD_COLS: dict[str, str] = {
     "연계시스템": "linked_system",
     "연계시스템 추가정보": "linked_system_detail",
     "업무설명": "desc",
+    "제출인원": "submit_count",      # 취합 산출물 — 이 업무를 제출한 인원수 N
+    "취합상세": "submit_detail",     # 취합 산출물 — 제출자별 상세(부서 기준, 이름 없음)
 }
 
 # 연간공수 는 work_hours × annual_count 파생값이라 읽지 않고 쓰기만 한다 (schema.annual_hours)
@@ -91,6 +93,8 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["연계시스템"] = n.get("linked_system", "")
         row["연계시스템 추가정보"] = n.get("linked_system_detail", "")
         row["업무설명"] = n.get("desc", "")
+        row["제출인원"] = n.get("submit_count", "")            # 취합 산출물 (없으면 빈값)
+        row["취합상세"] = n.get("submit_detail", "")           # 부서 기준, 이름 없음
         row["작성자"] = mask_name(n.get("updated_by", "")) if mask else n.get("updated_by", "")
         row["수정일시"] = n.get("updated_at", "")
         row["id"] = n["id"]
@@ -281,6 +285,8 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             "outputs": _cell(r.get("산출물")),
             "linked_system": _cell(r.get("연계시스템")),
             "linked_system_detail": _cell(r.get("연계시스템 추가정보")),
+            "submit_count": _cell(r.get("제출인원")),          # 취합 산출물 왕복 보존
+            "submit_detail": _cell(r.get("취합상세")),
             "created_at": (base or {}).get("created_at", schema.now_iso()),
             "updated_at": (base or {}).get("updated_at", schema.now_iso()),
             "updated_by": (base or {}).get("updated_by", ""),
@@ -372,6 +378,146 @@ def parse_json(raw: bytes, current: dict) -> tuple[dict, list[str]]:
         "domains": {k: list(v) for k, v in current.get("domains", {}).items()},
     }
     return schema.normalize(out), errs
+
+
+def _submitter_of(payload: dict, filename: str) -> tuple[str, str]:
+    """제출자 신원 (부서, 이름). 봉투(exported_dept/by) 우선, 없으면 파일명에서 파싱.
+
+    파일명 규약: 프로세스_이름_부서_날짜.json (Part A). 이름은 **집계에만** 쓰고 트리에 저장하지 않는다.
+    """
+    dept = str(payload.get("exported_dept") or "").strip()
+    author = str(payload.get("exported_by") or "").strip()
+    if (not dept or not author) and filename:
+        stem = filename.rsplit(".", 1)[0]
+        parts = stem.split("_")
+        # 프로세스_이름_부서_날짜 → [프로세스, 이름, 부서, 날짜]
+        if len(parts) >= 4 and parts[0].startswith("프로세스"):
+            author = author or parts[1]
+            dept = dept or parts[2]
+    return dept or "미상", author or "미상"
+
+
+_FREQ_LABEL = {"일": "일", "주": "주", "월": "월", "분기": "분기", "년": "년"}
+
+
+def _detail_summary(n: dict) -> str:
+    """lv6 세부업무의 핵심 상세값 한 줄 요약 — **이름은 넣지 않는다**(부서 기준 취합).
+
+    예: '소요 0.5h · 주 3회 · 부분자동 · AI'. 값이 없으면 해당 조각을 생략한다.
+    """
+    parts: list[str] = []
+    wh = str(n.get("work_hours") or "").strip()
+    if wh:
+        parts.append(f"소요 {wh}h")
+    unit, cnt = str(n.get("freq_unit") or "").strip(), str(n.get("freq_count") or "").strip()
+    if unit and cnt:
+        parts.append(f"{_FREQ_LABEL.get(unit, unit)} {cnt}회")
+    elif unit:
+        parts.append(_FREQ_LABEL.get(unit, unit))
+    auto = str(n.get("automation_level") or "").strip()
+    if auto:
+        parts.append(auto)
+    if n.get("has_ai_agent"):
+        parts.append("AI")
+    tech = [t for t in (n.get("tech") or []) if t]
+    if tech:
+        parts.append("기술: " + ", ".join(tech))
+    return " · ".join(parts)
+
+
+def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, list[dict], list[str]]:
+    """여러 제출 JSON 을 **경로 기준으로 취합**한다. parse_json(단일 이어붙이기)과는 다른 연산이다.
+
+    · 같은 이름 경로(lv3~lv6)는 **한 노드로 합친다** — parse_json 은 lv4~6 을 중복으로 남기지만
+      취합은 "이 업무를 몇 명이 하는가"를 세는 게 목적이라 합친다.
+    · 상세값은 **첫 제출자 승리** — 먼저 스캔된 파일 값을 쓰고, 뒤 제출자의 다른 상세는
+      submit_detail(부서 기준, 이름 없음)에 모은다.
+    · submit_count = 그 경로를 제출한 (부서,이름) distinct 인원수 N (lv4~6). 이름은 저장하지 않는다.
+
+    반환: (병합트리, 파일별_리포트, 전역오류). 리포트 = [{filename, dept, author, nodes, new, errors}].
+    """
+    import copy
+
+    errs: list[str] = []
+    master = schema.normalize(copy.deepcopy(current))
+    idx = _current_path_ids(master)                    # 경로튜플 → master 노드 id
+    mmap = schema.node_map(master["nodes"])
+    submitters: dict[tuple, set] = {}                  # 경로 → {(부서,이름)}
+    details: dict[tuple, list[str]] = {}               # 경로 → [부서 · 요약, ...]
+    reports: list[dict] = []
+
+    # 파일명 정렬 = 결정론적 '첫 제출자' (재실행 시 동일 결과)
+    for filename, raw in sorted(files, key=lambda f: f[0]):
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception as e:
+            reports.append({"filename": filename, "dept": "", "author": "",
+                            "nodes": 0, "new": 0, "errors": f"JSON 읽기 실패: {e}"})
+            continue
+        if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
+            reports.append({"filename": filename, "dept": "", "author": "",
+                            "nodes": 0, "new": 0, "errors": "이 앱의 제출 JSON 이 아닙니다 (nodes 없음)"})
+            continue
+
+        dept, author = _submitter_of(payload, filename)
+        try:
+            incoming = schema.normalize({
+                "nodes": [dict(n) for n in payload["nodes"] if isinstance(n, dict)],
+                "domains": payload.get("domains") or {},
+            })
+        except Exception as e:
+            reports.append({"filename": filename, "dept": dept, "author": author,
+                            "nodes": 0, "new": 0, "errors": f"구조 오류: {e}"})
+            continue
+
+        imap = schema.node_map(incoming["nodes"])
+        new_cnt = 0
+        # 얕은 레벨부터 — 부모 경로가 master 에 먼저 존재해야 자식을 매단다
+        for n in sorted(incoming["nodes"], key=lambda x: x.get("level", 3)):
+            path = tuple(schema.path_names(imap, n["id"])[3:])
+            if not path:
+                continue
+            mid = idx.get(path)
+            if mid is None:
+                # 경로 미존재 → 새 노드 생성. 부모는 상위 경로의 master id (lv3 은 ROOT)
+                level = n.get("level", len(path) + 2)
+                parent_id = schema.ROOT_ID if len(path) == 1 else idx.get(path[:-1])
+                if parent_id is None:
+                    continue                            # 부모를 못 찾음 (얕은순 처리라 정상 경로엔 안 옴)
+                node = schema.new_node(parent_id, level, path[-1], author)
+                for k in schema.DETAIL_FIELDS:          # 첫 제출자 상세값 복사
+                    if k in n:
+                        node[k] = (list(n[k]) if isinstance(n[k], list) else n[k])
+                master["nodes"].append(node)
+                mmap[node["id"]] = node
+                mid = node["id"]
+                idx[path] = mid
+                new_cnt += 1
+            # 인원 집계 — lv3(고정 시드)은 제외, lv4~6 만
+            if len(path) >= 2:
+                submitters.setdefault(path, set()).add((dept, author))
+                if n.get("level") == schema.LEVEL_MAX:      # lv6 만 상세 요약 수집
+                    summ = _detail_summary(n)
+                    if summ:
+                        details.setdefault(path, []).append(f"{dept} · {summ}")
+
+        reports.append({"filename": filename, "dept": dept, "author": author,
+                        "nodes": len(incoming["nodes"]), "new": new_cnt, "errors": ""})
+
+    # 집계 결과를 노드에 기록 — N≥2 인 경로만 (혼자 한 업무는 배지 노이즈)
+    for path, subs in submitters.items():
+        mid = idx.get(path)
+        node = mmap.get(mid) if mid else None
+        if not node:
+            continue
+        if len(subs) >= 2:
+            node["submit_count"] = str(len(subs))
+            lines = details.get(path, [])
+            seen: set = set()
+            uniq = [ln for ln in lines if not (ln in seen or seen.add(ln))]  # 순서 유지 dedup
+            node["submit_detail"] = "\n".join(uniq)
+
+    return schema.normalize(master), reports, errs
 
 
 def unknown_domain_values(data: dict) -> dict[str, list[str]]:

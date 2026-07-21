@@ -66,6 +66,8 @@ uv run streamlit run app.py --server.port 8540
 | `import` | JS→PY | 엑셀 **파싱·미리보기만**. 결과는 `pending_import` 에 보류 |
 | `import_apply` | JS→PY | `{delete_missing, add_domains}` 옵션으로 보류분 반영 |
 | `import_cancel` | JS→PY | 보류분 폐기 |
+| `collect_scan` | JS→PY | 다수 제출 JSON 취합(폴더 경로 glob 또는 다중 업로드) → `excel_io.collect_jsons` 로 **경로 병합·인원수 집계**, `pending_collect` 에 보류 |
+| `collect_apply` / `collect_cancel` | JS→PY | 취합 보류분 반영 / 폐기 (취합은 추가·병합만, 삭제 옵트인 없음) |
 | `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 |
 | `restore` / `reload` | JS→PY | 스냅샷 복원 / 디스크 재로드 |
 

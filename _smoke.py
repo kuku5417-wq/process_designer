@@ -375,6 +375,50 @@ def main() -> int:
     ck("듣보기술" in excel_io.unknown_domain_values(g).get("tech", []),
        "대신 unknown_domain_values 가 잡아 관리자 승인 대기")
 
+    # 22. 제출 취합 (collect_jsons) — 경로 병합 + 제출 인원수 N
+    ck(all(f in schema.NODE_DEFAULTS for f in ("submit_count", "submit_detail")),
+       "submit_count·submit_detail 이 NODE_DEFAULTS 에 있음(diff·엑셀 인지)")
+    ck(all(f in excel_io.FIELD_COLS.values() for f in ("submit_count", "submit_detail")),
+       "submit_count·submit_detail 이 FIELD_COLS 에 있음(엑셀 왕복)")
+    ck(not any(f in schema.DETAIL_FIELDS for f in ("submit_count", "submit_detail")),
+       "submit_count·submit_detail 은 DETAIL_FIELDS 아님(집계 분모 오염 방지)")
+
+    def _mkfile(dept, author, wh):
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        n5 = schema.add_node(nd, n4, 5, "x", "레이더")
+        n6 = schema.add_node(nd, n5, 6, "x", "레이더동작시험")
+        schema.update_node(nd, n6, {"dept": dept, "work_hours": wh, "freq_unit": "주",
+                                    "freq_count": "3", "automation_level": "부분자동"}, "x")
+        payload = {"exported_by": author, "exported_dept": dept,
+                   "nodes": schema.normalize(nd)["nodes"], "domains": {}}
+        return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    files = [("프로세스_홍길동_시운전1부_20260721.json", _mkfile("시운전1부", "홍길동", "0.5")),
+             ("프로세스_김철수_시운전2부_20260721.json", _mkfile("시운전2부", "김철수", "1")),
+             ("프로세스_이영희_시운전1부_20260721.json", _mkfile("시운전1부", "이영희", "0.5"))]
+    cmaster = schema.bootstrap()
+    merged, reports, cerrs = excel_io.collect_jsons(files, cmaster)
+    ck(cerrs == [], f"취합 전역 오류 없음: {cerrs}")
+    l6s = [n for n in merged["nodes"] if n["level"] == 6]
+    ck(len(l6s) == 1, f"같은 경로가 한 노드로 합쳐짐 (실제 lv6 {len(l6s)}개)")
+    ck(l6s[0]["submit_count"] == "3", f"제출 인원수 = 3 (부서,이름) distinct (실제 {l6s[0].get('submit_count')!r})")
+    ck(l6s[0]["work_hours"] == "1", "첫 제출자(파일명 정렬 첫째=김철수) 상세값 유지")
+    sd = l6s[0].get("submit_detail", "")
+    ck("시운전1부" in sd and "시운전2부" in sd, "submit_detail 에 부서별 요약 존재")
+    ck("홍길동" not in sd and "김철수" not in sd and "이영희" not in sd,
+       "submit_detail 에 이름이 없음(개인정보 최소수집)")
+    ck(sum(1 for r in reports if not r["errors"]) == 3, "파일별 리포트 3건 정상")
+    # 재취합 멱등 — 같은 파일 다시 넣어도 인원수 불변, 노드 안 늘어남
+    merged2, _, _ = excel_io.collect_jsons(files, merged)
+    l6s2 = [n for n in merged2["nodes"] if n["level"] == 6]
+    ck(len(l6s2) == 1 and l6s2[0]["submit_count"] == "3", "재취합 멱등 — 인원수·노드수 불변")
+    # 취합 산출물 엑셀 왕복 보존
+    rt, _ = excel_io.parse_excel(excel_io.build_xlsx(merged, mask=False), merged)
+    rl6 = [n for n in rt["nodes"] if n["level"] == 6][0]
+    ck(rl6.get("submit_count") == "3" and "시운전1부" in rl6.get("submit_detail", ""),
+       "제출인원·취합상세 엑셀 왕복 보존")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

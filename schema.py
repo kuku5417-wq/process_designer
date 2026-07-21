@@ -162,6 +162,9 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "freq_unit": "",        # 기간 단위 (일/주/월/분기/년) — 칩 택1
     "freq_count": "",       # 단위당 횟수 (예: 주 3회 → freq_count=3)
     "annual_count": "",     # 연간 횟수 (구 데이터 폴백; 신규는 freq_count×단위연간수로 파생)
+    # ── 취합 산출물 (메인앱 collect_jsons 가 채움; 개인 배포판은 항상 빈값) ──
+    "submit_count": "",     # 이 업무(경로)를 제출한 인원수 N — (부서,이름) distinct. 이름은 저장 안 함
+    "submit_detail": "",    # 제출자별 상세 요약(여러 줄, 부서 기준). 이름 미기록 (개인정보 최소수집)
 }
 
 SCHEMA_VERSION: Final[int] = 1
