@@ -45,8 +45,8 @@ FIELD_COLS: dict[str, str] = {
     "취합상세": "submit_detail",     # 취합 산출물 — 제출자별 상세(부서 기준, 이름 없음)
 }
 
-# 연간공수 는 work_hours × annual_count 파생값이라 읽지 않고 쓰기만 한다 (schema.annual_hours)
-DERIVED_COLS: list[str] = ["연간공수(h)"]
+# 파생 컬럼은 읽지 않고 쓰기만 한다 (역수입 금지). 연간공수=work_hours×annual_count, 상위부서=dept_parent(과)
+DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서"]
 
 TREE_COLS: list[str] = (LV_COLS + ["레벨", "이름"] + list(FIELD_COLS) + DERIVED_COLS
                         + ["작성자", "수정일시", "id"])
@@ -78,6 +78,7 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["AI에이전트"] = "Y" if n.get("has_ai_agent") else "N"
         row["활용기술"] = ", ".join(n.get("tech") or [])
         row["부서/과"] = n.get("dept", "")
+        row["상위부서"] = schema.dept_parent(n.get("dept")) if n.get("dept") else ""   # 파생(과→부서)
         row["자동화수준"] = n.get("automation_level", "")
         owner = n.get("owner", "")
         row["담당자"] = mask_name(owner) if (mask and owner) else owner
@@ -493,13 +494,13 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                 mid = node["id"]
                 idx[path] = mid
                 new_cnt += 1
-            # 인원 집계 — lv3(고정 시드)은 제외, lv4~6 만
-            if len(path) >= 2:
+            # 인원 집계 — **lv6(실제 세부업무)만**. lv4/lv5(공유 골격)은 세지 않는다.
+            #   골격만 여럿이 내도 부풀지 않게(위험성 검토 결론): "이 세부업무를 몇 명이 하는가"만 센다.
+            if n.get("level") == schema.LEVEL_MAX:
                 submitters.setdefault(path, set()).add((dept, author))
-                if n.get("level") == schema.LEVEL_MAX:      # lv6 만 상세 요약 수집
-                    summ = _detail_summary(n)
-                    if summ:
-                        details.setdefault(path, []).append(f"{dept} · {summ}")
+                summ = _detail_summary(n)
+                if summ:
+                    details.setdefault(path, []).append(f"{dept} · {summ}")
 
         reports.append({"filename": filename, "dept": dept, "author": author,
                         "nodes": len(incoming["nodes"]), "new": new_cnt, "errors": ""})

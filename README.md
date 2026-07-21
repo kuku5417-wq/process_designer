@@ -36,6 +36,26 @@ python build_standalone.py
 > ⚠ `frontend/index.html` 을 고치고 이걸 안 돌리면 **배포판이 옛 버전인 채로 남습니다.**
 > 파일명은 고정이라 재빌드하면 덮어써지고, `dist/` 도 함께 커밋해야 합니다.
 
+### 과별 기본 골격(lv3~lv5) 탑재 HTML 배포
+
+각 과에 **자기 골격이 미리 깔린 HTML**을 나눠주려면 골격 JSON 을 시드로 굽습니다. 열면 그 과의
+lv3~lv5 가 이미 있고 소속(과)도 자동 지정돼, 세부업무(lv6)만 채워 제출하면 됩니다.
+
+```bat
+python build_standalone.py --seed 골격.json           REM 과 1개 → dist/프로세스설계_<과>.html
+python build_standalone.py --seeds <골격폴더>          REM 폴더의 프로세스_*.json 마다 과별 HTML 일괄
+```
+- 골격 JSON = 이 앱/개인배포판이 **내보낸 형식**(`exported_dept` 에 과가 들어 있으면 파일명·소속 자동).
+- **받은 과 JSON 을 다듬어** 골격으로 쓸 때는 표준 HTML 의 *이어서 작성하기* 로 열어 정리→내보내기.
+  (불러오기는 화면을 **통째로 덮어씁니다**·되돌리기 없음 → **원본 백업 필수**.)
+- 이미 자기 브라우저에 작성분(localStorage)이 있으면 시드는 무시하고 **이어서** 작성합니다(작업분 보호).
+
+### 부서/과는 2단(부서 → 과)
+
+노드에는 **과만 저장**하고 부서는 매핑(`schema.DEPT_TREE`)으로 자동 표시·집계합니다. 상단·세부업무의
+부서/과 선택칸은 `<optgroup>` 으로 부서 아래 과가 뜹니다. 조직표가 바뀌면 `schema.py` 의 `DEPT_TREE`
+와 `frontend/index.html` 의 `DEPT_TREE` 를 **함께**(twin) 고치세요.
+
 ## 시작하기 (메인앱)
 
 ```bat

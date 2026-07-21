@@ -419,6 +419,41 @@ def main() -> int:
     ck(rl6.get("submit_count") == "3" and "시운전1부" in rl6.get("submit_detail", ""),
        "제출인원·취합상세 엑셀 왕복 보존")
 
+    # 23. 부서/과 2단 (과만 저장, 부서는 매핑)
+    ck(len(schema.DEPT_TREE) == 7, f"DEPT_TREE 부서 7개 (실제 {len(schema.DEPT_TREE)})")
+    ck(schema.dept_parent("선장운전1과") == "시운전1부", "dept_parent 과→부서 매핑")
+    ck(schema.dept_parent("운영") == "시운전3부", "dept_parent 운영→시운전3부")
+    ck(schema.dept_parent("없는과") == "미분류", "매핑에 없는 과는 미분류")
+    ck("선장운전1과" in schema.DEFAULT_DOMAINS["dept"] and "시운전1부" not in schema.DEFAULT_DOMAINS["dept"],
+       "DEFAULT_DOMAINS.dept 는 과 리스트(부서 아님)")
+    mig = schema.normalize({"domains": {"dept": ["시운전1부", "시운전2부", "시운전3부",
+                                                 "기획운영부", "해운부", "해양사업부"]}})
+    ck("선장운전1과" in mig["domains"]["dept"] and "시운전1부" not in mig["domains"]["dept"],
+       "구 기본 부서리스트 → 과리스트 마이그레이션")
+    keep = schema.normalize({"domains": {"dept": ["우리과", "너네과"]}})
+    ck(keep["domains"]["dept"] == ["우리과", "너네과"], "사용자 편집 dept 는 마이그레이션 안 함(보존)")
+
+    # 24. 취합 인원수 = lv6 실제 작성 기준 (공유 골격 lv4/lv5 부풀림 없음)
+    def _mkf(gwa, author, l6name):
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        n5 = schema.add_node(nd, n4, 5, "x", "레이더")
+        n6 = schema.add_node(nd, n5, 6, "x", l6name)
+        schema.update_node(nd, n6, {"dept": gwa, "work_hours": "1"}, "x")
+        return json.dumps({"exported_by": author, "exported_dept": gwa,
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}}, ensure_ascii=False).encode("utf-8")
+    fs = [("프로세스_A_선장운전1과_20260721.json", _mkf("선장운전1과", "A", "레이더동작시험")),
+          ("프로세스_B_선장운전2과_20260721.json", _mkf("선장운전2과", "B", "레이더동작시험")),
+          ("프로세스_C_전장운전1과_20260721.json", _mkf("전장운전1과", "C", "자이로시험"))]
+    mg, _, _ = excel_io.collect_jsons(fs, schema.bootstrap())
+    byname = {n["name"]: n for n in mg["nodes"] if n["level"] >= 4}
+    ck(not byname["항해장비"].get("submit_count"), "lv4 공유 골격엔 인원수 없음(부풀림 방지)")
+    ck(not byname["레이더"].get("submit_count"), "lv5 공유 골격엔 인원수 없음")
+    ck(byname["레이더동작시험"].get("submit_count") == "2", "실제 2명이 한 lv6 만 '2명'")
+    ck(not byname["자이로시험"].get("submit_count"), "1명만 한 lv6 는 배지 없음(N<2)")
+    ck(schema.dept_parent(byname["레이더동작시험"]["submit_detail"].split(" · ")[0]) in ("시운전1부", "시운전2부"),
+       "submit_detail 은 과 기준(부서로 롤업 가능)")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

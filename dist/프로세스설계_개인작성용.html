@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1203";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -363,8 +363,32 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
   var ROOT = "__root__";
   var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무" };
   var FIXED = ["조선", "생산", "시운전"];
+  // 부서/과 2단 (부서 → 과). schema.py DEPT_TREE 와 **완전히 같아야 한다**(twin). 노드엔 과만 저장, 부서는 매핑.
+  var DEPT_TREE = {
+    "시운전1부": ["기장운전1과", "선장운전1과", "전장운전1과"],
+    "시운전2부": ["기장운전2과", "선장운전2과", "전장운전2과"],
+    "시운전3부": ["ZLNG CSU", "ENI CSU", "CEDAR CSU", "운영"],
+    "안벽의장": ["안벽의장1과", "안벽의장2과", "시운전과"],
+    "기획운영": ["기획운영"],
+    "시운전기술": ["LNG설비운영과", "코멘더"],
+    "해운부": ["해운1과", "해운2과"],
+  };
+  var _DEPT_FLAT = [], _DEPT_PARENT = {};
+  Object.keys(DEPT_TREE).forEach(function (b) { DEPT_TREE[b].forEach(function (g) { _DEPT_FLAT.push(g); _DEPT_PARENT[g] = b; }); });
+  function deptParent(g) { return _DEPT_PARENT[String(g || "").trim()] || "미분류"; }
+  /** 과 목록을 부서별 <optgroup> 으로. 값=과. 매핑에 없는 현재값은 '기타' 그룹에 노출해 유실 방지. */
+  function deptOptions(cur) {
+    var html = '<option value="">— 선택 —</option>';
+    Object.keys(DEPT_TREE).forEach(function (b) {
+      html += '<optgroup label="' + esc(b) + '">'
+        + DEPT_TREE[b].map(function (g) { return '<option value="' + esc(g) + '"' + (g === cur ? " selected" : "") + ">" + esc(g) + "</option>"; }).join("")
+        + "</optgroup>";
+    });
+    if (cur && _DEPT_FLAT.indexOf(cur) < 0) html += '<optgroup label="기타"><option value="' + esc(cur) + '" selected>' + esc(cur) + "</option></optgroup>";
+    return html;
+  }
   var DEF_DOMAINS = {
-    dept: ["시운전1부", "시운전2부", "시운전3부", "기획운영부", "해운부", "해양사업부"],
+    dept: _DEPT_FLAT.slice(),   // 부서/과 = 과 평면 리스트 (2단은 DEPT_TREE + optgroup 으로 표현)
     tech: ["LLM", "OCR", "RPA", "예측모델", "이상탐지", "BI/대시보드", "챗봇", "음성인식", "컴퓨터비전"],
     automation_level: ["수동", "부분자동", "완전자동", "AI자동"],
     frequency: ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
@@ -1087,9 +1111,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
     var canSave = SOLO ? (!!S.dept && !!S.author) : (!!S.author && n > 0);   // 개인: 소속·이름 필수(파일명 구분자)
     // 부서/이름을 상단에서 먼저 받는다. 개인 모드는 카드마다 부서를 묻지 않고, 메인앱은
     // 이 부서를 '기본 부서'로 삼아 이후 만든/고친 노드에 채운다(기존 노드는 소급하지 않음).
-    var deptSel = '<select class="authinput" data-fkey="mydept" style="width:118px"><option value="">— 선택 —</option>'
-      + (S.domains.dept || []).map(function (d) { return '<option value="' + esc(d) + '"' + (d === S.dept ? " selected" : "") + ">" + esc(d) + "</option>"; }).join("")
-      + '</select>';
+    // 부서 → 과 2단: optgroup 으로 부서 헤더 아래 과를 고른다(값=과, 저장은 과만).
+    var deptSel = '<select class="authinput" data-fkey="mydept" style="width:132px">' + deptOptions(S.dept) + '</select>';
     var reqStar = ' <span style="color:#dc2626;font-weight:700">*</span>';
     var ident = SOLO
       ? '<div class="authwrap"><label>소속' + reqStar + '</label>' + deptSel + "</div>"
@@ -1381,7 +1404,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
       // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
       var nonSolo = SOLO ? "" :
              '<div class="grid2">'
-           + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + opt("dept", n.dept) + "</select></div>"
+           + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + deptOptions(n.dept) + "</select></div>"
            + '<div><div class="fl">담당자</div><input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
            + "</div>"
            // 수행 주기 = 기간 단위 칩(택1) + 횟수. 연간 횟수는 횟수×단위연간수로 파생하므로 별도 입력칸 없음
@@ -1438,7 +1461,19 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
     // 사용 수 표시는 개인 배포판에선 숨긴다(부서가 늘 0이라 혼란) — 삭제 잠금 계산은 유지.
-    var rows = (S.domains[dk] || []).map(function (v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + (SOLO ? "<span></span>" : '<span class="use ' + (u > 0 ? "y" : "n") + '">' + u + "개 업무</span>") + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }).join("");
+    function drow(v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + (SOLO ? "<span></span>" : '<span class="use ' + (u > 0 ? "y" : "n") + '">' + u + "개 업무</span>") + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }
+    var rows;
+    if (dk === "dept") {
+      // 부서/과는 과 목록을 **부서별 그룹 소제목**으로 묶어 보여준다(값·index 는 그대로).
+      var groups = {}, order = [];
+      (S.domains.dept || []).forEach(function (v, i) { var b = deptParent(v); if (!groups[b]) { groups[b] = []; order.push(b); } groups[b].push([v, i]); });
+      rows = order.map(function (b) {
+        return '<div style="padding:9px 16px 5px;font-size:13px;font-weight:800;color:#0f766e;background:#f7fdfc;border-bottom:1px solid #eef4f2">🏢 ' + esc(b) + "</div>"
+          + groups[b].map(function (p) { return drow(p[0], p[1]); }).join("");
+      }).join("");
+    } else {
+      rows = (S.domains[dk] || []).map(drow).join("");
+    }
     return '<div class="page scroll"><div class="pw"><div class="h1">도메인 관리</div><div class="sub">카드 상세에서 고르는 선택 목록입니다. 값 이름을 바꾸면 그 값을 쓰는 업무도 함께 바뀝니다. 사용 중인 값은 삭제할 수 없습니다.</div>'
       + '<div class="subtabs">' + tabs + "</div>"
       + '<div class="cardbox"><div class="dhead"><span>값</span>' + (SOLO ? "<span></span>" : "<span>사용 중</span>") + '<span></span></div>' + rows
@@ -1648,7 +1683,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
     var metrics = [["전체 업무", st.total, "lv3~lv6 전 레벨"], ["세부업무(lv6)", st.detail, "AI 지표의 분모"], ["AI 에이전트 적용", st.ai, st.rate + "%"], ["미적용", st.detail - st.ai, "lv6 중"]]
       .map(function (m) { return '<div class="metric"><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>"; }).join("");
     var byLevel = [3, 4, 5, 6].map(function (lv) { return '<div class="tr"><span>lv' + lv + " " + esc(LABELS[lv]) + '</span><b>' + S.nodes.filter(function (n) { return n.level === lv; }).length + "</b></div>"; }).join("");
-    var dc = {}; S.nodes.filter(function (n) { return hasDetail(n.level); }).forEach(function (n) { var d = n.dept || "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
+    // 부서 롤업(과 → 부서). 노드엔 과만 저장하므로 deptParent 로 묶는다(schema.by_dept_group twin).
+    var dc = {}; S.nodes.filter(function (n) { return hasDetail(n.level); }).forEach(function (n) { var d = n.dept ? deptParent(n.dept) : "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
     var byDept = Object.keys(dc).sort(function (a, b) { return dc[b] - dc[a]; }).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + dc[k] + "</b></div>"; }).join("");
     return '<div class="page scroll"><div class="pw"><div class="h1">엑셀 가져오기 / 내보내기</div><div class="sub">업무가 많을 때는 화면에서 하나씩 만들지 말고 엑셀로 한 번에 등록·수정하세요.</div>'
       + '<div class="subtabs">' + sub + "</div>" + pane
@@ -2006,14 +2042,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1046";
   if (SOLO) {
     // 개인 배포판: 파이썬을 기다릴 이유가 없다. localStorage 초안이 있으면 이어서, 없으면 시드로.
     var saved = soloLoad();
+    // build_standalone.py 가 과별 기본 골격을 주입할 수 있다(window.__PD_SEED__). 초안이 있으면
+    // 시드는 무시하고 이어서 — 이미 작성 중인 사람의 작업분을 골격이 덮지 않게 한다.
+    var seedDept = "";
     if (saved) {
       S.nodes = saved.nodes.map(coerceEvents); S.domains = saved.domains || JSON.parse(JSON.stringify(DEF_DOMAINS));
       S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
+    } else if (window.__PD_SEED__ && Array.isArray(window.__PD_SEED__.nodes) && window.__PD_SEED__.nodes.length) {
+      var sd = window.__PD_SEED__;
+      S.nodes = sd.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
+      S.domains = sd.domains ? JSON.parse(JSON.stringify(sd.domains)) : JSON.parse(JSON.stringify(DEF_DOMAINS));
+      S.dept = sd.dept || sd.exported_dept || "";   // 과 자동 지정(있으면)
+      seedDept = S.dept;
     } else {
       S.nodes = soloSeed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS));
     }
     boot();
     if (saved) flash("이 브라우저에 저장해둔 작성분을 불러왔습니다");
+    else if (seedDept) flash(seedDept + " 기본 골격으로 시작합니다 — 세부업무(lv6)를 채워 제출하세요");
   } else {
     // 디자인 단독 미리보기: 300ms 안에 Streamlit render 가 안 오면 목업으로 뜬다
     setTimeout(function () { if (!IN_ST) { S.nodes = seed(); S.domains = JSON.parse(JSON.stringify(DEF_DOMAINS)); S.history = MOCK_HIST; S.audit = MOCK_AUDIT; boot(); } }, 300);

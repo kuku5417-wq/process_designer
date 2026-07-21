@@ -127,10 +127,35 @@ SEED_LV3: Final[tuple[tuple[str, str], ...]] = (
     ("lv3_hy_elec", "해양-전계장"),
 )
 
+# ── 부서/과 2단 구조 (부서 → 과) ─────────────────────────
+# 노드에는 **과(최말단)만** 저장하고, 부서는 이 매핑으로 자동 표시·집계한다(dept_parent).
+# 조직 구조라 자주 안 바뀌므로 상수로 둔다. frontend/index.html 의 DEPT_TREE 와 **완전히 같아야 한다**(twin).
+DEPT_TREE: Final[dict[str, tuple[str, ...]]] = {
+    "시운전1부": ("기장운전1과", "선장운전1과", "전장운전1과"),
+    "시운전2부": ("기장운전2과", "선장운전2과", "전장운전2과"),
+    "시운전3부": ("ZLNG CSU", "ENI CSU", "CEDAR CSU", "운영"),
+    "안벽의장": ("안벽의장1과", "안벽의장2과", "시운전과"),
+    "기획운영": ("기획운영",),
+    "시운전기술": ("LNG설비운영과", "코멘더"),
+    "해운부": ("해운1과", "해운2과"),
+}
+# 과 → 부서 역인덱스 (표시·집계 롤업용)
+_DEPT_PARENT: Final[dict[str, str]] = {g: b for b, gs in DEPT_TREE.items() for g in gs}
+# dept 도메인 = 과 평면 리스트 (기존 flat 소비자 전부 그대로 동작)
+_DEPT_FLAT: Final[list[str]] = [g for gs in DEPT_TREE.values() for g in gs]
+# 구 기본 부서 리스트 — 저장본이 이 값 그대로면 과 리스트로 1회 마이그레이션(사용자 편집분은 보존)
+_OLD_DEFAULT_DEPT: Final[frozenset[str]] = frozenset(
+    ["시운전1부", "시운전2부", "시운전3부", "기획운영부", "해운부", "해양사업부"])
+
+
+def dept_parent(gwa: str) -> str:
+    """과 → 부서. 매핑에 없으면 '미분류'. (표시·집계 롤업 전용, 저장은 과만.)"""
+    return _DEPT_PARENT.get(str(gwa or "").strip(), "미분류")
+
+
 # ── 도메인 마스터 기본값 ────────────────────────────────
-# dept 초기값 출처: tbm/config/settings.py DEPT_LIST (부모-자식 관계 없는 평면 리스트)
 DEFAULT_DOMAINS: Final[dict[str, list[str]]] = {
-    "dept": ["시운전1부", "시운전2부", "시운전3부", "기획운영부", "해운부", "해양사업부"],
+    "dept": list(_DEPT_FLAT),   # 부서/과 = 과 평면 리스트 (2단은 DEPT_TREE + optgroup 으로 표현)
     "tech": ["LLM", "OCR", "RPA", "예측모델", "이상탐지", "BI/대시보드", "챗봇", "음성인식", "컴퓨터비전"],
     "automation_level": ["수동", "부분자동", "완전자동", "AI자동"],
     "frequency": ["일 1회", "주 1회", "월 1회", "분기", "연 1회", "호선별", "수시"],
@@ -320,6 +345,11 @@ def normalize(data: dict) -> dict:
     data.setdefault("updated_by", "")
 
     doms = data.setdefault("domains", {})
+    # dept 2단 마이그레이션: 저장본의 dept 가 **구 기본 부서 리스트 그대로**면 과 리스트로 교체한다.
+    #   (사용자가 손댄 값이면 건드리지 않는다 — 정확히 구 기본값일 때만 1회 갈아끼움.)
+    cur_dept = doms.get("dept")
+    if isinstance(cur_dept, list) and cur_dept and set(cur_dept) == _OLD_DEFAULT_DEPT:
+        doms["dept"] = list(_DEPT_FLAT)
     for k, v in DEFAULT_DOMAINS.items():
         cur = doms.get(k)
         if not isinstance(cur, list):
@@ -547,6 +577,7 @@ def stats(data: dict) -> dict:
     detail = [n for n in nodes if has_detail(n.get("level", 0))]
     by_level: dict[int, int] = {}
     by_dept: dict[str, int] = {}
+    by_dept_group: dict[str, int] = {}     # 부서 롤업 (과 → 부서)
     by_auto: dict[str, int] = {}
     ai_yes = 0
     total_hours = 0.0
@@ -556,6 +587,8 @@ def stats(data: dict) -> dict:
     for n in detail:
         d = n.get("dept") or "(미지정)"
         by_dept[d] = by_dept.get(d, 0) + 1
+        g = dept_parent(d) if n.get("dept") else "(미지정)"
+        by_dept_group[g] = by_dept_group.get(g, 0) + 1
         a = n.get("automation_level") or "(미지정)"
         by_auto[a] = by_auto.get(a, 0) + 1
         h = annual_hours(n)
@@ -568,6 +601,7 @@ def stats(data: dict) -> dict:
         "detail_total": len(detail),          # lv6 세부업무 수 = AI 지표의 분모
         "by_level": dict(sorted(by_level.items())),
         "by_dept": dict(sorted(by_dept.items(), key=lambda kv: -kv[1])),
+        "by_dept_group": dict(sorted(by_dept_group.items(), key=lambda kv: -kv[1])),
         "by_automation": dict(sorted(by_auto.items(), key=lambda kv: -kv[1])),
         "ai_yes": ai_yes,
         "ai_no": len(detail) - ai_yes,
