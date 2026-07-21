@@ -88,6 +88,11 @@
   .crumbbtn.add { border-color: #99f6e4; color: #0f766e; background: #f0fdfa; }
   .crumbbtn.del { border-color: #f0d9d9; color: #b91c1c; }
   .crumbbtn:hover { filter: brightness(.97); }
+  .lv3chips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .lv3chip { border: 1.5px solid; border-radius: 999px; padding: 3px 11px; font-size: 13.5px;
+    font-weight: 800; cursor: pointer; line-height: 1.3; }
+  .lv3chip:hover { filter: brightness(.96); }
+  .lv3chip.on { box-shadow: 0 0 0 2px rgba(15, 118, 110, .18); }
 
   .body { flex: 1; display: flex; min-height: 0; }
   /* 보드는 컬럼 폭만큼만 차지(flex:0) → 남는 폭은 패널이 먹어 상세 입력이 넓어지고, 컬럼~패널 사이
@@ -109,6 +114,9 @@
   .card.sel { background: #f0fdfa; border-color: #0f766e; border-left-color: #0f766e;
     box-shadow: 0 2px 8px rgba(15,118,110,.12); }
   .card.path { background: #f7fdfc; border-left-color: #5eead4; }
+  /* Ctrl+클릭으로 다중선택된 카드 — 함께 드래그된다 */
+  .card.multisel { background: #eff6ff; border-color: #2563eb; border-left-color: #2563eb;
+    box-shadow: 0 0 0 1.5px rgba(37, 99, 235, .35); }
   .card .top1 { display: flex; align-items: center; gap: 4px; }
   .card .nm { flex: 1; font-size: 15px; font-weight: 700; line-height: 1.35; word-break: break-all; }
   /* 카드 이름 인라인 편집 — 평소엔 텍스트처럼, 올리면 테두리, 포커스 시 강조 */
@@ -355,6 +363,10 @@
   var ROOT = "__root__";
   var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무" };
   var FIXED = ["조선", "생산", "시운전"];
+  // lv3 부문 칩 색 — 순서(order)대로 배정해 부문을 색으로 구분한다. 팔레트를 넘으면 순환.
+  var LV3_COLORS = ["#0f766e", "#b45309", "#7c3aed", "#be123c", "#0369a1", "#4d7c0f",
+                    "#a21caf", "#c2410c", "#1d4ed8", "#0891b2", "#9333ea", "#65a30d"];
+  function lv3Color(i) { return LV3_COLORS[((i % LV3_COLORS.length) + LV3_COLORS.length) % LV3_COLORS.length]; }
   // 부서/과 2단 (부서 → 과). schema.py DEPT_TREE 와 **완전히 같아야 한다**(twin). 노드엔 과만 저장, 부서는 매핑.
   var DEPT_TREE = {
     "시운전1부": ["기장운전1과", "선장운전1과", "전장운전1과"],
@@ -817,16 +829,23 @@
     rerender();
   }
 
-  function actMove(id, newPid) {
-    var n = byId(id); if (!n || !newPid || n.parent_id === newPid) return;
-    // 같은 레벨끼리만 드롭되므로(group 분리) 레벨 변경·사이클은 구조적으로 불가능하다
-    var oldPid = n.parent_id;
-    n.parent_id = newPid;
-    n.order = childrenOf(newPid).length;
-    renumber(oldPid); renumber(newPid);
-    markDirty(id);
-    selectPath(id);
-    flash("'" + (n.name || "이름 없음") + "' 을(를) 옮겼습니다");
+  function actMove(id, newPid) { actMoveMany([id], newPid); }
+  /** 카드 여러 개를 한 부모로 이동(상위 바꾸기, 레벨 유지). 다중선택 드래그·단일 드래그 공용. */
+  function actMoveMany(ids, newPid) {
+    if (!newPid) return;
+    var oldPids = {}, moved = [];
+    ids.forEach(function (id) {
+      var n = byId(id); if (!n || n.parent_id === newPid) return;
+      oldPids[n.parent_id] = 1;
+      n.parent_id = newPid;
+      n.order = childrenOf(newPid).length;   // 매번 끝에 붙인다 — 이미 옮긴 것들 뒤로 순서 유지
+      markDirty(id); moved.push(n);
+    });
+    if (!moved.length) return;
+    Object.keys(oldPids).forEach(renumber); renumber(newPid);
+    selectPath(moved[moved.length - 1].id);
+    flash(moved.length > 1 ? moved.length + "개를 옮겼습니다"
+                           : "'" + (moved[0].name || "이름 없음") + "' 을(를) 옮겼습니다");
     rerender();
   }
 
@@ -915,11 +934,13 @@
       _sorts.push(Sortable.create(el, Object.assign({}, opt, {
         group: { name: "L" + lv, pull: true, put: ["L" + lv] },
         draggable: ".card", filter: ".addbtn,.cdrop,.nm,.cdel",
+        // Ctrl(⌘)+클릭으로 여러 카드를 골라 한 번에 드래그(MultiDrag, complete 빌드 내장).
+        multiDrag: true, multiDragKey: "CTRL", selectedClass: "multisel", avoidImplicitDeselect: true,
         onStart: function () { _dragging = true; document.body.classList.add("dragging", "dragL" + lv); },
         onEnd: function (e) {
           endDrag();
           if (e.from !== e.to) return;                  // 드롭존 경유는 (B) 가 처리
-          if (e.oldIndex === e.newIndex) return;
+          // 다중이든 단일이든 목적지 리스트의 최종 DOM 순서가 정본 — 그대로 order 재계산
           var pid = e.from.dataset.parent;
           var ids = [].map.call(e.from.querySelectorAll(":scope > .card"), function (c) { return c.dataset.id; });
           // 다음 틱으로 미룬다 — 콜백 안에서 rerender 하면 wireDnD 가 드래그 중인
@@ -938,9 +959,12 @@
         // 드래그 중인 인스턴스가 파괴돼 onEnd 가 영영 안 오고, dragging 클래스와
         // _dragging 가드가 남아 앱 전체가 클릭 불능이 된다. 다음 틱으로 미룬다.
         onAdd: function (e) {
-          var id = e.item.dataset.id, pid = el.dataset.parent;
-          e.item.remove();                               // 파이썬/상태 재렌더가 정본 — DOM 은 버린다
-          setTimeout(function () { actMove(id, pid); }, 0);
+          var pid = el.dataset.parent;
+          // 다중선택 드롭이면 e.items 에 여러 개가 담긴다. 없으면 단일(e.item).
+          var items = (e.items && e.items.length) ? e.items : [e.item];
+          var ids = items.map(function (it) { return it.dataset.id; });
+          items.forEach(function (it) { if (it && it.remove) it.remove(); });  // 정본은 재렌더 — DOM 은 버린다
+          setTimeout(function () { actMoveMany(ids, pid); }, 0);
         },
       })));
     });
@@ -1247,10 +1271,15 @@
     // lv3(부문)은 드롭다운으로 고른다 — 경로 전체를 늘어놓지 않고 여기서 바로 부문 전환.
     // lv4~lv6 위치는 컬럼의 조상 카드 하이라이트(.path)로 표시하므로 여기 칩으로 붙이지 않는다.
     var lv3s = childrenOf(ROOT), cur3 = S.sel[3] || "";
-    var lv3sel = '<select class="crumbsel" data-fkey="crumblv3"><option value="">부문 선택 —</option>'
-      + lv3s.map(function (n) { return '<option value="' + esc(n.id) + '"' + (n.id === cur3 ? " selected" : "") + ">" + esc(n.name || "(이름 없음)") + "</option>"; }).join("")
-      + "</select>";
-    // 부문은 추가/삭제만 — 컬럼 대신 드롭다운 옆 버튼으로. 삭제는 부문이 선택됐을 때만.
+    // 부문은 **컬러 칩**으로 고른다 — 색으로 구분되고 한눈에 전환된다(드롭다운 대체).
+    var lv3sel = '<div class="lv3chips">' + lv3s.map(function (n, i) {
+      var c = lv3Color(i), on = n.id === cur3;
+      var style = on ? "background:" + c + ";color:#fff;border-color:" + c
+                     : "background:" + c + "14;color:" + c + ";border-color:" + c + "66";
+      return '<button class="lv3chip' + (on ? " on" : "") + '" data-act="select" data-id="' + esc(n.id)
+        + '" data-lv3chip="' + esc(n.id) + '" style="' + style + '">' + esc(n.name || "(이름 없음)") + "</button>";
+    }).join("") + "</div>";
+    // 부문 추가/삭제 — 칩 줄 옆 버튼. 삭제는 부문이 선택됐을 때만.
     var lv3btns = '<button class="crumbbtn add" data-act="add" data-pid="' + ROOT + '" data-lv="3" title="새 부문 추가">＋ 부문</button>'
       + (cur3 ? '<button class="crumbbtn del" data-act="del" data-id="' + esc(cur3) + '" title="이 부문 삭제">🗑</button>' : "");
     var q = (S.query || "").trim();
@@ -1787,6 +1816,8 @@
   var _dragging = false;
   function onClick(e) {
     if (_dragging) return;          // 드래그 끝에 딸려오는 click 이 select 로 새지 않게
+    // Ctrl(⌘)+클릭은 MultiDrag 다중선택이다 — select+rerender 로 새면 선택이 즉시 지워진다.
+    if ((e.ctrlKey || e.metaKey) && e.target.closest(".card")) return;
     // 입력칸(카드 이름 등)을 클릭하면 select 로 새지 않게 — 카드가 통째로 data-act="select" 라
     // 그냥 두면 rerender 로 input 이 파괴돼 편집을 시작할 수 없다. 포커스는 브라우저가 알아서 준다.
     if (e.target.closest("[data-fkey]")) return;
@@ -1855,8 +1886,8 @@
       if (inp !== document.activeElement) inp.value = t;
     });
     var p = contentEl.querySelector(".pname"); if (p) p.textContent = t || "(이름 없음)";
-    // 부문(lv3)은 카드가 없다 — 빵부스러기 드롭다운 옵션을 바로 갱신해 이름 편집이 즉시 보이게 한다
-    var op = contentEl.querySelector('[data-fkey="crumblv3"] option[value="' + id + '"]'); if (op) op.textContent = t || "(이름 없음)";
+    // 부문(lv3)은 카드가 없다 — 부문 칩 라벨을 바로 갱신해 이름 편집이 즉시 보이게 한다
+    var op = contentEl.querySelector('[data-lv3chip="' + id + '"]'); if (op) op.textContent = t || "(이름 없음)";
   }
   function echoDesc(id) {
     var n = byId(id); if (!n) return;
@@ -1933,7 +1964,6 @@
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
     if (f === "dept" || f === "automation_level" || f === "linked_system")
       return actUpdate(el.dataset.id, f, el.value);
-    if (f === "crumblv3") { if (el.value) actSelect(el.value); return; }   // 빵부스러기 부문 드롭다운
     if (f === "moveto") return actMoveTo(el.dataset.id, el.value);
     if (f === "query") { clearTimeout(_queryTimer); S.query = el.value; rerender('[data-fkey="query"]'); return; }
     if (f === "mask") { S.mask = el.checked; rerender(); return; }
