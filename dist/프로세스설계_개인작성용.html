@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1627";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1100,16 +1100,25 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
     rerender();
   }
 
-  // ── 엑셀(CSV) 다운로드 — 개인 배포판엔 파이썬이 없어 브라우저에서 CSV 로 만든다.
-  //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 최대한 맞춘다.
+  // ── 다운로드 — **브라우저에서(클릭 제스처 안에서) 바로** 만든다.
+  //    파이썬이 만든 바이트를 리런 뒤 data-URI 로 자동클릭하던 방식은 최신 크롬이 '사용자 동작 없는
+  //    샌드박스 iframe 다운로드'로 보고 막는다. 그래서 컴포넌트 안에서 Blob 으로 즉시 내려받는다.
+  function _dl(blob, name) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  }
+  function _dateStamp() { var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); }; return "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
+  //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 맞춘다.
   var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "레벨", "이름",
-    "부서/과", "상위부서", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
+    "부서/과", "상위부서", "담당자", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
     "AI에이전트", "활용기술", "자동화수준", "적용선종", "반복구간", "산출물", "연계시스템", "추가정보", "업무설명"];
   function _csvCell(v) {
     v = (v == null) ? "" : String(v);
     return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   }
-  function soloCsvRows() {
+  function csvRows(mask) {
     var rows = [CSV_COLS.slice()];
     (function walk(pid, names) {
       childrenOf(pid).forEach(function (n) {
@@ -1117,10 +1126,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
         var full = FIXED.concat(path);                 // lv0~lv2 고정단 재부착
         var lvc = []; for (var i = 0; i < 7; i++) lvc.push(full[i] || "");
         var leaf = hasDetail(n.level);
-        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6 은 내보내기처럼 소속 주입
+        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6 은 소속(과) 반영
+        var owner = leaf ? (n.owner ? (mask ? maskName(n.owner) : n.owner) : "") : "";
         var ship = leaf ? (shipTypesOf(n.id) || []).map(function (s) { return SHIP_TYPE_LABEL[s] || s; }).join("·") : "";
         rows.push(lvc.concat([
-          n.level, n.name || "", dept, dept ? deptParent(dept) : "",
+          n.level, n.name || "", dept, dept ? deptParent(dept) : "", owner,
           leaf ? occurOf(n) : "", n.freq_unit || "", n.freq_count || "", n.work_hours || "",
           leaf && annualHours(n) ? annualHours(n) : "",
           leaf ? (n.has_ai_agent ? "Y" : "N") : "",
@@ -1133,20 +1143,20 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
     })(ROOT, []);
     return rows;
   }
-  function soloCsvDownload() {
-    var rows = soloCsvRows();
+  function csvDownload(mask, fname) {
+    var rows = csvRows(mask);
     if (rows.length <= 1) { flash("내보낼 업무가 없습니다"); return; }
     var csv = rows.map(function (r) { return r.map(_csvCell).join(","); }).join("\r\n");
-    var blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });   // BOM = 엑셀 한글
-    var name = "프로세스_" + (S.author || "이름") + "_" + (S.dept || "부서") + "_"
-      + (function () { var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); };
-                       return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); })() + ".csv";
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = name;
-    document.body.appendChild(a); a.click();
-    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    _dl(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }), fname);   // BOM = 엑셀 한글
     flash("엑셀(CSV)로 내려받았습니다 — 엑셀에서 바로 열립니다");
   }
+  function jsonDownload() {   // 메인앱 JSON 원본 — 클라이언트에서 바로
+    var payload = { schema_version: 1, exported_at: new Date().toISOString(), nodes: S.nodes, domains: S.domains };
+    _dl(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "프로세스계층도_" + _dateStamp() + ".json");
+    flash("JSON 원본을 내려받았습니다");
+  }
+  // 개인 배포판 버튼용 — 소속·이름을 파일명에, 담당자는 항상 빈값(SOLO 는 owner 안 씀)
+  function soloCsvDownload() { csvDownload(false, "프로세스_" + (S.author || "이름") + "_" + (S.dept || "부서") + "_" + _dateStamp() + ".csv"); }
 
   function soloImport(text) {
     try {
@@ -1774,10 +1784,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
     } else if (S.excelTab === "collect") {
       pane = collectPane();
     } else {
-      pane = '<div class="cardbox" style="padding:22px"><div style="font-size:14.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀로 받습니다. 이 파일을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다. 시트 3장 — 계층도 / 도메인 / 요약.</div>'
+      pane = '<div class="cardbox" style="padding:22px"><div style="font-size:14.5px;color:#78716c;line-height:1.55">설계 결과를 엑셀(CSV)·JSON 으로 내려받습니다. CSV 는 <b>엑셀에서 바로 열립니다</b>(한글 안 깨짐). 이 내용을 고쳐 [가져오기] 에 올리면 일괄 반영됩니다.</div>'
         + '<label style="display:flex;align-items:center;gap:9px;margin:16px 0;cursor:pointer"><input type="checkbox" data-fkey="mask"' + (S.mask ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;font-weight:600;color:#44403c">담당자 이름 마스킹 (홍길동 → 홍*동)</span></label>'
         + (!S.mask ? '<div class="warn" style="margin-bottom:14px">⚠ 마스킹을 끄면 개인정보가 담긴 파일이 됩니다. 외부 공유에 주의하세요.</div>' : "")
-        + '<div style="display:flex;gap:10px"><button class="primary" style="flex:1" data-act="down" data-fmt="xlsx">엑셀 다운로드 (.xlsx)</button><button class="secondary" style="flex:1" data-act="down" data-fmt="json">JSON 원본 다운로드</button></div></div>';
+        + '<div style="display:flex;gap:10px"><button class="primary" style="flex:1" data-act="down" data-fmt="xlsx">⬇ 엑셀(CSV) 다운로드</button><button class="secondary" style="flex:1" data-act="down" data-fmt="json">JSON 원본 다운로드</button></div></div>';
     }
     var metrics = [["전체 업무", st.total, "lv3~lv6 전 레벨"], ["세부업무(lv6)", st.detail, "AI 지표의 분모"], ["AI 에이전트 적용", st.ai, st.rate + "%"], ["미적용", st.detail - st.ai, "lv6 중"]]
       .map(function (m) { return '<div class="metric"><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>"; }).join("");
@@ -1926,7 +1936,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260721_1509";
     else if (a === "domadd") domAdd(d.k);
     else if (a === "domdel") domDelete(d.k, +d.i);
     else if (a === "exceltab") S.excelTab = d.k, rerender();
-    else if (a === "down") emit({ type: "download", fmt: d.fmt, mask: S.mask, nodes: S.nodes, domains: S.domains });
+    else if (a === "down") { if (d.fmt === "json") jsonDownload(); else csvDownload(S.mask, "프로세스계층도_" + _dateStamp() + ".csv"); }
     else if (a === "histpick") actHistPick(+d.i);
     else if (a === "restore") { if (!S.author) return flash("작성자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
     else if (a === "reload") actReload();
