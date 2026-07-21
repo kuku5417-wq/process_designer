@@ -109,8 +109,26 @@
   .card.sel { background: #f0fdfa; border-color: #0f766e; border-left-color: #0f766e;
     box-shadow: 0 2px 8px rgba(15,118,110,.12); }
   .card.path { background: #f7fdfc; border-left-color: #5eead4; }
-  .card .top1 { display: flex; align-items: flex-start; gap: 6px; }
+  .card .top1 { display: flex; align-items: center; gap: 4px; }
   .card .nm { flex: 1; font-size: 15px; font-weight: 700; line-height: 1.35; word-break: break-all; }
+  /* 카드 이름 인라인 편집 — 평소엔 텍스트처럼, 올리면 테두리, 포커스 시 강조 */
+  input.nm { width: 100%; min-width: 0; border: 1px solid transparent; background: transparent;
+    border-radius: 6px; padding: 2px 5px; font-family: inherit; color: #1c1917; }
+  input.nm::placeholder { color: #b8ab99; font-weight: 600; }
+  input.nm:hover { border-color: #e7e1d6; background: #fdfcfa; }
+  input.nm:focus { outline: none; border-color: #5eead4; background: #fff; box-shadow: 0 0 0 2px rgba(94, 234, 212, .35); }
+  /* 카드 삭제 버튼 — 평소엔 옅게, 올리면 빨강 */
+  .cdel { flex: none; border: none; background: transparent; color: #cabfb0; cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 3px 4px; border-radius: 6px; }
+  .cdel:hover { background: #fef2f2; color: #dc2626; }
+  .rowdel { flex: none; border: none; background: transparent; color: #cabfb0; cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
+  .rowdel:hover { background: #fef2f2; color: #dc2626; }
+  input.rowname { border: 1px solid transparent; background: transparent; border-radius: 6px;
+    padding: 1px 4px; font-family: inherit; font-size: 14px; font-weight: 700; color: #1c1917; min-width: 120px; }
+  input.rowname::placeholder { color: #b8ab99; }
+  input.rowname:hover { border-color: #e7e1d6; background: #fff; }
+  input.rowname:focus { outline: none; border-color: #5eead4; background: #fff; box-shadow: 0 0 0 2px rgba(94, 234, 212, .35); }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; margin-top: 4px; flex: none;
     box-shadow: 0 0 0 3px #fef3c7; }
   .cdesc { margin-top: 3px; font-size: 12.5px; color: #a8a29e; line-height: 1.4; overflow: hidden;
@@ -593,7 +611,7 @@
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
     S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
-    markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"]');
+    markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"][data-id="' + nn.id + '"]');
   }
   function actUpdate(id, key, val, refocus, noRender) {
     var n = byId(id); if (!n) return;
@@ -856,14 +874,17 @@
     endDrag();     // rerender 로 DOM 이 갈렸으므로 드래그 상태도 초기화
     if (typeof Sortable === "undefined" || S.viewMode !== "columns") return;
     var opt = { forceFallback: true, fallbackOnBody: true, fallbackTolerance: 3, animation: 140,
-                ghostClass: "sgh", chosenClass: "sch", scroll: true, scrollSensitivity: 60, scrollSpeed: 12 };
+                ghostClass: "sgh", chosenClass: "sch", scroll: true, scrollSensitivity: 60, scrollSpeed: 12,
+                // filter 로 걸러낸 요소(이름 input·삭제 버튼)는 preventDefault 하지 않는다 — 안 그러면
+                // 이름칸을 눌러도 포커스·캐럿이 안 잡혀 편집을 시작할 수 없다.
+                preventOnFilter: false };
 
     // (A) 컬럼 안 — 형제 순서 변경
     [].forEach.call(contentEl.querySelectorAll(".list[data-lv]"), function (el) {
       var lv = el.dataset.lv;
       _sorts.push(Sortable.create(el, Object.assign({}, opt, {
         group: { name: "L" + lv, pull: true, put: ["L" + lv] },
-        draggable: ".card", filter: ".addbtn,.cdrop",
+        draggable: ".card", filter: ".addbtn,.cdrop,.nm,.cdel",
         onStart: function () { _dragging = true; document.body.classList.add("dragging", "dragL" + lv); },
         onEnd: function (e) {
           endDrag();
@@ -1130,7 +1151,10 @@
     // lv6 아래는 없으므로 드롭존도 없다. 드롭존은 자기보다 한 단계 아래 레벨만 받는다.
     var drop = lv < 6 ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
     return '<div class="card' + (sel ? " sel" : onPath ? " path" : "") + (isHit(nn) ? " hit" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
-      + '<div class="top1"><div class="nm">' + esc(nn.name || "(이름 없음)") + "</div>" + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot" title="저장 안 됨"></span>' : "") + "</div>"
+      // 이름은 카드에서 바로 편집(인라인 input), 삭제도 카드에서 바로. 둘 다 드래그/선택으로 새지 않게 처리.
+      + '<div class="top1"><input class="nm" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[lv]) + '명" />'
+      + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot" title="저장 안 됨"></span>' : "")
+      + '<button class="cdel" data-act="del" data-id="' + esc(nn.id) + '" title="이 ' + esc(LABELS[lv]) + ' 삭제' + (kids ? " (하위 " + descCount(nn.id) + "개 포함)" : "") + '">🗑</button></div>'
       + (nn.desc ? '<div class="cdesc">' + esc(nn.desc) + "</div>" : "")
       + (chips ? '<div class="meta">' + chips + "</div>" : "")
       + drop
@@ -1151,10 +1175,11 @@
         body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + '" style="padding-left:' + (depth * 20) + 'px">'
           + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
           + '<div class="rowmain" data-act="select" data-id="' + esc(nn.id) + '"><span class="lvb ' + (detail ? "d" : "g") + '">lv' + nn.level + "</span>"
-          + '<span class="rowname"' + (sel ? ' style="font-weight:800"' : "") + ">" + esc(nn.name || "(이름 없음)") + "</span>"
+          + '<input class="rowname" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[nn.level]) + '명" />'
           + (nn.desc ? '<span class="rowdesc">' + esc(nn.desc) + "</span>" : "") + chips
           + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot"></span>' : "") + "</div>"
           + (nn.level < 6 ? '<button class="rowadd" data-act="add" data-pid="' + esc(nn.id) + '" data-lv="' + (nn.level + 1) + '" title="하위 추가">＋</button>' : "")
+          + '<button class="rowdel" data-act="del" data-id="' + esc(nn.id) + '" title="이 ' + esc(LABELS[nn.level]) + ' 삭제' + (kids.length ? " (하위 " + descCount(nn.id) + "개 포함)" : "") + '">🗑</button>'
           + "</div>";
         if (!col) walk(nn.id, depth + 1);
       });
@@ -1640,6 +1665,9 @@
   var _dragging = false;
   function onClick(e) {
     if (_dragging) return;          // 드래그 끝에 딸려오는 click 이 select 로 새지 않게
+    // 입력칸(카드 이름 등)을 클릭하면 select 로 새지 않게 — 카드가 통째로 data-act="select" 라
+    // 그냥 두면 rerender 로 input 이 파괴돼 편집을 시작할 수 없다. 포커스는 브라우저가 알아서 준다.
+    if (e.target.closest("[data-fkey]")) return;
     var el = e.target.closest("[data-act]"); if (!el) return;
     var a = el.dataset.act, d = el.dataset;
     if (a === "tab") {
@@ -1695,12 +1723,15 @@
   //   않으므로 캐럿·조합이 끊기지 않는다. 칸을 벗어날 때(onChange) 한 번만 전체를 다시 그려 동기화한다.
   function echoName(id) {
     var n = byId(id); if (!n) return;
-    var t = n.name || "(이름 없음)";
-    var c = contentEl.querySelector('.card[data-id="' + id + '"] .nm'); if (c) c.textContent = t;
-    var r = contentEl.querySelector('.rowmain[data-id="' + id + '"] .rowname'); if (r) r.textContent = t;
-    var p = contentEl.querySelector(".pname"); if (p) p.textContent = t;
+    var t = n.name || "";
+    // 이름은 카드·전체보기 행·상세 패널 어디서나 편집할 수 있다. 같은 노드의 다른 이름 입력칸들도
+    // 실시간으로 맞춰준다 — 단, 지금 타이핑 중인 칸(activeElement)은 캐럿이 튀지 않게 건드리지 않는다.
+    contentEl.querySelectorAll('input[data-fkey="name"][data-id="' + id + '"]').forEach(function (inp) {
+      if (inp !== document.activeElement) inp.value = t;
+    });
+    var p = contentEl.querySelector(".pname"); if (p) p.textContent = t || "(이름 없음)";
     // 부문(lv3)은 카드가 없다 — 빵부스러기 드롭다운 옵션을 바로 갱신해 이름 편집이 즉시 보이게 한다
-    var op = contentEl.querySelector('[data-fkey="crumblv3"] option[value="' + id + '"]'); if (op) op.textContent = t;
+    var op = contentEl.querySelector('[data-fkey="crumblv3"] option[value="' + id + '"]'); if (op) op.textContent = t || "(이름 없음)";
   }
   function echoDesc(id) {
     var n = byId(id); if (!n) return;
