@@ -202,7 +202,7 @@
     min-height: 26px; background: #faf8f3; }
   .cdrop::after { content: "여기로 옮기기"; display: block; text-align: center;
     font-size: 11.5px; color: #b8b0a4; line-height: 22px; }
-  body.dragL4 .cdrop.acc4, body.dragL5 .cdrop.acc5, body.dragL6 .cdrop.acc6 { display: block; }
+  body.dragL4 .cdrop.acc4, body.dragL5 .cdrop.acc5, body.dragL6 .cdrop.acc6, body.dragL7 .cdrop.acc7 { display: block; }
   /* forceFallback 이라 네이티브 dragenter 가 없다 — 고스트는 pointer-events 가 없어 :hover 가 걸린다 */
   body.dragging .cdrop:hover { border-color: #0f766e; background: #ccfbf1; }
 
@@ -366,7 +366,9 @@
 
   // ── 데이터 모델 (schema.py 와 동일 구조: 평면 노드 + parent_id) ──
   var ROOT = "__root__";
-  var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무" };
+  var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무", 7: "단위작업" };
+  var LEVEL_MAX = 7;                       // schema.LEVEL_MAX 트윈 (lv7 단위작업)
+  var LOAD_LV = 6;                         // schema.LOAD_LEVEL 트윈 — 부하·AI·집계 분모 기준 (lv7 은 롤업)
   var FIXED = ["조선", "생산", "시운전"];
   // lv3 부문 칩 색 — 순서(order)대로 배정해 부문을 색으로 구분한다. 팔레트를 넘으면 순환.
   var LV3_COLORS = ["#0f766e", "#b45309", "#7c3aed", "#be123c", "#0369a1", "#4d7c0f",
@@ -415,7 +417,9 @@
     return out;
   }
 
+  // 상세 입력 폼 게이트 — lv6·lv7 공통(>=6). 집계(부하·AI·부서) 분모는 isLoadLevel(===LOAD_LV) 을 쓴다.
   function hasDetail(lv) { return Number(lv) >= 6; }
+  function isLoadLevel(lv) { return Number(lv) === LOAD_LV; }
 
   // ── 작업시간 (schema.annual_hours / schema.annual_count_of 의 쌍둥이) ─────────
   // 연간 공수는 저장하지 않는다 — 두 원본과 어긋날 수 있어 항상 여기서 계산한다.
@@ -497,6 +501,18 @@
   }
   function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
   function childrenOf(pid) { return S.nodes.filter(function (n) { return n.parent_id === pid; }).sort(function (a, b) { return (a.order - b.order) || String(a.name).localeCompare(b.name); }); }
+  /** lv6 AI 적용 = 자신 또는 lv7 자식 중 하나라도 기술 보유 (schema.rollup_has_ai 트윈). */
+  function rollupHasAi(n, field) {
+    field = field || "has_ai_agent";
+    if (n[field]) return true;
+    return childrenOf(n.id).some(function (c) { return c.level === LEVEL_MAX && c[field]; });
+  }
+  /** lv6 부하 롤업 그룹 = 자신 + lv7 자식. 부하 집계는 이 그룹 단위로 센다. */
+  function loadGroup(n) {
+    var g = [n];
+    childrenOf(n.id).forEach(function (c) { if (c.level === LEVEL_MAX) g.push(c); });
+    return g;
+  }
   function byId(id) { for (var i = 0; i < S.nodes.length; i++) if (S.nodes[i].id === id) return S.nodes[i]; return null; }
   function ancestors(id) { var out = [], cur = byId(id), g = 0; while (cur && cur.parent_id !== ROOT && g++ < 20) { var p = byId(cur.parent_id); if (!p) break; out.unshift(p); cur = p; } return out; }
   function pathNames(id) { var self = byId(id); return FIXED.concat(ancestors(id).map(function (a) { return a.name; })).concat(self ? [self.name] : []); }
@@ -542,15 +558,20 @@
   /** ★ 연간(상시)과 호선당(이벤트)은 단위가 달라 한 숫자로 더하면 거짓이다. 버킷을 나눈다.
    *  호선루틴은 구간길이를 몰라 아직 연간화가 안 되므로 건수만 센다. */
   function stats() {
-    var d = S.nodes.filter(function (n) { return hasDetail(n.level); });
-    var ai = d.filter(function (n) { return n.has_ai_agent; }).length;
-    var annual = 0, perShip = 0, unresolved = 0, missing = 0;
+    // 분모 = 모든 lv6 (lv7 은 롤업 대상이라 분모에서 뺀다). 부하·AI 는 lv6 마다 자신+lv7 자식 롤업.
+    var d = S.nodes.filter(function (n) { return isLoadLevel(n.level); });
+    var ai = 0, annual = 0, perShip = 0, unresolved = 0, missing = 0;
     d.forEach(function (n) {
-      var L = SOLO ? loadOf(n) : { kind: "annual", hours: annualHours(n) };
-      if (L.kind === "annual") annual += L.hours;
-      else if (L.kind === "per_ship") perShip += L.hours;
-      else unresolved++;
-      if (!L.hours && L.kind !== "unresolved") missing++;
+      if (rollupHasAi(n)) ai++;
+      var gAnnual = 0, gPerShip = 0, gUnresolved = 0, gHours = 0;
+      loadGroup(n).forEach(function (m) {                 // 자신 + lv7 자식
+        var L = SOLO ? loadOf(m) : { kind: "annual", hours: annualHours(m) };
+        if (L.kind === "annual") { gAnnual += L.hours; gHours += L.hours; }
+        else if (L.kind === "per_ship") { gPerShip += L.hours; gHours += L.hours; }
+        else gUnresolved++;
+      });
+      annual += gAnnual; perShip += gPerShip; unresolved += gUnresolved;
+      if (!gHours && !gUnresolved) missing++;             // 그룹 전체가 시간 0·미해결도 아니면 미입력
     });
     return { total: S.nodes.length, detail: d.length, ai: ai,
              rate: d.length ? Math.round(ai / d.length * 100) : 0,
@@ -667,7 +688,7 @@
     var nn = makeNode(pid, lv, "");
     // 메인앱: 상단 기본 부서를 새 세부업무(lv6)에 채운다 — '지정 이후 만든 내용에만' 반영(소급 없음).
     //   개인 배포판은 내보낼 때 소속이 일괄 주입되므로 여기선 넣지 않는다.
-    if (!SOLO && lv === 6 && S.dept) nn.dept = S.dept;
+    if (!SOLO && hasDetail(lv) && S.dept) nn.dept = S.dept;   // lv6·lv7 에 기본 소속 주입
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
     S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
@@ -900,7 +921,7 @@
     var st = [id], g = 0;
     while (st.length && g++ < 5000) {
       var cur = byId(st.pop()); if (!cur) continue;
-      cur.level = cur.parent_id === ROOT ? 3 : Math.min(6, (byId(cur.parent_id) || { level: 2 }).level + 1);
+      cur.level = cur.parent_id === ROOT ? 3 : Math.min(LEVEL_MAX, (byId(cur.parent_id) || { level: 2 }).level + 1);
       childrenOf(cur.id).forEach(function (c) { st.push(c.id); });
     }
   }
@@ -911,8 +932,8 @@
     S.nodes.slice().sort(function (a, b) { return (a.level - b.level) || String(a.name).localeCompare(b.name); })
       .forEach(function (t) {
         if (t.id === id || wouldCycle(id, t.id)) return;
-        if (t.level + 1 + depth > 6) return;             // 옮기면 lv6 을 넘는 대상 제외
-        if (t.level + 1 > 6) return;
+        if (t.level + 1 + depth > LEVEL_MAX) return;      // 옮기면 lv7 을 넘는 대상 제외
+        if (t.level + 1 > LEVEL_MAX) return;
         var path = ancestors(t.id).map(function (a) { return a.name; }).concat([t.name]).join(" › ");
         out.push({ id: t.id, label: "lv" + (t.level + 1) + " ← " + path, level: t.level });
       });
@@ -922,8 +943,8 @@
     var n = byId(id); if (!n || n.parent_id === newPid) return;
     if (wouldCycle(id, newPid)) return flash("자기 자신이나 하위 업무 밑으로는 옮길 수 없습니다");
     var newLevel = newPid === ROOT ? 3 : (byId(newPid) || {}).level + 1;
-    if (newLevel > 6) return flash("lv6 아래로는 더 내려갈 수 없습니다");
-    if (newLevel + maxDepthBelow(id) > 6) return flash("하위 업무까지 옮기면 lv6 을 넘습니다. 하위를 먼저 정리해 주세요");
+    if (newLevel > LEVEL_MAX) return flash("lv" + LEVEL_MAX + " 아래로는 더 내려갈 수 없습니다");
+    if (newLevel + maxDepthBelow(id) > LEVEL_MAX) return flash("하위 업무까지 옮기면 lv" + LEVEL_MAX + " 을 넘습니다. 하위를 먼저 정리해 주세요");
     var oldPid = n.parent_id;
     n.parent_id = newPid;
     n.order = childrenOf(newPid).length;
@@ -939,7 +960,7 @@
   var _sorts = [];
   function endDrag(lv) {
     // 드래그 흔적을 확실히 지운다. 남으면 드롭존이 계속 보이고 _dragging 가드에 클릭이 막힌다.
-    document.body.classList.remove("dragging", "dragL3", "dragL4", "dragL5", "dragL6");
+    document.body.classList.remove("dragging", "dragL3", "dragL4", "dragL5", "dragL6", "dragL7");
     setTimeout(function () { _dragging = false; }, 0);
   }
   function wireDnD() {
@@ -1129,7 +1150,7 @@
   }
   function _dateStamp() { var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); }; return "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
   //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 맞춘다.
-  var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "레벨", "이름",
+  var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "lv7", "레벨", "이름",
     "부서/과", "상위부서", "담당자", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
     "현재AI", "향후AI", "현재활용기술", "향후AI적용기술", "자동화수준", "적용선종", "특이사항",
     "반복구간", "산출물", "연계시스템(전체)", "업무설명"];
@@ -1143,9 +1164,9 @@
       childrenOf(pid).forEach(function (n) {
         var path = names.concat([n.name || ""]);
         var full = FIXED.concat(path);                 // lv0~lv2 고정단 재부착
-        var lvc = []; for (var i = 0; i < 7; i++) lvc.push(full[i] || "");
+        var lvc = []; for (var i = 0; i <= LEVEL_MAX; i++) lvc.push(full[i] || "");   // lv0~lv7
         var leaf = hasDetail(n.level);
-        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6 은 소속(과) 반영
+        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6·lv7 은 소속(과) 반영
         var owner = leaf ? (n.owner ? (mask ? maskName(n.owner) : n.owner) : "") : "";
         var ship = leaf ? (n.ship_types || []).join(", ") : "";        // 도메인 값 그대로
         var links = leaf ? (n.linked_systems || []).map(function (ls) { return (ls.system || "") + (ls.detail ? " · " + ls.detail : ""); }).filter(Boolean).join(" / ") : "";
@@ -1275,9 +1296,9 @@
   }
 
   function columns() {
-    // lv3(부문)은 빵부스러기 드롭다운으로 고른다 — 컬럼은 lv4~lv6 만 (lv3 컬럼 제거).
+    // lv3(부문)은 빵부스러기 드롭다운으로 고른다 — 컬럼은 lv4~lv7 만 (lv3 컬럼 제거).
     var html = '<div class="board scroll">';
-    for (var lv = 4; lv <= 6; lv++) {
+    for (var lv = 4; lv <= LEVEL_MAX; lv++) {
       var pid = S.sel[lv - 1];
       var enabled = !!pid;
       html += '<div class="col' + (lv > 4 ? " wide" : "") + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
@@ -1320,7 +1341,7 @@
     // 현재 선택 체인 위의 조상 카드는 옅게 강조(.path) — "지금 어느 경로를 쓰는지" 한눈에 보이게.
     var onPath = !sel && S.sel[lv] === nn.id;
     // lv6 아래는 없으므로 드롭존도 없다. 드롭존은 자기보다 한 단계 아래 레벨만 받는다.
-    var drop = lv < 6 ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
+    var drop = lv < LEVEL_MAX ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
     return '<div class="card' + (sel ? " sel" : onPath ? " path" : "") + (isHit(nn) ? " hit" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
       // 이름은 카드에서 바로 편집(인라인 input), 삭제도 카드에서 바로. 둘 다 드래그/선택으로 새지 않게 처리.
       + '<div class="top1"><input class="nm" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[lv]) + '명" />'
@@ -1349,7 +1370,7 @@
           + '<input class="rowname" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[nn.level]) + '명" />'
           + (nn.desc ? '<span class="rowdesc">' + esc(nn.desc) + "</span>" : "") + chips
           + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot"></span>' : "") + "</div>"
-          + (nn.level < 6 ? '<button class="rowadd" data-act="add" data-pid="' + esc(nn.id) + '" data-lv="' + (nn.level + 1) + '" title="하위 추가">＋</button>' : "")
+          + (nn.level < LEVEL_MAX ? '<button class="rowadd" data-act="add" data-pid="' + esc(nn.id) + '" data-lv="' + (nn.level + 1) + '" title="하위 추가">＋</button>' : "")
           + '<button class="rowdel" data-act="del" data-id="' + esc(nn.id) + '" title="이 ' + esc(LABELS[nn.level]) + ' 삭제' + (kids.length ? " (하위 " + descCount(nn.id) + "개 포함)" : "") + '">🗑</button>'
           + "</div>";
         if (!col) walk(nn.id, depth + 1);
@@ -1517,7 +1538,7 @@
 
     if (!detail) {
       var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "freq_unit", "freq_count"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
-      fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무</b>에서 입력합니다.</div>';
+      fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무·lv7 단위작업</b>에서 입력합니다.</div>';
       if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
     } else {
       var opt = function (key, cur) { var base = (S.domains[key] || []).slice(); if (cur && base.indexOf(cur) < 0) base.push(cur); return '<option value="">— 선택 —</option>' + base.map(function (v) { return '<option value="' + esc(v) + '"' + (v === cur ? " selected" : "") + ">" + esc(v) + "</option>"; }).join(""); };
@@ -1645,7 +1666,7 @@
         + "<li>lv3~lv6 칸을 <b>왼쪽부터 연속으로</b> 채웁니다. (lv4 를 비우고 lv5 만 채우면 오류)</li>"
         + "<li>상위 업무는 자기 행이 반드시 있어야 합니다.</li>"
         + '<li><code style="background:#f0ede6;padding:1px 5px;border-radius:4px">id</code> 가 비어 있으면 새 업무로 등록됩니다. 기존 업무는 id 를 지우지 마세요.</li>'
-        + "<li>AI·기술·부서 같은 세부 정보는 <b>lv6 세부업무</b> 행에만 채웁니다.</li>"
+        + "<li>AI·기술·부서 같은 세부 정보는 <b>lv6 세부업무·lv7 단위작업</b> 행에 채웁니다(부하·집계는 lv6 기준, lv7 은 롤업).</li>"
         + "<li>엑셀에서 행을 지워도 <b>기본은 삭제되지 않습니다</b> (반영 전 확인 화면에서 선택).</li>"
         + "<li>담당자가 마스킹된 값(<b>홍*동</b>)이면 원본 이름을 덮어쓰지 않습니다.</li></ul></div>";
     }
@@ -1825,9 +1846,9 @@
     }
     var metrics = [["전체 업무", st.total, "lv3~lv6 전 레벨"], ["세부업무(lv6)", st.detail, "AI 지표의 분모"], ["AI 에이전트 적용", st.ai, st.rate + "%"], ["미적용", st.detail - st.ai, "lv6 중"]]
       .map(function (m) { return '<div class="metric"><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>"; }).join("");
-    var byLevel = [3, 4, 5, 6].map(function (lv) { return '<div class="tr"><span>lv' + lv + " " + esc(LABELS[lv]) + '</span><b>' + S.nodes.filter(function (n) { return n.level === lv; }).length + "</b></div>"; }).join("");
+    var byLevel = [3, 4, 5, 6, 7].map(function (lv) { return '<div class="tr"><span>lv' + lv + " " + esc(LABELS[lv]) + '</span><b>' + S.nodes.filter(function (n) { return n.level === lv; }).length + "</b></div>"; }).join("");
     // 부서 롤업(과 → 부서). 노드엔 과만 저장하므로 deptParent 로 묶는다(schema.by_dept_group twin).
-    var dc = {}; S.nodes.filter(function (n) { return hasDetail(n.level); }).forEach(function (n) { var d = n.dept ? deptParent(n.dept) : "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
+    var dc = {}; S.nodes.filter(function (n) { return isLoadLevel(n.level); }).forEach(function (n) { var d = n.dept ? deptParent(n.dept) : "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
     var byDept = Object.keys(dc).sort(function (a, b) { return dc[b] - dc[a]; }).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + dc[k] + "</b></div>"; }).join("");
     return '<div class="page scroll"><div class="pw"><div class="h1">엑셀 가져오기 / 내보내기</div><div class="sub">업무가 많을 때는 화면에서 하나씩 만들지 말고 엑셀로 한 번에 등록·수정하세요.</div>'
       + '<div class="subtabs">' + sub + "</div>" + pane

@@ -72,7 +72,7 @@ def main() -> int:
     deep5 = schema.add_node(d, deep, 5, "tester", "임시5")
     d = schema.normalize(d)
     ok, msg = schema.apply_move(d, lv4, deep5, "tester")
-    ck(not ok and "lv6" in msg, f"깊이 초과 이동 거부: {msg}")
+    ck(not ok and f"lv{schema.LEVEL_MAX}" in msg, f"깊이 초과 이동 거부: {msg}")
 
     # 5. reorder
     ids = [c["id"] for c in schema.children(d, schema.ROOT_ID)]
@@ -491,6 +491,60 @@ def main() -> int:
                    "ship_types": ["없선"], "special_note": ["없특"], "future_tech": ["없기"]}]}))
     ck("없선" in ud.get("ship_type", []) and "없특" in ud.get("special_note", [])
        and "없기" in ud.get("tech", []), "미등록 선종·특이사항·향후기술(=tech) 감지")
+
+    # 26. lv7 단위작업 — 상세 폼은 lv6·lv7, 부하·AI·집계는 lv6 롤업
+    ck(schema.LEVEL_MAX == 7 and schema.LEVEL_LABELS.get(7) == "단위작업", "LEVEL_MAX=7 · lv7 라벨=단위작업")
+    ck(schema.has_detail(6) and schema.has_detail(7), "has_detail: lv6·lv7 폼 대상")
+    ck(schema.is_load_level(6) and not schema.is_load_level(7), "is_load_level: lv6 만 (집계 분모)")
+
+    lt = schema.bootstrap()
+    p4 = schema.add_node(lt, "lv3_seonjang", 4, "x", "대분류L")
+    p5 = schema.add_node(lt, p4, 5, "x", "중분류L")
+    c6a = schema.add_node(lt, p5, 6, "x", "세부-직접")     # 부하·기술을 lv6 에 직접
+    c6b = schema.add_node(lt, p5, 6, "x", "세부-롤업")     # 자신은 비고 lv7 이 채움
+    u7a = schema.add_node(lt, c6b, 7, "x", "단위-1")
+    u7b = schema.add_node(lt, c6b, 7, "x", "단위-2")
+    lt = schema.normalize(lt)
+    ck(schema.node_map(lt["nodes"])[u7a]["level"] == 7, "lv7 깊이 재계산 (level==7)")
+
+    schema.update_node(lt, c6a, {"tech": ["Copilot"], "work_hours": "2", "freq_unit": "주", "freq_count": "1"}, "x")
+    schema.update_node(lt, u7a, {"tech": ["RPA"], "work_hours": "1", "freq_unit": "주", "freq_count": "2"}, "x")
+    schema.update_node(lt, u7b, {"work_hours": "3", "freq_unit": "월", "freq_count": "1"}, "x")
+    lt = schema.normalize(lt)
+    s = schema.stats(lt)
+    ck(s["detail_total"] == 2, f"집계 분모 = lv6 2개 (lv7 제외, 실제 {s['detail_total']})")
+    ck(s["by_level"].get(7) == 2, "by_level 에 lv7 2개 표시")
+    ck(s["total_hours"] == 244.0, f"부하 롤업 = lv6(104) + lv7자식(104+36)=244 (실제 {s['total_hours']})")
+    ck(s["ai_yes"] == 2, "AI 롤업 — lv7 자식 기술로 부모 lv6 도 적용 카운트")
+    ck(s["ai_hours"] == 244.0, f"AI 공수도 롤업 합산 (실제 {s['ai_hours']})")
+    ok7, msg7 = schema.apply_move(lt, c6a, u7b, "x")
+    ck(not ok7 and f"lv{schema.LEVEL_MAX}" in msg7, f"lv7 아래로는 이동 거부: {msg7}")
+
+    # 엑셀 lv0~lv7 왕복 — lv7 노드 보존
+    ck("lv7" in excel_io.LV_COLS, "excel LV_COLS 에 lv7 포함")
+    rt7, _ = excel_io.parse_excel(excel_io.build_xlsx(lt, mask=False), lt)
+    ck(schema.node_map(rt7["nodes"]).get(u7a, {}).get("level") == 7, "lv7 노드 엑셀 왕복 보존")
+
+    # 취합 인원수는 lv6 기준 — lv7 은 세지 않는다(롤업 대상)
+    def _mkfile7(dept, author):
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        n5 = schema.add_node(nd, n4, 5, "x", "레이더")
+        n6 = schema.add_node(nd, n5, 6, "x", "레이더시험")
+        n7 = schema.add_node(nd, n6, 7, "x", "전원인가")
+        schema.update_node(nd, n6, {"dept": dept}, "x")
+        schema.update_node(nd, n7, {"dept": dept, "work_hours": "1", "freq_unit": "주", "freq_count": "1"}, "x")
+        return json.dumps({"exported_by": author, "exported_dept": dept,
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}},
+                          ensure_ascii=False).encode("utf-8")
+
+    cf = [("프로세스_A_시운전1부_20260721.json", _mkfile7("시운전1부", "A")),
+          ("프로세스_B_시운전2부_20260721.json", _mkfile7("시운전2부", "B"))]
+    cm7, _, _ = excel_io.collect_jsons(cf, schema.bootstrap())
+    c6nodes = [n for n in cm7["nodes"] if n["level"] == 6]
+    c7nodes = [n for n in cm7["nodes"] if n["level"] == 7]
+    ck(len(c6nodes) == 1 and c6nodes[0].get("submit_count") == "2", "취합 인원수 lv6 기준 = 2")
+    ck(len(c7nodes) == 1 and not c7nodes[0].get("submit_count"), "lv7 은 인원수 집계 안 함(롤업 대상)")
 
     print()
     if _fails:

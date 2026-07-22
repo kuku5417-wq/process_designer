@@ -21,19 +21,26 @@ FIXED_LEVELS: Final[tuple[str, ...]] = ("조선", "생산", "시운전")   # lv0
 
 # ── 편집 가능 레벨 ──────────────────────────────────────
 LEVEL_MIN: Final[int] = 3
-LEVEL_MAX: Final[int] = 6
+LEVEL_MAX: Final[int] = 7
 LEVEL_LABELS: Final[dict[int, str]] = {
     3: "부문",
     4: "대분류",
     5: "중분류",
     6: "세부업무",
+    7: "단위작업",
 }
 
 # ── 레벨별 입력 범위 ────────────────────────────────────
 # lv3~lv5 는 업무를 묶는 분류 그룹이라 이름+설명만 받는다. AI 에이전트를 적용하고 담당자가
-# 붙는 실체는 lv6 세부업무뿐이므로 상세 필드는 거기서만 입력한다.
+# 붙는 실체는 lv6 세부업무·lv7 단위작업이므로 상세 필드는 거기서만 입력한다(입력 폼 동일).
 # 레벨이 바뀌어도 값은 지우지 않는다 — 화면에서 숨길 뿐이라 다시 lv6 으로 내리면 되살아난다.
-FULL_DETAIL_LEVEL: Final[int] = LEVEL_MAX
+#
+# 두 기준을 분리한다:
+#  · FULL_DETAIL_LEVEL(6) — **상세 폼 노출** 기준. has_detail 이 `>= 6` 이라 lv6·lv7 둘 다 폼을 받는다.
+#  · LOAD_LEVEL(6)        — **부하·AI·부서 집계의 분모** 기준. lv7 값은 부모 lv6 으로 롤업하므로
+#                           집계는 lv6 만 센다. has_detail(폼)을 집계 게이트로 쓰면 lv7 이 새어든다.
+FULL_DETAIL_LEVEL: Final[int] = 6
+LOAD_LEVEL: Final[int] = 6
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "dept", "has_ai_agent", "has_ai_future", "tech", "future_tech", "automation_level",
     "owner", "frequency", "outputs",
@@ -98,9 +105,19 @@ def josa(word: str, pair: str = "은/는") -> str:
 
 
 def has_detail(level: int) -> bool:
-    """상세 필드(AI·기술·부서·담당자 등)를 입력하는 레벨인지."""
+    """상세 **입력 폼**을 받는 레벨인지 — lv6·lv7 (>= FULL_DETAIL_LEVEL). **폼 게이트 전용**이다.
+    부하·AI·부서 집계의 분모는 이 함수가 아니라 `level == LOAD_LEVEL`(is_load_level) 을 써야 한다
+    (안 그러면 롤업 대상인 lv7 이 분모에 새어든다)."""
     try:
         return int(level) >= FULL_DETAIL_LEVEL
+    except (TypeError, ValueError):
+        return False
+
+
+def is_load_level(level: int) -> bool:
+    """부하·AI·부서 집계의 기준(분모) 레벨인지 — lv6 만. lv7 값은 부모 lv6 으로 롤업한다."""
+    try:
+        return int(level) == LOAD_LEVEL
     except (TypeError, ValueError):
         return False
 
@@ -524,7 +541,7 @@ def max_depth_below(data: dict, node_id: str) -> int:
 def apply_move(data: dict, node_id: str, new_parent_id: str, author: str) -> tuple[bool, str]:
     """부모 변경. (성공여부, 메시지) 반환.
 
-    새 부모 밑에서 자손이 LEVEL_MAX 를 넘게 되면 거부한다 — lv6 아래로는 못 내려간다.
+    새 부모 밑에서 자손이 LEVEL_MAX 를 넘게 되면 거부한다 — lv7(단위작업) 아래로는 못 내려간다.
     """
     nmap = node_map(data["nodes"])
     if node_id not in nmap:
@@ -590,16 +607,38 @@ def move_sibling(data: dict, node_id: str, delta: int, author: str) -> bool:
     return apply_reorder(data, pid, ids, author)
 
 
+# ── 롤업 (lv6 = 자신 + lv7 자식) ─────────────────────────
+# lv7 단위작업은 부하·기술을 부모 lv6 으로 롤업한다. 사용자가 lv6 에 직접 입력하든, lv7 로
+# 쪼개 입력하든 같은 lv6 지표가 되도록 **가산**한다(한쪽만 채우는 워크플로 전제).
+
+def rollup_hours(cidx: dict[str, list[dict]], node: dict) -> float:
+    """lv6 유효 연간 공수 = 자신 + Σ(lv7 자식). cidx = children_index 결과."""
+    h = annual_hours(node)
+    for c in cidx.get(node["id"], []):
+        if c.get("level") == LEVEL_MAX:                      # lv7 자식만
+            h += annual_hours(c)
+    return round(h, 1)
+
+
+def rollup_has_ai(cidx: dict[str, list[dict]], node: dict, field: str = "has_ai_agent") -> bool:
+    """lv6 AI 적용 = 자신 또는 lv7 자식 중 하나라도 기술 보유. field=has_ai_agent(현재)/has_ai_future(향후)."""
+    if node.get(field):
+        return True
+    return any(c.get(field) for c in cidx.get(node["id"], []) if c.get("level") == LEVEL_MAX)
+
+
 # ── 통계 ────────────────────────────────────────────────
 
 def stats(data: dict) -> dict:
     """집계.
 
-    AI·부서·자동화 지표의 분모는 **lv6 세부업무만**이다. lv3~lv5 는 상세 필드를 입력하지
-    않는 분류 그룹이라 분모에 넣으면 전부 "미적용"으로 잡혀 적용률이 왜곡된다.
+    AI·부서·자동화 지표의 분모는 **lv6(LOAD_LEVEL)만**이다. lv3~lv5 는 상세 필드를 입력하지
+    않는 분류 그룹이라, lv7 은 롤업 대상이라 분모에서 뺀다(넣으면 이중 계상·적용률 왜곡).
+    부하·AI 는 lv6 마다 자신+lv7 자식으로 롤업한다.
     """
     nodes = data.get("nodes", [])
-    detail = [n for n in nodes if has_detail(n.get("level", 0))]
+    cidx = children_index(nodes)
+    detail = [n for n in nodes if is_load_level(n.get("level", 0))]   # 모든 lv6 (lv7 유무 무관)
     by_level: dict[int, int] = {}
     by_dept: dict[str, int] = {}
     by_dept_group: dict[str, int] = {}     # 부서 롤업 (과 → 부서)
@@ -616,9 +655,9 @@ def stats(data: dict) -> dict:
         by_dept_group[g] = by_dept_group.get(g, 0) + 1
         a = n.get("automation_level") or "(미지정)"
         by_auto[a] = by_auto.get(a, 0) + 1
-        h = annual_hours(n)
+        h = rollup_hours(cidx, n)                            # 자신 + lv7 자식
         total_hours += h
-        if n.get("has_ai_agent"):
+        if rollup_has_ai(cidx, n):                           # 자신 or lv7 자식
             ai_yes += 1
             ai_hours += h
     return {

@@ -1,6 +1,6 @@
 """excel_io.py — 프로세스 계층도 ↔ 엑셀 변환.
 
-다운로드: 노드 1개 = 행 1개. 조상 이름을 lv0~lv6 컬럼에 채우고 자기 이름은 자기 레벨
+다운로드: 노드 1개 = 행 1개. 조상 이름을 lv0~lv7 컬럼에 채우고 자기 이름은 자기 레벨
 컬럼에 둔다(오른쪽은 공란) — 엑셀에서 그대로 눈에 보이는 아웃라인이 되고 피벗도 된다.
 lv0~lv2 는 저장 데이터에 없는 고정값이므로 이 시점에 재부착한다.
 
@@ -23,7 +23,7 @@ SHEET_TREE = "계층도"
 SHEET_DOMAIN = "도메인"
 SHEET_SUMMARY = "요약"
 
-LV_COLS = [f"lv{i}" for i in range(0, schema.LEVEL_MAX + 1)]      # lv0..lv6
+LV_COLS = [f"lv{i}" for i in range(0, schema.LEVEL_MAX + 1)]      # lv0..lv7
 
 # 엑셀 컬럼명 → 노드 필드명
 FIELD_COLS: dict[str, str] = {
@@ -153,7 +153,7 @@ def build_xlsx(data: dict, mask: bool = True) -> bytes:
             dom.to_excel(xw, sheet_name=SHEET_DOMAIN, index=False, freeze_panes=(1, 0))
         _summary_df(data).to_excel(xw, sheet_name=SHEET_SUMMARY, index=False, freeze_panes=(1, 0))
 
-        widths = {"lv0": 8, "lv1": 8, "lv2": 10, "lv3": 16, "lv4": 20, "lv5": 20, "lv6": 22,
+        widths = {"lv0": 8, "lv1": 8, "lv2": 10, "lv3": 16, "lv4": 20, "lv5": 20, "lv6": 22, "lv7": 22,
                   "레벨": 6, "이름": 22, "AI에이전트": 11, "활용기술": 20, "부서/과": 12,
                   "자동화수준": 11, "담당자": 10, "수행주기": 10,
                   "산출물/연계시스템": 26, "업무설명": 40, "작성자": 10, "수정일시": 20, "id": 12}
@@ -512,9 +512,10 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                 mid = node["id"]
                 idx[path] = mid
                 new_cnt += 1
-            # 인원 집계 — **lv6(실제 세부업무)만**. lv4/lv5(공유 골격)은 세지 않는다.
-            #   골격만 여럿이 내도 부풀지 않게(위험성 검토 결론): "이 세부업무를 몇 명이 하는가"만 센다.
-            if n.get("level") == schema.LEVEL_MAX:
+            # 인원 집계 — **lv6(실제 세부업무)만**. lv4/lv5(공유 골격)은 세지 않고, lv7 은 롤업 대상이라
+            #   세지 않는다(LOAD_LEVEL 기준, LEVEL_MAX 아님). 골격만 여럿이 내도 부풀지 않게(위험성 검토
+            #   결론): "이 세부업무를 몇 명이 하는가"만 센다.
+            if n.get("level") == schema.LOAD_LEVEL:
                 submitters.setdefault(path, set()).add((dept, author))
                 summ = _detail_summary(n)
                 if summ:
