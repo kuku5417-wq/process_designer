@@ -25,7 +25,7 @@ uv run streamlit run app.py --server.port 8540
 | | 메인앱 (Streamlit, 8540) | 개인 배포판 (standalone HTML) |
 |---|---|---|
 | 용도 | 공용PC 한 대, 전체 트리 관리·취합 | 각자 PC 에서 자기 업무 작성 → JSON 제출 |
-| 만드는 법 | `run.bat` | `python build_standalone.py` → `dist/프로세스설계_개인작성용.html` |
+| 만드는 법 | `run.bat` | `python build_standalone.py` → `dist/프로세스설계_개인작성용_r3.html` |
 | 백엔드 | `app.py` + `store.py` | **없음** (localStorage + 파일 내보내기) |
 
 **모드 축이 둘이다** (`index.html` 상단). 하나로 뭉치지 말 것 —
