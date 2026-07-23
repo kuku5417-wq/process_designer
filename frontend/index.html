@@ -769,7 +769,8 @@
     if (!text || !text.trim()) { flash("붙여넣은 내용이 없습니다"); return; }
     var lines = text.split(/\r?\n/).filter(function (s) { return s.trim(); });
     // 머리글 행 감지 — 첫 줄 셀이 라벨과 겹치면(2개 이상) 건너뛴다
-    var HEAD = { "부문": 1, "공종": 1, "lv3": 1, "대분류": 1, "lv4": 1, "중분류": 1, "소분류": 1, "lv5": 1 };
+    var HEAD = { "부문": 1, "공종": 1, "lv3": 1, "대분류": 1, "lv4": 1, "중분류": 1, "소분류": 1, "lv5": 1,
+                 "세부업무": 1, "세부": 1, "lv6": 1, "단위작업": 1, "단위": 1, "lv7": 1 };
     if (lines.length) {
       var hit = lines[0].split("\t").map(function (c) { return c.trim(); }).filter(function (c) { return HEAD[c]; }).length;
       if (hit >= 2) lines.shift();
@@ -786,19 +787,25 @@
       S.nodes.push(nn); markDirty(nn.id); cnt[lv]++;
       return nn;
     }
-    var cnt = { 3: 0, 4: 0, 5: 0 }, skipped = 0, touched = false;
+    var cnt = { 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 }, skipped = 0, touched = false;
     lines.forEach(function (ln) {
       var c = ln.split("\t").map(function (x) { return x.trim(); });
-      var lv3 = c[0] || "", lv4 = c[1] || "", lv5 = c[2] || "";
-      if (!lv3) { skipped++; return; }             // 부문 없는 줄은 못 건다
-      if (lv5 && !lv4) { skipped++; return; }       // 왼쪽부터 연속이 아니면 건너뜀
-      var n3 = ensure(ROOT, 3, lv3, cnt); touched = true;
-      if (lv4) { var n4 = ensure(n3.id, 4, lv4, cnt); if (lv5) ensure(n4.id, 5, lv5, cnt); }
+      var path = [c[0] || "", c[1] || "", c[2] || "", c[3] || "", c[4] || ""];   // lv3~lv7
+      if (!path[0]) { skipped++; return; }         // 부문 없는 줄은 못 건다
+      var filled = 0;                               // 왼쪽부터 연속으로 채워진 길이
+      while (filled < path.length && path[filled]) filled++;
+      var gap = false;                              // 그 뒤에 값이 있으면 중간 공백
+      for (var k = filled; k < path.length; k++) if (path[k]) { gap = true; break; }
+      if (gap) { skipped++; return; }               // 왼쪽부터 연속이 아니면 건너뜀
+      var pid = ROOT;
+      for (var lv = 3; lv < 3 + filled; lv++) { pid = ensure(pid, lv, path[lv - 3], cnt).id; }
+      touched = true;
     });
     if (!touched) { flash("추가할 계층을 찾지 못했습니다 — 형식을 확인하세요"); return; }
     if (ta) ta.value = "";
     rerender();
-    flash("추가: 부문 " + cnt[3] + " · 대분류 " + cnt[4] + " · 중분류 " + cnt[5] + (skipped ? " (건너뜀 " + skipped + "줄)" : ""));
+    flash("추가: 부문 " + cnt[3] + " · 대분류 " + cnt[4] + " · 중분류 " + cnt[5] + " · 세부업무 " + cnt[6]
+      + " · 단위작업 " + cnt[7] + (skipped ? " (건너뜀 " + skipped + "줄)" : ""));
   }
   /** 목록에 없는 기술을 이 업무에 적용하면서 도메인 마스터에도 등록 (v1 tree_view 와 동일) */
   function actAddTech(id, raw) {
@@ -1789,15 +1796,15 @@
       + '<div style="font-size:14.5px;font-weight:700;color:#57534e;margin-top:5px">내보낸 .json 파일 선택</div></label>'
       + '<input id="jsonup" type="file" accept=".json" style="display:none" data-fkey="jsonup" />'
       + '<div class="warn" style="margin-top:12px">⚠ 불러오면 지금 화면의 내용이 파일 내용으로 <b>바뀝니다</b>.</div></div>'
-      // 엑셀에서 계층(lv3~lv5)을 복사해 붙여넣기 — 카드 하나씩 만들지 않고 뼈대를 한 번에
+      // 엑셀에서 계층(lv3~lv7)을 복사해 붙여넣기 — 카드 하나씩 만들지 않고 뼈대를 한 번에
       + '<div class="cardbox" style="padding:22px;margin-top:14px">'
-      + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv5</span></div>'
-      + '<div style="font-size:14.5px;color:#78716c;line-height:1.6">엑셀에서 <b>세 열(부문 · 대분류 · 중분류)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 세부업무(lv6)와 발생 패턴은 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#57534e;margin-bottom:10px">📋 엑셀에서 계층 붙여넣기 <span style="font-weight:600;color:#a8a29e">· lv3~lv7</span></div>'
+      + '<div style="font-size:14.5px;color:#78716c;line-height:1.6">엑셀에서 <b>최대 다섯 열(부문 · 대분류 · 중분류 · 세부업무 · 단위작업)</b>을 선택해 복사(Ctrl+C)한 뒤 아래에 붙여넣고(Ctrl+V) 반영하세요. 열이 적으면(예: 세 열) 그 깊이까지만 만듭니다. 이미 있는 항목은 재사용되어 <b>중복되지 않습니다</b>. 발생 패턴·상세는 붙여넣은 뒤 계층 편집에서 채웁니다.</div>'
       + (ready ? "" : '<div class="warn" style="margin-top:12px">⚠ 먼저 상단에 <b>소속</b>과 <b>이름</b>을 지정하세요. 지정 전에는 붙여넣기 반영이 되지 않습니다.</div>')
-      + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:14px;white-space:pre" placeholder="선장운전	항해장비	레이더\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기"></textarea>'
+      + '<textarea id="skelpaste" class="fa" style="min-height:120px;margin-top:12px;font-family:ui-monospace,Consolas,monospace;font-size:14px;white-space:pre" placeholder="선장운전	항해장비	레이더	방위각시험	전원인가\n선장운전	항해장비	자이로\n전장운전	전력계통	발전기	절연저항측정"></textarea>'
       + '<div style="margin-top:10px"><button class="primary" data-act="skelapply">📋 붙여넣기 반영</button></div>'
-      + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 대분류를 비우고 중분류만 있으면 그 줄은 건너뜁니다.<br/>'
-      + '· 첫 줄이 머리글(부문/대분류/중분류)이면 자동으로 건너뜁니다.</div></div>'
+      + '<div class="solohint">· 왼쪽부터 연속으로 채우세요 — 앞 열을 비우고 뒤 열만 있으면 그 줄은 건너뜁니다.<br/>'
+      + '· 첫 줄이 머리글(부문/대분류/중분류/세부업무/단위작업)이면 자동으로 건너뜁니다.</div></div>'
       + "</div></div>";
   }
 
@@ -1819,7 +1826,7 @@
     return '<div class="page scroll"><div class="pw"><div class="h1">📖 사용법</div>'
       + '<div class="sub">내 업무를 프로세스 계층으로 적어 관리자에게 제출하는 <b>개인 작성용</b> 화면입니다. 입력은 이 브라우저에 <b>자동 저장</b>되고, 마지막에 파일 한 개로 내보냅니다. (저장 버튼은 따로 없습니다.)</div>'
       + step(1, "소속·이름을 입력합니다", '상단 <b>소속</b>과 <b>이름</b>을 입력하세요(둘 다 필수). 이름은 <b>파일명 구분자</b>라 필수지만, <b>업무 데이터에는 소속만</b> 들어가고 취합은 소속별로 합니다(이름은 파일명·제출자 식별에만).')
-      + step(2, "업무 계층을 만듭니다", '<b>계층 편집</b> 탭에서 <b>부문(lv3) › 대분류(lv4) › 중분류(lv5) › 세부업무(lv6)</b> 순으로 각 컬럼의 <b>＋</b> 를 눌러 추가합니다. 카드를 드래그해 순서를 바꾸거나 상위를 바꿀 수 있습니다.<br/>업무가 많으면 <b>내보내기/불러오기</b> 탭의 <b>📋 엑셀에서 계층 붙여넣기</b>로 부문·대분류·중분류를 한 번에 만드세요.')
+      + step(2, "업무 계층을 만듭니다", '<b>계층 편집</b> 탭에서 <b>부문(lv3) › 대분류(lv4) › 중분류(lv5) › 세부업무(lv6) › 단위작업(lv7)</b> 순으로 각 컬럼의 <b>＋</b> 를 눌러 추가합니다. 카드를 드래그해 순서를 바꾸거나 상위를 바꿀 수 있습니다.<br/>업무가 많으면 <b>내보내기/불러오기</b> 탭의 <b>📋 엑셀에서 계층 붙여넣기</b>로 부문~단위작업(최대 5열)을 한 번에 만드세요.')
       + step(3, "세부업무(lv6)에 내용을 채웁니다", '세부업무 카드를 클릭하면 오른쪽에서 편집합니다. <b>AI 에이전트 적용 여부</b>, <b>자동화 수준</b>, <b>1회 소요시간</b>, 그리고 <b>발생 패턴</b>을 고릅니다.' + patTbl
         + '<div style="margin-top:8px">· <b>선종</b>은 대분류(lv4)에서 지정하면 그 아래 세부업무가 물려받습니다 — 업무마다 다시 고르지 않아도 됩니다.<br/>· 채운 요약(발생패턴·부하·자동화·선종)은 <b>왼쪽 카드 배지</b>로 바로 보여, 보드에서 한눈에 확인됩니다.</div>')
       + step(4, "제출 파일을 내보냅니다", '<b>내보내기/불러오기</b> 탭에서 <b>⬇ 제출 파일 내보내기(.json)</b> 를 눌러 파일을 받고 관리자에게 전달합니다. 파일명은 <b>프로세스_이름_소속_날짜.json</b> (예: <code style="background:#f0ede6;padding:1px 5px;border-radius:4px">프로세스_홍길동_시운전1부_20260720.json</code>) — 관리자가 여러 제출을 취합할 때 사람을 구분합니다. 업무 데이터에는 소속만 들어갑니다.')
@@ -1987,7 +1994,7 @@
     else if (a === "occur") actSetOccur(d.id, d.v);
     else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
     else if (a === "evdel") actEvDel(d.id, +d.idx);
-    else if (a === "skelapply") actPasteSkeleton();             // lv3~lv5 붙여넣기 반영
+    else if (a === "skelapply") actPasteSkeleton();             // lv3~lv7 붙여넣기 반영
     else if (a === "save") doSave();
     else if (a === "solocsv") soloCsvDownload();       // 개인 배포판 — 정리한 내용 CSV(엑셀) 다운로드
     else if (a === "domtab") S.domTab = d.k, rerender();
