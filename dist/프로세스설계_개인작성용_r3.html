@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260723_1604";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_0902";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1740,8 +1740,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260723_1604";
         + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">여러 제출을 한 번에 취합</div>'
         + '<div style="font-size:14px;color:#78716c;line-height:1.6;margin-bottom:16px">개인 배포판이 내보낸 <b>프로세스_이름_부서_날짜.json</b> 들을 모아, 같은 업무는 한 노드로 합치고 <b>제출 인원수</b>를 셉니다. 업무 데이터에는 소속만 들어갑니다(이름 미저장).</div>'
         + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 취합이 되지 않습니다.</div>')
-        + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로</span></div>'
-        + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07" />'
+        + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로 · 하위 폴더 포함</span></div>'
+        + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07 (하위 폴더 전부 스캔)" />'
         + '<button class="primary" style="flex:none;padding:9px 18px" data-act="collectscan">스캔</button></div>'
         + '<div style="text-align:center;color:#a8a29e;font-size:13px;margin:14px 0 10px">— 또는 —</div>'
         + '<label class="drop" for="collectup" style="padding:20px"><div style="font-size:22px">⬆</div><div style="font-size:14.5px;font-weight:700;color:#57534e;margin-top:5px">제출 .json 여러 개 선택 (다중 업로드)</div></label>'
@@ -1755,7 +1755,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260723_1604";
       var bad = !!f.errors;
       return '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:13.5px;align-items:center'
         + (bad ? ';background:#fef2f2' : '') + '">'
-        + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(f.filename) + '">' + esc(f.filename) + "</span>"
+        + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:12.5px" title="' + esc(f.filename) + '">' + esc(f.filename) + "</span>"
         + '<span style="color:#57534e">' + esc(f.dept || "—") + "</span>"
         + '<span style="color:#a8a29e">노드 ' + esc(f.nodes) + "</span>"
         + (bad ? '<span style="color:#b91c1c">' + esc(f.errors) + "</span>" : '<span style="color:#166534">신규 ' + esc(f.new) + "</span>")
@@ -1766,10 +1766,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260723_1604";
     }).join("");
     var cells = [["추가", p.added, "#166534", "#dcfce7"], ["변경", p.changed, "#92400e", "#fef3c7"]]
       .map(function (d) { return '<div class="diff" style="background:' + d[3] + '"><div class="dv" style="color:' + d[2] + '">' + esc(d[1]) + '</div><div class="dl" style="color:' + d[2] + '">' + d[0] + "</div></div>"; }).join("");
+    var errCnt = files.length - okFiles.length;
+    var scanned = (typeof p.scanned === "number") ? p.scanned : files.length;   // 발견(읽은) JSON 수 — 하위 폴더 포함
+    var warns = p.warns || [];
+    var warnHtml = warns.length ? '<div class="warn" style="margin:12px 0;font-size:13px">⚠ ' + warns.length + '개 파일 읽기 경고<br/>'
+      + warns.map(function (w) { return "· " + esc(w); }).join("<br/>") + "</div>" : "";
     return '<div class="cardbox" style="padding:22px">'
-      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:10px">반영 전 확인 — 제출 ' + okFiles.length + '건 취합</div>'
-      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:6px">파일별 상태</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:10px">반영 전 확인 — 발견한 JSON ' + scanned + '개 · 성공 ' + okFiles.length + '개' + (errCnt > 0 ? ' · 오류 ' + errCnt + '개' : "") + '</div>'
+      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:6px">파일별 상태 <span style="font-weight:600;color:#a8a29e">· 하위 폴더는 상대경로로 표시</span></div>'
       + '<div class="cardbox" style="max-height:200px;overflow:auto;margin-bottom:14px">' + (rowsHtml || '<div style="padding:10px;color:#a8a29e">파일 없음</div>') + "</div>"
+      + warnHtml
       + '<div class="diffgrid" style="grid-template-columns:1fr 1fr">' + cells + "</div>"
       + (topHtml ? '<div style="font-size:14px;font-weight:800;color:#9d174b;margin:14px 0 6px">👥 여러 명이 하는 업무 (제출 인원 순)</div><div class="cardbox" style="max-height:200px;overflow:auto">' + topHtml + "</div>" : '<div style="font-size:13.5px;color:#a8a29e;margin-top:12px">2명 이상이 겹쳐 제출한 업무가 없습니다.</div>')
       + '<div style="display:flex;gap:8px;margin-top:20px"><button class="secondary" data-act="collectcancel">취소</button>'

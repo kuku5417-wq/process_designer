@@ -546,6 +546,36 @@ def main() -> int:
     ck(len(c6nodes) == 1 and c6nodes[0].get("submit_count") == "2", "취합 인원수 lv6 기준 = 2")
     ck(len(c7nodes) == 1 and not c7nodes[0].get("submit_count"), "lv7 은 인원수 집계 안 함(롤업 대상)")
 
+    # 27. 취합 재귀 수집 — 파일명이 상대경로(하위 폴더)여도 신원 파싱·인원 집계가 유지된다
+    #     (_collect_files_from_folder 는 app.py/streamlit 의존이라 여기선 collect_jsons 계약만 검증)
+    d1, a1 = excel_io._submitter_of({}, "과A/프로세스_홍길동_시운전1부_20260721.json")
+    ck(d1 == "시운전1부" and a1 == "홍길동", f"상대경로 파일명에서도 부서·이름 파싱 (실제 {d1},{a1})")
+    d2, a2 = excel_io._submitter_of({}, "sub\\프로세스_김철수_시운전2부_20260721.json")
+    ck(d2 == "시운전2부" and a2 == "김철수", "역슬래시 상대경로도 basename 파싱")
+    d3, a3 = excel_io._submitter_of({"exported_dept": "시운전3부", "exported_by": "이영희"},
+                                    "무관한/경로.json")
+    ck(d3 == "시운전3부" and a3 == "이영희", "봉투(exported_dept/by)가 파일명보다 우선")
+
+    def _mkfile7r(dept, author):     # 하위 폴더에서 온 것처럼 상대경로 파일명
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        n5 = schema.add_node(nd, n4, 5, "x", "레이더")
+        n6 = schema.add_node(nd, n5, 6, "x", "레이더시험")
+        schema.update_node(nd, n6, {"dept": dept, "work_hours": "1", "freq_unit": "주", "freq_count": "1"}, "x")
+        return json.dumps({"exported_by": author, "exported_dept": dept,
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}},
+                          ensure_ascii=False).encode("utf-8")
+
+    rfiles = [("과A/프로세스_A_시운전1부_20260721.json", _mkfile7r("시운전1부", "A")),
+              ("과B/sub/프로세스_B_시운전2부_20260721.json", _mkfile7r("시운전2부", "B"))]
+    rmerged, rreports, rerr = excel_io.collect_jsons(rfiles, schema.bootstrap())
+    ck(rerr == [], f"상대경로 파일 취합 전역오류 없음: {rerr}")
+    rl6 = [n for n in rmerged["nodes"] if n["level"] == 6]
+    ck(len(rl6) == 1 and rl6[0].get("submit_count") == "2", "하위 폴더 2건 인원수 = 2 (경로 병합)")
+    ck(sorted(r["filename"] for r in rreports) == ["과A/프로세스_A_시운전1부_20260721.json",
+                                                   "과B/sub/프로세스_B_시운전2부_20260721.json"],
+       "리포트 filename 이 상대경로(하위 폴더) 그대로 보존")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

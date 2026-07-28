@@ -165,7 +165,11 @@ def _apply_import(delete_missing: bool, add_domains: bool) -> None:
 
 
 def _collect_files_from_folder(folder: str) -> tuple[list[tuple[str, bytes]], list[str]]:
-    """폴더 경로의 *.json 을 읽어 [(파일명, bytes)] 로. 접근 불가·빈 폴더는 오류 목록으로."""
+    """폴더(및 **하위 폴더 전체**)의 *.json 을 읽어 [(파일명, bytes)] 로. 접근 불가·빈 폴더는 오류로.
+
+    파일명은 입력 폴더 기준 **상대경로**(`과A/홍길동.json`) — 하위 폴더가 어디인지 드러나고
+    다른 폴더의 동명 파일이 표시상 구분된다(집계 신원은 봉투 우선, 파일명은 basename 폴백).
+    """
     errs: list[str] = []
     p = Path(folder)
     if not folder.strip():
@@ -174,15 +178,18 @@ def _collect_files_from_folder(folder: str) -> tuple[list[tuple[str, bytes]], li
         return [], [f"폴더를 찾을 수 없습니다: {folder}"]
     files: list[tuple[str, bytes]] = []
     try:
-        for fp in sorted(p.glob("*.json")):
+        for fp in sorted(p.rglob("*.json"), key=lambda x: x.relative_to(p).as_posix()):
+            if not fp.is_file():
+                continue
+            rel = fp.relative_to(p).as_posix()          # 하위 폴더 포함 상대경로
             try:
-                files.append((fp.name, fp.read_bytes()))
+                files.append((rel, fp.read_bytes()))
             except Exception as e:
-                errs.append(f"{fp.name}: 읽기 실패 ({e})")
+                errs.append(f"{rel}: 읽기 실패 ({e})")
     except Exception as e:
         return [], [f"폴더를 읽을 수 없습니다: {e}"]
     if not files:
-        errs.append(f"폴더에 .json 파일이 없습니다: {folder}")
+        errs.append(f"폴더(하위 폴더 포함)에 .json 파일이 없습니다: {folder}")
     return files, errs
 
 
@@ -212,6 +219,7 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     st.session_state["pending_collect"] = merged
     st.session_state["collect_preview"] = {
         "files": reports,
+        "scanned": len(files),   # 발견(읽은) JSON 파일 수 — 하위 폴더 포함
         "added": len(d["added"]), "changed": len(d["changed"]),
         "added_list": _node_brief(d["added"], merged),
         "top_submits": top,

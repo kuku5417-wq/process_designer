@@ -407,7 +407,10 @@ def _submitter_of(payload: dict, filename: str) -> tuple[str, str]:
     dept = str(payload.get("exported_dept") or "").strip()
     author = str(payload.get("exported_by") or "").strip()
     if (not dept or not author) and filename:
-        stem = filename.rsplit(".", 1)[0]
+        # 취합이 하위 폴더까지 재귀하면 filename 이 상대경로(과A/프로세스_...)일 수 있다 —
+        # basename 만 떼어 파싱해야 폴더명이 "프로세스" 판정을 깨지 않는다.
+        base = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        stem = base.rsplit(".", 1)[0]
         parts = stem.split("_")
         # 프로세스_이름_부서_날짜 → [프로세스, 이름, 부서, 날짜]
         if len(parts) >= 4 and parts[0].startswith("프로세스"):
