@@ -576,6 +576,43 @@ def main() -> int:
                                                    "과B/sub/프로세스_B_시운전2부_20260721.json"],
        "리포트 filename 이 상대경로(하위 폴더) 그대로 보존")
 
+    # 28. 같은 이름 형제 중복 감지 (복사 기능 가드 — JS dupSiblings 트윈)
+    dt = schema.bootstrap()
+    p4 = schema.add_node(dt, "lv3_seonjang", 4, "x", "항해장비")
+    p5 = schema.add_node(dt, p4, 5, "x", "레이더")
+    a6 = schema.add_node(dt, p5, 6, "x", "동작시험")
+    b6 = schema.add_node(dt, p5, 6, "x", "동작시험")     # 같은 부모(레이더) 아래 동명 lv6 → 중복
+    p5b = schema.add_node(dt, p4, 5, "x", "자이로")
+    c6 = schema.add_node(dt, p5b, 6, "x", "동작시험")    # 다른 부모(자이로) → 중복 아님
+    dt = schema.normalize(dt)
+    dups = schema.duplicate_siblings(dt)
+    ck(len(dups) == 1 and dups[0]["name"] == "동작시험" and set(dups[0]["ids"]) == {a6, b6},
+       f"동명 형제 lv6 감지(레이더 밑 2개), 다른 부모는 제외 (실제 {dups})")
+    # (b) 이름 하나 바꾸면 미감지
+    schema.update_node(dt, b6, {"name": "정밀시험"}, "x")
+    dt = schema.normalize(dt)
+    ck(schema.duplicate_siblings(dt) == [], "이름 수정하면 중복 해소")
+    # (d) lv3/lv4 동명 형제는 min_level=5 라 미감지
+    dd = schema.bootstrap()
+    q4a = schema.add_node(dd, "lv3_seonjang", 4, "x", "같은대분류")
+    q4b = schema.add_node(dd, "lv3_seonjang", 4, "x", "같은대분류")
+    dd = schema.normalize(dd)
+    ck(schema.duplicate_siblings(dd) == [], "lv4 동명 형제는 기본(min_level=5) 미감지")
+    ck(len(schema.duplicate_siblings(dd, min_level=4)) == 1, "min_level=4 로 낮추면 lv4 동명 감지")
+    # (e) 빈 이름 형제는 미감지
+    de = schema.bootstrap()
+    r4 = schema.add_node(de, "lv3_seonjang", 4, "x", "대분류E")
+    r5 = schema.add_node(de, r4, 5, "x", "중분류E")
+    schema.add_node(de, r5, 6, "x", "")
+    schema.add_node(de, r5, 6, "x", "")
+    de = schema.normalize(de)
+    ck(schema.duplicate_siblings(de) == [], "빈 이름 형제는 중복으로 안 침")
+    # (f) validate 는 동명 형제를 오류로 잡지 않는다(경고 전용, 로드/저장 거부 방지)
+    ck(schema.validate(schema.normalize({**dt, "nodes":
+        [dict(n) for n in dt["nodes"]] +
+        [{"id": "dupx", "parent_id": p5, "level": 6, "name": "정밀시험"}]})) == [],
+       "validate 는 동명 형제를 오류로 취급하지 않음")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

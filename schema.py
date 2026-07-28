@@ -477,6 +477,35 @@ def validate(data: dict) -> list[str]:
     return errs
 
 
+def duplicate_siblings(data: dict, min_level: int = 5) -> list[dict]:
+    """같은 부모 아래 **이름이 같은 형제**(중복) 목록. 하위(자손)는 보지 않는다 — 이름만 본다.
+
+    복사(하위 포함 복제)로 생긴 동명 형제를 잡아 경고·내보내기 차단에 쓴다. 취합·붙여넣기가
+    이름 경로로 병합하므로 같은 이름 형제가 남으면 두 업무가 조용히 합쳐진다. `validate` 에는
+    넣지 않는다(하드 검증에 넣으면 기존 데이터 로드/저장이 거부됨) — 경고 전용.
+    JS `dupSiblings` 와 규칙이 같아야 한다(twin). 기본 lv5 이상만(복사가 lv5+ 에서만 되므로).
+    반환: [{parent_id, level, name, ids:[...]}] (이름·부모별 1건, count>=2).
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for n in data.get("nodes", []):
+        if not isinstance(n, dict):
+            continue
+        try:
+            lv = int(n.get("level", 0))
+        except (TypeError, ValueError):
+            continue
+        nm = str(n.get("name") or "").strip()
+        if lv < min_level or not nm:            # 빈 이름·상위 레벨은 제외
+            continue
+        groups.setdefault((n.get("parent_id", ROOT_ID), nm), []).append(n)
+    out: list[dict] = []
+    for (pid, nm), members in groups.items():
+        if len(members) >= 2:
+            out.append({"parent_id": pid, "level": members[0].get("level"),
+                        "name": nm, "ids": [m.get("id") for m in members]})
+    return out
+
+
 # ── 변경 조작 ───────────────────────────────────────────
 
 def add_node(data: dict, parent_id: str, level: int, author: str, name: str = "새 업무") -> str:
