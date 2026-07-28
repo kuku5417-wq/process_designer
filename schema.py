@@ -156,6 +156,7 @@ DEPT_TREE: Final[dict[str, tuple[str, ...]]] = {
     "기획운영": ("기획운영",),
     "시운전기술": ("LNG설비운영과", "코멘더"),
     "해운부": ("해운1과", "해운2과"),
+    "친환경실증랩": ("친환경실증랩",),
 }
 # 과 → 부서 역인덱스 (표시·집계 롤업용)
 _DEPT_PARENT: Final[dict[str, str]] = {g: b for b, gs in DEPT_TREE.items() for g in gs}

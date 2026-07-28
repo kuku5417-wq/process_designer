@@ -420,7 +420,9 @@ def main() -> int:
        "제출인원·취합상세 엑셀 왕복 보존")
 
     # 23. 부서/과 2단 (과만 저장, 부서는 매핑)
-    ck(len(schema.DEPT_TREE) == 7, f"DEPT_TREE 부서 7개 (실제 {len(schema.DEPT_TREE)})")
+    ck(len(schema.DEPT_TREE) == 8, f"DEPT_TREE 부서 8개 (실제 {len(schema.DEPT_TREE)})")
+    ck(schema.dept_parent("친환경실증랩") == "친환경실증랩", "친환경실증랩 단독 부서(동명 과) 매핑")
+    ck("친환경실증랩" in schema.DEFAULT_DOMAINS["dept"], "친환경실증랩 과가 dept 도메인에 자동 포함")
     ck(schema.dept_parent("선장운전1과") == "시운전1부", "dept_parent 과→부서 매핑")
     ck(schema.dept_parent("운영") == "시운전3부", "dept_parent 운영→시운전3부")
     ck(schema.dept_parent("없는과") == "미분류", "매핑에 없는 과는 미분류")
