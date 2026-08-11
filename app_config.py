@@ -1,4 +1,4 @@
-"""app_config.py — 전 앱(data_manager·tbm·tbm_mssql·esg·esg_mssql·OCR_N) 공용 환경설정.
+"""app_config.py — 전 앱(data_manager·tbm·esg·esg_mssql·OCR_N·costplan·process_designer) 공용 환경설정.
 
 ★ 전 repo 동일본 유지 원칙 — 이 파일을 수정하면 6개 repo 전체에 동일하게 배포할 것.
 
