@@ -490,6 +490,27 @@ def _branches_with_detail(nodes: list[dict], nmap: dict[str, dict]) -> set[str]:
     return keep
 
 
+def prune_empty_branches(data: dict) -> tuple[dict, list[dict]]:
+    """세부업무(lv6)에 닿지 않는 **빈 가지**를 트리에서 제거. 반환: (정리된 트리, 제거된 노드들).
+
+    `_branches_with_detail` 이 lv6·lv7 + 그 조상 전부를 keep 하므로 **여집합이 곧 빈 가지**다.
+    취합만으로는 정본 트리에 이미 있던 빈 부문·대분류가 남아, 아무도 채우지 않은 시드 부문이
+    요약 목록을 채운다.
+
+    ★ `schema.delete_node` 를 가지마다 부르지 않는다 — 매번 children_index 를 다시 만들어
+      같은 일을 N번 한다. 필터 1회 + normalize(order 재번호)가 맞다.
+    """
+    nodes = data.get("nodes", [])
+    nmap = schema.node_map(nodes)
+    keep = _branches_with_detail(nodes, nmap)
+    removed = [n for n in nodes if n["id"] not in keep]
+    if not removed:
+        return data, []
+    out = dict(data)
+    out["nodes"] = [n for n in nodes if n["id"] in keep]
+    return schema.normalize(out), removed
+
+
 def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, list[dict], list[str]]:
     """여러 제출 JSON 을 **경로 기준으로 취합**한다. parse_json(단일 이어붙이기)과는 다른 연산이다.
 

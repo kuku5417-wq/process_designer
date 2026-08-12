@@ -49,7 +49,7 @@ uv run streamlit run app.py --server.port 8540
 | 파일 | 역할 |
 |---|---|
 | `app.py` | 진입점 겸 저장 API — 컴포넌트 호스팅, 이벤트(save/force/import/collect/restore/reload) 처리 |
-| `frontend/index.html` | **UI 전체** — 탭 4종·컬럼/전체보기 보드·상세폼·도메인·엑셀·이력 + DnD + postMessage |
+| `frontend/index.html` | **UI 전체** — 탭 6종·컬럼/전체보기 보드·상세폼·요약·도메인·엑셀·이력·질의 + DnD + postMessage |
 | `frontend/sortable.min.js` | SortableJS 1.15.6 (MIT) — **런타임 CDN 의존 없음, repo 에 커밋됨** |
 | `schema.py` | **데이터 모델 정본** — 상수·노드 생성·트리 조작·정규화·검증. Streamlit 의존 없는 순수 함수 |
 | `store.py` | JSON 원자적 저장 · 스냅샷 이력 · rev 충돌 검사 · 감사로그 |
@@ -72,7 +72,7 @@ uv run streamlit run app.py --server.port 8540
 | `import_apply` | JS→PY | `{delete_missing, add_domains}` 옵션으로 보류분 반영 |
 | `import_cancel` | JS→PY | 보류분 폐기 |
 | `collect_scan` | JS→PY | 다수 제출 JSON 취합(폴더 경로 **재귀 `rglob` — 하위 폴더 전부** 또는 다중 업로드) → `excel_io.collect_jsons` 로 **경로 병합·인원수 집계**, `pending_collect` 에 보류. 파일명은 폴더 기준 **상대경로**(하위 폴더 구분·표시용, 신원은 봉투 우선/basename 폴백), 미리보기에 **발견 파일 수(scanned)·파일명·제출자 총원·파일별 제외 수** 노출. 폴더 입력칸 기본값은 `path_config.get_collect_default()`(빈 칸일 때만 채움 → **[스캔]만 누르면 됨**) |
-| `collect_apply` / `collect_cancel` | JS→PY | 취합 보류분 반영 / 폐기 (취합은 추가·병합만, 삭제 옵트인 없음) |
+| `collect_apply` / `collect_cancel` | JS→PY | 취합 보류분 반영 / 폐기. **`prune_empty` 옵트인**(기본 켜짐)이면 lv6 없는 빈 가지를 함께 제거 — 취합이 삭제까지 하는 유일한 경로 |
 | `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 |
 | `restore` / `reload` | JS→PY | 스냅샷 복원 / 디스크 재로드 |
 | `chat` / `chat_clear` | JS→PY | 질의 챗봇 — 트리를 컨텍스트로 LLM 1회 호출 → `chat_log` 적재 / 대화록 비우기. **`_set_data` 를 부르지 않는다**(조회성 왕복 → epoch 불변 → 미저장 편집 보존) |
@@ -109,10 +109,14 @@ uv run streamlit run app.py --server.port 8540
   예전 `dept_parent` 는 그걸 전부 미분류로 흘려 부서 롤업을 무의미하게 만들었다.
   대소문자·공백 흔들림은 `_norm`(공백정리+대문자)으로 흡수하고, 옛 부서명은 `DEPT_ALIASES`
   (`기획운영부 → 기획운영`)로 받는다. **매핑에 없는 값은 원문 그대로 남긴다**(유실 금지).
-- **lv3 부문 이름 오타 교정**: `LV3_NAME_FIXES`(`CEDAR CUS→CEDAR CSU`, `ENI CUS→ENI CSU`)를
-  `normalize()` 가 **level 확정 뒤** lv3 에만 적용한다. 취합이 **이름 경로**로 병합하므로 오타가
-  남으면 같은 부문이 둘로 갈리고 인원 집계까지 갈린다. 교정 결과 동명 lv3 형제가 생기면
-  상단 배너로 알리고 **병합은 사람이** 한다(부문 통합은 하위 전체가 움직이는 조작).
+- **lv3 부문 이름 정규화** (`canon_lv3_name`): ① `LV3_NAME_FIXES` 오타(`CEDAR CUS→CEDAR CSU`,
+  `ENI CUS→ENI CSU`) → ② **과 정식표기** → ③ 부서 정식표기 순으로 찾는다.
+  ②가 있어야 철자는 맞고 **대소문자만 다른** `Cedar CSU` 도 `CEDAR CSU` 로 합쳐진다
+  (오타맵만 보면 `Cedar CSU` 가 그대로 남아 부문이 둘로 갈린다). 과/부서와 동명인 시드 부문
+  (`해운부`·`기획운영`·`코멘더`)은 정식표기가 자기 자신이라 안전하다.
+  `normalize()` 가 **level 확정 뒤** lv3 에만 적용한다 — 취합이 **이름 경로**로 병합하므로
+  이름이 갈리면 인원 집계까지 갈린다. 교정 결과 동명 lv3 형제가 생기면 상단 배너로 알리고
+  **병합은 사람이** 한다(부문 통합은 하위 전체가 움직이는 조작).
 - **AI 적용은 파생값**: `has_ai_agent = bool(tech)`(현재), `has_ai_future = bool(future_tech)`(향후).
   수동 토글은 없다 — `normalize()`(JS 토글 콜백)가 기술 선택 유무로 강제한다. 따라서 **AI 적용률 =
   "활용기술을 가진 lv6 비율"**(롤업 포함).
@@ -194,9 +198,40 @@ uv run streamlit run app.py --server.port 8540
 - **제출자 총원**은 `(부서, 이름)` distinct 로 **스캔 시점에만** 낼 수 있다(트리에 이름 미저장).
   `_preview_collect` 가 성공 리포트에서 세어 `submitters_total`/`submitters_by_dept` 로 내려준다.
 
-### 요약 드릴다운 (엑셀 탭)
+### 빈 가지 삭제 — 취합이 삭제하는 유일한 경로
 
-집계표의 **숫자를 클릭하면 우측에 그 lv6 목록**이 뜨고, 항목을 클릭하면 계층 편집에서 열린다
+`excel_io.prune_empty_branches(data)` 가 **정본 트리 전체**에서 lv6 에 닿지 않는 가지를 지운다
+(`_branches_with_detail` 의 여집합). 취합만으로는 정본 트리에 이미 있던 빈 부문·대분류가 남아,
+아무도 채우지 않은 시드 부문이 요약 목록을 채운다.
+
+- **옵트인**(`prune_empty`, 기본 켜짐). 엑셀 가져오기의 `delete_missing` 패턴을 미러하되
+  **방향이 반대**다 — import 는 파싱 결과가 이미 삭제된 상태라 꺼지면 되살리고,
+  취합은 pending 이 미삭제 상태라 **켜졌을 때만 제거**한다.
+- 미리보기에 삭제 건수(diffgrid 3칸)·목록을 먼저 보여준다. 목록 렌더러는 엑셀 반영과 공용
+  (`previewList`) — 같은 모양을 두 번 쓰지 않는다.
+- 삭제는 세션 메모리에만 반영된다. 저장 전이면 [↻ 다시 읽기], 저장 후면 스냅샷(pre-image)에서 복원.
+- `schema.delete_node` 를 가지마다 부르지 않는다 — 매번 `children_index` 를 다시 만든다.
+  **필터 1회 + normalize**(order 재번호)가 맞다. 멱등이다(두 번 돌려도 더 안 지워진다).
+
+### 📊 요약 탭 — lv6 기준 현황 (메인앱 전용)
+
+집계는 **요약 탭 한 곳에만** 둔다. 예전엔 엑셀 탭 하단에 얹혀 있었는데, 두 곳에 두면 한쪽만
+고쳐져 드리프트한다. 개인 배포판은 소속이 하나뿐이라 부서·과 비교가 무의미해 탭을 안 만든다.
+
+- **좌: KPI 5장 + 과별 막대 3단 / 우: 목록**(`.sumgrid`). 우측은 `position: sticky` 로 따라붙는다.
+- KPI(`all`/`ai_now`/`ai_future`/`hours`/`missing`)와 막대를 클릭하면 우측이 그 부분집합이 된다.
+  선택이 없으면 **전체 lv6** 을 보여준다(빈 안내판보다 쓸모 있다).
+- **막대 3단의 스케일은 공통값(과별 업무 수 최댓값)으로 고정한다.** 그래프마다 자기 최댓값으로
+  정규화하면 "AI 향후"가 업무 수만큼 길어 보여 상하 비교가 거짓말이 된다 — 이 화면의 핵심이다.
+  `deptRows()` 가 만든 **같은 과 순서**를 세 그래프가 공유해야 눈으로 비교된다.
+- 막대는 costplan `.cp-barh` 패턴 이식 — `grid` 행 + 트랙 + `<i style="width:N%">`.
+  **인라인 스타일은 width/background 뿐, 라이브러리·CDN 0**(사내망). 0 아니면 최소 2% 는 보인다.
+- 색 의미 고정: 업무 수 = 회색 `#78716c` / AI 현재 = teal `#0f766e` / AI 향후 = 보라 `#7c3aed`.
+- `missing`(미입력) = **소속이 비었거나 롤업 연간공수가 0** 인 lv6. `stats.missing_total` 정본.
+
+### 요약 드릴다운
+
+집계 칸의 **숫자를 클릭하면 우측에 그 lv6 목록**이 뜨고, 항목을 클릭하면 계층 편집에서 열린다
 (`S.sumPick` / `sumNodes` / `sumSide`).
 
 - **`sumNodes` 의 필터는 `stats()` 가 쓰는 게이트를 그대로 재사용한다**(`isLoadLevel` +
@@ -382,8 +417,8 @@ npm 빌드 없는 정적 컴포넌트다. 아래는 Streamlit 번들에서 확�
 ## UI
 
 - 텍스트는 한국어. Streamlit 사이드바는 쓰지 않는다 — 상단 헤더(브랜드·환경·AI적용률 현재/향후·작성자·저장)와
-  탭 4~5종(계층 편집 / 도메인 관리 / 엑셀 가져오기·내보내기 / 이력·복원 / 💬 질의)이 모두 컴포넌트 안에 있다.
-  (💬 질의는 LLM 키가 있을 때만 뜬다.)
+  탭 5~6종(계층 편집 / 📊 요약 / 도메인 관리 / 엑셀 가져오기·내보내기 / 이력·복원 / 💬 질의)이
+  모두 컴포넌트 안에 있다. (💬 질의는 LLM 키가 있을 때만 뜬다. 📊 요약은 메인앱 전용.)
 - 보드: `lv3 │ lv4 │ lv5 │ lv6 │ lv7` 컬럼 드릴다운(`▦ 컬럼`) + 들여쓰기 `☰ 전체보기` 두 모드.
   카드 클릭=선택, `＋`=추가, `⧉`=복사, 드래그=순서 변경, 카드 안 드롭존=상위 바꾸기(레벨 유지).
 - **복사(`⧉`, lv5+)**: 노드+하위 전체를 형제로 복제(`actCopySubtree`) — 모든 노드에 새 id 발급·부모

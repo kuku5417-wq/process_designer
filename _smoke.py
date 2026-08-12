@@ -462,6 +462,18 @@ def main() -> int:
     ck(m3[bad3b]["name"] == "ENI CSU", "lv3 오타 교정은 대소문자·공백 무시")
     ck(m3[deep]["name"] == "ENI CUS", "lv3 아닌 레벨의 이름은 건드리지 않는다")
     ck(schema.canon_lv3_name("선장운전") == "선장운전", "교정 대상 아닌 부문명은 원문 그대로")
+    # 오타뿐 아니라 **대소문자만 다른 정식 이름**도 통일해야 취합에서 부문이 갈리지 않는다
+    for v in ("Cedar CSU", "cedar csu", "CEDAR  CSU"):
+        ck(schema.canon_lv3_name(v) == "CEDAR CSU", f"lv3 '{v}' → CEDAR CSU (대소문자 통일)")
+    ck(schema.canon_lv3_name("Eni Csu") == "ENI CSU", "lv3 ENI CSU 대소문자 통일")
+    ck(schema.canon_lv3_name("zlng csu") == "ZLNG CSU", "오타맵에 없는 과 이름도 정식표기로")
+    for v in ("해운부", "기획운영", "코멘더"):
+        ck(schema.canon_lv3_name(v) == v, f"과/부서와 동명인 시드 부문 '{v}' 는 그대로")
+    ck(schema.canon_lv3_name("듣보부문") == "듣보부문", "매핑에 없는 부문명은 원문 보존")
+    nd_c = schema.bootstrap()
+    _bad = schema.add_node(nd_c, schema.ROOT_ID, 3, "x", "Cedar CSU")
+    nd_c = schema.normalize(nd_c)
+    ck(schema.node_map(nd_c["nodes"])[_bad]["name"] == "CEDAR CSU", "normalize 가 lv3 대소문자도 통일")
 
     # 23-d. 집계 현재/향후 분리 + 담당자별 (요약·드릴다운의 근거)
     nd_st = schema.bootstrap()
@@ -499,6 +511,23 @@ def main() -> int:
         ck(any(str(g).startswith(want) for g in gubun), f"요약 시트에 '{want}' 축이 있다")
     owner_rows = [r for _, r in sdf.iterrows() if str(r["구분"]).startswith("담당자별")]
     ck(all("홍길동" not in str(r["항목"]) for r in owner_rows), "요약 담당자는 마스킹된다(원본 이름 금지)")
+
+    # 23-e. 요약 화면용 축 — 과별 AI(현재/향후) + 미입력
+    ck(stt["by_dept_ai_now"].get("선장운전1과") == 1, f"과별 AI 현재 (실제 {stt['by_dept_ai_now']})")
+    ck(stt["by_dept_ai_future"].get("선장운전1과") == 2, f"과별 AI 향후 (실제 {stt['by_dept_ai_future']})")
+    for m in ("by_dept_ai_now", "by_dept_ai_future"):
+        ck(all(stt[m][k] <= stt["by_dept"].get(k, 0) for k in stt[m]),
+           f"{m} 은 과별 업무 수를 넘지 않는다(그래프 공통 눈금의 전제)")
+    ck(sum(stt["by_dept_ai_now"].values()) == stt["ai_yes"], "과별 AI 현재 합 = 전체 AI 현재")
+    ck(sum(stt["by_dept_ai_future"].values()) == stt["ai_future_yes"], "과별 AI 향후 합 = 전체 AI 향후")
+    # 미입력 = 소속이 비었거나 롤업 공수 0. 위 픽스처는 work_hours 를 아무도 안 넣었으므로 전부 미입력.
+    ck(stt["missing_total"] == stt["detail_total"], f"미입력 집계 (실제 {stt['missing_total']}/{stt['detail_total']})")
+    nd_ms = schema.bootstrap()
+    _m4 = schema.add_node(nd_ms, "lv3_seonjang", 4, "x", "M4")
+    _m5 = schema.add_node(nd_ms, _m4, 5, "x", "M5")
+    _ok6 = schema.add_node(nd_ms, _m5, 6, "x", "채운업무")
+    schema.update_node(nd_ms, _ok6, {"dept": "선장운전1과", "work_hours": "2", "annual_count": "10"}, "x")
+    ck(schema.stats(schema.normalize(nd_ms))["missing_total"] == 0, "소속·부하가 다 있으면 미입력 0")
 
     # 24. 취합 인원수 = lv6 실제 작성 기준 (공유 골격 lv4/lv5 부풀림 없음)
     def _mkf(gwa, author, l6name):
@@ -549,6 +578,28 @@ def main() -> int:
     ck({"쓰는대분류", "쓰는중분류", "진짜세부업무"} <= names3, "lv6 에 닿는 가지는 조상까지 병합된다")
     ck("빈대분류" not in names3 and "빈중분류" not in names3, "같은 파일 안의 빈 가지만 골라 제외한다")
     ck(rep3[0]["skipped"] == 2, f"제외 노드 수를 리포트에 담는다 (실제 {rep3[0]['skipped']})")
+
+    # 24-c. 빈 가지 정리 — 정본 트리에 이미 있는 lv6 미도달 가지를 제거
+    nd_pr = schema.bootstrap()                      # 시드 lv3 10개 (전부 비어 있다)
+    k4 = schema.add_node(nd_pr, "lv3_gijang", 4, "x", "살릴대분류")
+    k5 = schema.add_node(nd_pr, k4, 5, "x", "살릴중분류")
+    k6 = schema.add_node(nd_pr, k5, 6, "x", "살릴세부업무")
+    k7 = schema.add_node(nd_pr, k6, 7, "x", "살릴단위작업")
+    e4 = schema.add_node(nd_pr, "lv3_gijang", 4, "x", "빈대분류")
+    schema.add_node(nd_pr, e4, 5, "x", "빈중분류")
+    nd_pr = schema.normalize(nd_pr)
+    before = len(nd_pr["nodes"])
+    pruned, removed = excel_io.prune_empty_branches(nd_pr)
+    kept = {n["name"] for n in pruned["nodes"]}
+    ck({"살릴대분류", "살릴중분류", "살릴세부업무", "살릴단위작업"} <= kept, "lv6 에 닿는 가지는 조상·lv7 까지 남는다")
+    ck("빈대분류" not in kept and "빈중분류" not in kept, "빈 가지는 제거된다")
+    ck("기장운전" in kept, "lv6 를 품은 lv3 부문은 남는다")
+    ck("선장운전" not in kept, "아무것도 없는 시드 부문도 제거된다(정본 트리 전체 정리)")
+    ck(len(removed) == before - len(pruned["nodes"]), "제거 목록 수 = 실제 줄어든 노드 수")
+    ck(len(schema.validate(pruned)) == 0, f"정리 후에도 구조가 정상: {schema.validate(pruned)}")
+    # 지울 게 없으면 원본을 그대로 돌려준다(불필요한 normalize 왕복 없음)
+    again, removed2 = excel_io.prune_empty_branches(pruned)
+    ck(removed2 == [] and len(again["nodes"]) == len(pruned["nodes"]), "두 번 정리해도 더 지워지지 않는다(멱등)")
 
     # 25. lv6 상세 개편 — 신규 도메인·필드·파생·마이그레이션·왕복
     ck("ship_type" in schema.DEFAULT_DOMAINS and "special_note" in schema.DEFAULT_DOMAINS,

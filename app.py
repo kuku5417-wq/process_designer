@@ -230,12 +230,17 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     for dept, _author in subs_set:
         k = dept or "(소속 미지정)"
         subs_by_dept[k] = subs_by_dept.get(k, 0) + 1
+    # 빈 가지(lv6 미도달) 삭제 후보 — **미리보기 계산만** 한다.
+    # pending_collect 에는 병합만 된 트리를 두고, 실제 제거는 _apply_collect 에서 옵트인일 때만.
+    _, empties = excel_io.prune_empty_branches(merged)
     st.session_state["pending_collect"] = merged
     st.session_state["collect_preview"] = {
         "files": reports,
         "scanned": len(files),   # 발견(읽은) JSON 파일 수 — 하위 폴더 포함
         "submitters_total": len(subs_set),
         "submitters_by_dept": dict(sorted(subs_by_dept.items(), key=lambda kv: -kv[1])),
+        "removed": len(empties),
+        "removed_list": _node_brief(empties, merged),
         "added": len(d["added"]), "changed": len(d["changed"]),
         "added_list": _node_brief(d["added"], merged),
         "top_submits": top,
@@ -245,26 +250,36 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     }
 
 
-def _apply_collect() -> None:
-    """취합 보류분을 반영. 취합은 항상 추가·병합만 하므로 삭제 옵트인이 없다."""
+def _apply_collect(prune_empty: bool = False) -> None:
+    """취합 보류분을 반영. 병합은 추가·병합만 하고, **빈 가지 삭제는 옵트인**이다.
+
+    엑셀 가져오기(_apply_import)는 파싱 결과가 이미 '삭제된 상태'라 옵션이 꺼지면 되살리지만,
+    취합은 pending 이 **미삭제 상태**라 반대로 **켜졌을 때만 제거**한다.
+    """
     merged = st.session_state.get("pending_collect")
     if not merged:
         st.session_state["flash"] = "반영할 취합 결과가 없습니다. 파일을 다시 스캔하세요."
         return
     data = st.session_state["data"]
-    d = schema.diff(data, merged)
     doms = merged.setdefault("domains", {})
     for k, vals in excel_io.unknown_domain_values(merged).items():
         for v in vals:
             if v not in doms.setdefault(k, []):
                 doms[k].append(v)
+    pruned = 0
+    if prune_empty:
+        merged, empties = excel_io.prune_empty_branches(merged)
+        pruned = len(empties)
+    d = schema.diff(data, merged)          # 삭제까지 반영된 최종 트리로 diff
     merged["rev"] = data.get("rev", 0)
     _set_data(merged)
     st.session_state["dirty_all"] = True
     for k in ("pending_collect", "collect_preview", "collect_errors"):
         st.session_state.pop(k, None)
-    st.session_state["flash"] = (f"취합 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])}. "
-                                 f"상단 [저장]을 눌러야 파일에 기록됩니다.")
+    st.session_state["flash"] = (
+        f"취합 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])}"
+        + (f" · 빈 가지 삭제 {pruned}" if pruned else "")
+        + ". 상단 [저장]을 눌러야 파일에 기록됩니다.")
 
 
 def _handle_chat(evt: dict) -> None:
@@ -405,7 +420,7 @@ def _handle(evt: dict) -> None:
             st.session_state.pop("pending_collect", None)
 
     elif t == "collect_apply":
-        _apply_collect()
+        _apply_collect(bool(evt.get("prune_empty")))
 
     elif t == "collect_cancel":
         for k in ("pending_collect", "collect_preview", "collect_errors"):

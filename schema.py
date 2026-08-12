@@ -216,9 +216,26 @@ def canon_dept(v: str) -> str:
 
 
 def canon_lv3_name(name: str) -> str:
-    """lv3 부문 이름 오타 교정 (LV3_NAME_FIXES). 해당 없으면 원문 그대로."""
+    """lv3 부문 이름 정규화 — 오타 교정 + **과/부서 정식표기로 통일**.
+
+    오타(CUS→CSU)만 고치면 `Cedar CSU` 처럼 철자는 맞고 대소문자만 다른 이름이 그대로 남아,
+    취합이 이름 경로로 병합할 때 `CEDAR CSU` 와 여전히 두 부문으로 갈린다.
+    lv3 부문 이름이 곧 과 이름인 사례(CEDAR/ENI/ZLNG CSU)라 canon_dept 의 역인덱스를 그대로 쓴다.
+
+    시드 부문과 충돌하지 않는다 — `해운부`·`기획운영`·`코멘더` 는 과/부서 이름이기도 하지만
+    정식표기가 자기 자신이고, `선장운전` 등은 과 이름이 아니라 폴백에 걸리지 않는다.
+    """
     raw = str(name or "").strip()
-    return _LV3_FIX_N.get(_norm(raw), raw)
+    if not raw:
+        return raw
+    k = _norm(raw)
+    if k in _LV3_FIX_N:                     # 오타 (CUS → CSU)
+        return _LV3_FIX_N[k]
+    if k in _DEPT_PARENT_N:                 # 과 정식표기 (Cedar CSU → CEDAR CSU)
+        return _DEPT_PARENT_N[k]
+    if k in _DEPT_BRANCH_N:                 # 부서 정식표기
+        return _DEPT_BRANCH_N[k]
+    return raw                              # 그 외는 원문 보존 (유실 금지)
 
 
 def dept_parent(gwa: str) -> str:
@@ -771,8 +788,12 @@ def stats(data: dict) -> dict:
     by_owner: dict[str, int] = {}          # 담당자별 (소속 · 이름) — 표시단에서 마스킹한다
     by_tech_now: dict[str, int] = {}       # 활용기술(현재)별 lv6 수 — 다중선택이라 합계 > lv6 수
     by_tech_future: dict[str, int] = {}    # 향후 AI 적용기술별 lv6 수
+    # 과별 AI — 요약 화면의 "과별 현재 vs 향후" 비교 그래프 데이터. by_dept 와 같은 키를 쓴다.
+    by_dept_ai_now: dict[str, int] = {}
+    by_dept_ai_future: dict[str, int] = {}
     ai_yes = 0
     ai_future_yes = 0
+    missing_total = 0                      # 미입력 lv6 = 소속이 비었거나 롤업 연간공수가 0
     total_hours = 0.0
     ai_hours = 0.0
     ai_future_hours = 0.0
@@ -791,12 +812,16 @@ def stats(data: dict) -> dict:
         by_owner[ok] = by_owner.get(ok, 0) + 1
         h = rollup_hours(cidx, n)                            # 자신 + lv7 자식
         total_hours += h
+        if not n.get("dept") or h <= 0:                      # 채워야 할 것 — 요약에서 바로 잡게
+            missing_total += 1
         if rollup_has_ai(cidx, n):                           # 자신 or lv7 자식
             ai_yes += 1
             ai_hours += h
+            by_dept_ai_now[d] = by_dept_ai_now.get(d, 0) + 1
         if rollup_has_ai(cidx, n, "has_ai_future"):
             ai_future_yes += 1
             ai_future_hours += h
+            by_dept_ai_future[d] = by_dept_ai_future.get(d, 0) + 1
         for t in rollup_techs(cidx, n, "tech"):
             by_tech_now[t] = by_tech_now.get(t, 0) + 1
         for t in rollup_techs(cidx, n, "future_tech"):
@@ -812,6 +837,10 @@ def stats(data: dict) -> dict:
         # 기술별 — 한 업무가 기술 3개면 3칸에 각 1회. **합계 > lv6 수가 정상**(다중선택 축)
         "by_tech_now": dict(sorted(by_tech_now.items(), key=lambda kv: -kv[1])),
         "by_tech_future": dict(sorted(by_tech_future.items(), key=lambda kv: -kv[1])),
+        # 과별 AI — by_dept 와 같은 키. 요약의 "과별 현재 vs 향후" 그래프가 쓴다.
+        "by_dept_ai_now": by_dept_ai_now,
+        "by_dept_ai_future": by_dept_ai_future,
+        "missing_total": missing_total,
         "ai_yes": ai_yes,
         "ai_no": len(detail) - ai_yes,
         "ai_rate": _pct(ai_yes, len(detail)),
