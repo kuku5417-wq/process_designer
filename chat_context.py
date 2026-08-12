@@ -57,6 +57,10 @@ def _summary_block(data: dict) -> str:
         if line:
             lines.append(line)
     lines.append("※ 기술 집계는 다중선택이라 합계가 세부업무 수보다 클 수 있습니다(중복 아님).")
+    lines.append("※ 과별 집계도 마찬가지입니다 — 한 업무를 여러 과가 수행하면 각 과에 1회씩 잡혀,"
+                 " 과별 합계는 세부업무 수와 다릅니다(세부업무 수가 팀 단위 기준).")
+    lines.append(f"- 부하 미입력 {s['missing_total']}개 (연간공수 산출 불가) ·"
+                 f" 호선루틴 보류 {s['unresolved_total']}개 (구간길이 미상)")
     return "\n".join(lines)
 
 
@@ -73,9 +77,10 @@ def build(data: dict, max_chars: int = MAX_CHARS) -> str:
             continue
         path = " > ".join(schema.path_names(nmap, n["id"])[3:])
         bits = [f"경로: {path}"]
-        dept = n.get("dept") or ""
-        if dept:
-            bits.append(f"소속: {schema.dept_parent(dept)}/{dept}")
+        # 수행 과 — 한 업무를 여러 과가 할 수 있다(취합이 모은 depts). 부서/과 로 적어 롤업 질문에도 답하게.
+        ds = [d for d in schema.depts_of(n) if d != "(미지정)"]
+        if ds:
+            bits.append("수행 과: " + ", ".join(f"{schema.dept_parent(d)}/{d}" for d in ds))
         now, fut = _tech_str(n, cidx, "tech"), _tech_str(n, cidx, "future_tech")
         if now:
             bits.append(f"현재기술: {now}")

@@ -83,7 +83,7 @@ def main() -> int:
     ck(schema.children(d, schema.ROOT_ID)[1]["id"] == rev_ids[0], "move_sibling ▼ 한 칸")
 
     # 6. update / delete 캐스케이드
-    schema.update_node(d, lv6, {"has_ai_agent": True, "tech": ["LLM", "OCR"], "owner": "홍길동"}, "tester")
+    schema.update_node(d, lv6, {"has_ai_agent": True, "tech": ["LLM", "OCR"], "outputs": "보고서"}, "tester")
     ck(schema.node_map(d["nodes"])[lv6]["has_ai_agent"] is True, "update_node 필드 반영")
     schema.update_node(d, lv6, {"level": 99, "parent_id": "x"}, "tester")
     ck(schema.node_map(d["nodes"])[lv6]["level"] == 6, "update_node 가 구조 필드를 무시")
@@ -102,7 +102,7 @@ def main() -> int:
     w5 = schema.add_node(d, w4, 5, "tester", "보존확인 중분류")
     w6 = schema.add_node(d, w5, 6, "tester", "보존확인 세부업무")
     d = schema.normalize(d)
-    schema.update_node(d, w6, {"has_ai_agent": True, "tech": ["LLM"], "owner": "홍길동",
+    schema.update_node(d, w6, {"has_ai_agent": True, "tech": ["LLM"], "outputs": "보고서",
                                "dept": "시운전1부", "automation_level": "부분자동",
                                "frequency": "주 1회", "outputs": "보고서"}, "tester")
     ck(schema.node_map(d["nodes"])[w6]["level"] == 6, "보존확인 노드 lv6")
@@ -111,13 +111,13 @@ def main() -> int:
     ok, msg = schema.apply_move(d, w6, w4, "tester")      # lv6 -> lv5 로 승격
     n6 = schema.node_map(d["nodes"])[w6]
     ck(ok and n6["level"] == 5, f"lv6 을 lv5 로 승격: {msg}")
-    ck(n6["owner"] == "홍길동" and n6["tech"] == ["LLM"] and n6["has_ai_agent"] is True,
+    ck(n6["outputs"] == "보고서" and n6["tech"] == ["LLM"] and n6["has_ai_agent"] is True,
        "승격해도 상세 값 보존 (삭제 아님)")
     ck(schema.has_hidden_detail(n6), "승격된 카드에 숨은 상세 값이 있음을 감지")
 
     ok, _ = schema.apply_move(d, w6, w5, "tester")        # 다시 lv6 으로
     n6 = schema.node_map(d["nodes"])[w6]
-    ck(ok and n6["level"] == 6 and n6["owner"] == "홍길동", "다시 lv6 으로 내리면 값이 되살아남")
+    ck(ok and n6["level"] == 6 and n6["outputs"] == "보고서", "다시 lv6 으로 내리면 값이 되살아남")
 
     # 6-3. stats 분모 = lv6 만
     s = schema.stats(d)
@@ -336,7 +336,7 @@ def main() -> int:
         nm = schema.node_map(got["nodes"])
         ck("lv3_seonjang" in nm and nm["lv3_seonjang"]["name"] == "선장운전", "부문이 고정 id 로 매칭됨")
         l6 = [n for n in got["nodes"] if n["level"] == 6][0]
-        ck(l6["owner"] == "김철수" and l6["dept"] == "시운전1부", "lv6 에 작성자 신원이 실려 옴")
+        ck("owner" not in l6 and l6["dept"] == "시운전1부", "lv6 에 소속만 실려 옴 (이름은 저장 안 함)")
         ck(schema.annual_hours(l6) == 15.0, f"제출된 작업시간 반영 (0.5 × 30 = 15, 실제 {schema.annual_hours(l6)})")
         # 같은 파일 재제출 → 멱등
         again, _ = excel_io.parse_json(raw, got)
@@ -475,7 +475,7 @@ def main() -> int:
     nd_c = schema.normalize(nd_c)
     ck(schema.node_map(nd_c["nodes"])[_bad]["name"] == "CEDAR CSU", "normalize 가 lv3 대소문자도 통일")
 
-    # 23-d. 집계 현재/향후 분리 + 담당자별 (요약·드릴다운의 근거)
+    # 23-d. 집계 현재/향후 분리 (요약·드릴다운의 근거)
     nd_st = schema.bootstrap()
     _s4 = schema.add_node(nd_st, "lv3_seonjang", 4, "x", "S4")
     _s5 = schema.add_node(nd_st, _s4, 5, "x", "S5")
@@ -483,9 +483,9 @@ def main() -> int:
     _b6 = schema.add_node(nd_st, _s5, 6, "x", "B6")
     _c6 = schema.add_node(nd_st, _s5, 6, "x", "C6")
     _a7 = schema.add_node(nd_st, _a6, 7, "x", "A7")
-    schema.update_node(nd_st, _a6, {"tech": ["LLM"], "dept": "선장운전1과", "owner": "홍길동"}, "x")
+    schema.update_node(nd_st, _a6, {"tech": ["LLM"], "dept": "선장운전1과"}, "x")
     schema.update_node(nd_st, _a7, {"tech": ["LLM", "OCR"], "future_tech": ["RPA"]}, "x")   # lv7 → lv6 롤업
-    schema.update_node(nd_st, _b6, {"future_tech": ["RPA"], "dept": "선장운전1과", "owner": "홍길동"}, "x")
+    schema.update_node(nd_st, _b6, {"future_tech": ["RPA"], "dept": "선장운전1과"}, "x")
     schema.update_node(nd_st, _c6, {"dept": "시운전1부"}, "x")        # 옛 부서명이 그대로 들어간 노드
     stt = schema.stats(schema.normalize(nd_st))
     ck(stt["detail_total"] == 3, f"분모는 lv6 만 (실제 {stt['detail_total']})")
@@ -500,17 +500,83 @@ def main() -> int:
     ck("미분류" not in stt["by_dept_group"], "매핑되는 값은 미분류로 새지 않는다")
     ck(stt["by_dept"].get("시운전1부") == 1 and stt["by_dept"].get("선장운전1과") == 2,
        f"과별 표에는 저장된 원문 그대로 (실제 {stt['by_dept']})")
-    ck(stt["by_owner"].get("선장운전1과 · 홍길동") == 2, f"담당자별 집계 (실제 {stt['by_owner']})")
-    ck(stt["by_owner"].get("(미지정)") == 1, "담당자 없는 lv6 은 (미지정)")
+    ck("by_owner" not in stt, "담당자 축은 제거됐다")
+
+    # 23-f. 담당자(owner) 완전 제거 — 옛 저장본의 이름은 로드 시점에 사라진다
+    ck("owner" not in schema.NODE_DEFAULTS and "owner" not in schema.DETAIL_FIELDS,
+       "owner 가 스키마에서 빠졌다")
+    old_own = schema.normalize({"nodes": [{"id": "o1", "parent_id": "__root__", "level": 6,
+                                           "name": "옛업무", "owner": "홍길동", "dept": "선장운전1과"}]})
+    ck("owner" not in old_own["nodes"][0], "normalize 가 옛 owner 값을 지운다")
+    ck(old_own["nodes"][0]["dept"] == "선장운전1과", "소속은 그대로 남는다")
+    ck("담당자" not in excel_io.TREE_COLS, "엑셀 계층도 시트에 담당자 열이 없다")
+    ck("작성자" in excel_io.TREE_COLS, "작성자(updated_by)는 별개라 남는다")
+
+    # 23-g. 소속 다중 귀속 — 한 업무를 여러 과가 수행
+    nd_md = schema.bootstrap()
+    _p4 = schema.add_node(nd_md, "lv3_seonjang", 4, "x", "P4")
+    _p5 = schema.add_node(nd_md, _p4, 5, "x", "P5")
+    _p6 = schema.add_node(nd_md, _p5, 6, "x", "공동업무")
+    schema.update_node(nd_md, _p6, {"depts": ["선장운전1과", "선장운전2과", "전장운전1과"],
+                                    "tech": ["LLM"], "work_hours": "1", "annual_count": "10"}, "x")
+    nd_md = schema.normalize(nd_md)
+    s_md = schema.stats(nd_md)
+    # ★ KPI(팀 단위)와 과별(수행 주체)은 **단위가 다르다** — 합이 안 맞는 게 정상이다
+    ck(s_md["detail_total"] == 1, f"KPI 세부업무 수는 팀 단위로 1 (실제 {s_md['detail_total']})")
+    ck(sum(s_md["by_dept"].values()) == 3, f"과별 합계는 3 (실제 {s_md['by_dept']})")
+    ck(all(s_md["by_dept"][k] == 1 for k in ("선장운전1과", "선장운전2과", "전장운전1과")),
+       "제출한 과 모두에 1씩")
+    # 부서 롤업은 **부서 집합으로 dedupe** — 같은 부서의 두 과가 해도 그 부서는 1회
+    ck(s_md["by_dept_group"].get("시운전1부") == 1,
+       f"같은 부서의 두 과는 부서 롤업에서 1회 (실제 {s_md['by_dept_group']})")
+    ck(s_md["by_dept_group"].get("시운전2부") == 1, "다른 부서는 따로 잡힌다")
+    ck(sum(s_md["by_dept_ai_now"].values()) == 3, "과별 AI 도 수행 과 모두에")
+    for k in s_md["by_dept_ai_now"]:
+        ck(s_md["by_dept_ai_now"][k] <= s_md["by_dept"][k], f"[{k}] 과별 AI ≤ 과별 업무 수 (그래프 공통 눈금 전제)")
+    # 양방향 백필
+    bf = schema.normalize({"nodes": [{"id": "b1", "parent_id": "__root__", "level": 6,
+                                      "name": "옛", "dept": "선장운전1과"}]})["nodes"][0]
+    ck(bf["depts"] == ["선장운전1과"], "dept 만 있던 옛 데이터 → depts 백필")
+    bf2 = schema.normalize({"nodes": [{"id": "b2", "parent_id": "__root__", "level": 6,
+                                       "name": "새", "depts": ["ZLNG CSU"]}]})["nodes"][0]
+    ck(bf2["dept"] == "ZLNG CSU", "depts 만 있으면 대표 과를 dept 로 백필")
+    dedup = schema.normalize({"nodes": [{"id": "b3", "parent_id": "__root__", "level": 6, "name": "d",
+                                         "depts": ["선장운전1과", "선장운전1과", "cedar csu"]}]})["nodes"][0]
+    ck(dedup["depts"] == ["선장운전1과", "CEDAR CSU"], f"depts 정규화+중복제거 (실제 {dedup['depts']})")
+
+    # 23-h. 부하 미입력 vs 호선루틴 보류 — 성격이 달라 따로 센다
+    nd_ms2 = schema.bootstrap()
+    _q4 = schema.add_node(nd_ms2, "lv3_seonjang", 4, "x", "Q4")
+    _q5 = schema.add_node(nd_ms2, _q4, 5, "x", "Q5")
+    _blank = schema.add_node(nd_ms2, _q5, 6, "x", "부하없음")            # 아무것도 안 씀
+    _ship = schema.add_node(nd_ms2, _q5, 6, "x", "호선루틴업무")
+    _nodept = schema.add_node(nd_ms2, _q5, 6, "x", "소속없지만부하있음")
+    schema.update_node(nd_ms2, _ship, {"occur_pattern": "호선루틴", "work_hours": "2"}, "x")
+    schema.update_node(nd_ms2, _nodept, {"work_hours": "2", "annual_count": "5"}, "x")
+    s_ms = schema.stats(schema.normalize(nd_ms2))
+    ck(s_ms["missing_total"] == 1, f"부하 미입력은 1건 (실제 {s_ms['missing_total']})")
+    ck(s_ms["unresolved_total"] == 1, f"호선루틴 보류는 따로 1건 (실제 {s_ms['unresolved_total']})")
+    ck(schema.is_ship_routine(schema.node_map(nd_ms2["nodes"])[_ship]), "호선루틴 판정")
+    # ★ 소속이 비어도 **부하가 있으면 미입력이 아니다** (옛 정의였다면 잡혔다)
+    ck(s_ms["by_dept"].get("(미지정)") == 3 and s_ms["missing_total"] == 1,
+       "소속 유무는 부하 미입력과 무관하다")
+
+    # 23-i. 발생패턴이 취합에서 유실되지 않는다 (부하 엔진의 입력)
+    for f in ("occur_pattern", "apply_phases", "events"):
+        ck(f in schema.NODE_DEFAULTS and f in schema.DETAIL_FIELDS,
+           f"{f} 가 NODE_DEFAULTS∧DETAIL_FIELDS (없으면 취합이 복사하지 않아 유실)")
+    ev = schema.normalize({"nodes": [{"id": "e1", "parent_id": "__root__", "level": 6, "name": "e",
+                                      "events": [{"event": "GT", "offset_start": "before", "offset_days": "7"},
+                                                 {"event": "", "offset_days": "3"}]}]})["nodes"][0]
+    ck(len(ev["events"]) == 1 and ev["events"][0]["event"] == "GT", "events 정규화 — 빈 줄 제거")
     # 기술은 다중선택이라 합계가 lv6 수보다 클 수 있다 — 중복이 아니라 정상
     ck(sum(stt["by_tech_now"].values()) >= stt["ai_yes"], "다중선택 축 합계 ≥ 업무 수")
     # 요약 시트에도 두 축이 다 나오는지 (엑셀·화면 축 일치)
     sdf = excel_io._summary_df(schema.normalize(nd_st))
     gubun = set(sdf["구분"])
-    for want in ("AI 에이전트 — 현재", "AI 에이전트 — 향후", "활용기술 — 현재", "활용기술 — 향후", "담당자별", "부서별"):
+    for want in ("AI 에이전트 — 현재", "AI 에이전트 — 향후", "활용기술 — 현재", "활용기술 — 향후", "부서별"):
         ck(any(str(g).startswith(want) for g in gubun), f"요약 시트에 '{want}' 축이 있다")
-    owner_rows = [r for _, r in sdf.iterrows() if str(r["구분"]).startswith("담당자별")]
-    ck(all("홍길동" not in str(r["항목"]) for r in owner_rows), "요약 담당자는 마스킹된다(원본 이름 금지)")
+    ck(not any(str(g).startswith("담당자별") for g in gubun), "요약 시트에 담당자별 축이 없다")
 
     # 23-e. 요약 화면용 축 — 과별 AI(현재/향후) + 미입력
     ck(stt["by_dept_ai_now"].get("선장운전1과") == 1, f"과별 AI 현재 (실제 {stt['by_dept_ai_now']})")
@@ -549,6 +615,15 @@ def main() -> int:
     ck(not byname["자이로시험"].get("submit_count"), "1명만 한 lv6 는 배지 없음(N<2)")
     ck(schema.dept_parent(byname["레이더동작시험"]["submit_detail"].split(" · ")[0]) in ("시운전1부", "시운전2부"),
        "submit_detail 은 과 기준(부서로 롤업 가능)")
+    # ★ 취합이 **제출한 과를 모두** 기록한다 — 예전엔 첫 제출자 과만 남아 나머지가 집계에서 사라졌다
+    ck(sorted(byname["레이더동작시험"]["depts"]) == ["선장운전1과", "선장운전2과"],
+       f"2개 과가 낸 업무는 depts 에 둘 다 (실제 {byname['레이더동작시험']['depts']})")
+    ck(byname["자이로시험"]["depts"] == ["전장운전1과"], "1개 과가 낸 업무는 그 과만")
+    s_mg = schema.stats(mg)
+    ck(s_mg["by_dept"].get("선장운전1과") == 1 and s_mg["by_dept"].get("선장운전2과") == 1,
+       f"취합 후 과별 집계가 두 과 모두에 (실제 {s_mg['by_dept']})")
+    ck(s_mg["detail_total"] == 2, f"KPI 는 팀 단위 2건 (실제 {s_mg['detail_total']})")
+    ck(sum(s_mg["by_dept"].values()) == 3, "과별 합계 3 ≠ KPI 2 — 단위가 다르다")
 
     # 24-b. 취합은 **lv6 에 닿는 가지만** 병합한다 (골격만 낸 제출은 통째로 제외)
     def _mk_skel():

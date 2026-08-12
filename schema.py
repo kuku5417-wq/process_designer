@@ -43,10 +43,11 @@ LEVEL_LABELS: Final[dict[int, str]] = {
 FULL_DETAIL_LEVEL: Final[int] = 6
 LOAD_LEVEL: Final[int] = 6
 DETAIL_FIELDS: Final[tuple[str, ...]] = (
-    "dept", "has_ai_agent", "has_ai_future", "tech", "future_tech", "automation_level",
-    "owner", "frequency", "outputs",
+    "dept", "depts", "has_ai_agent", "has_ai_future", "tech", "future_tech", "automation_level",
+    "frequency", "outputs",
     "linked_system", "linked_system_detail", "linked_systems", "special_note", "ship_types",
     "work_hours", "freq_unit", "freq_count", "annual_count",
+    "occur_pattern", "apply_phases", "events",
 )
 
 # ── 작업시간 ────────────────────────────────────────────
@@ -286,7 +287,11 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "has_ai_agent": False,
     "tech": [],
     "automation_level": "",
-    "owner": "",
+    # 소속 — dept 는 **대표 과**(카드·엑셀 단일 표시용), depts 는 **이 업무를 하는 과 전부**.
+    # 여러 과가 같은 업무를 제출하면 depts 에 모두 쌓이고 과별 집계가 각 과에 1씩 잡는다.
+    # ★ 담당자(owner)는 제거됐다 — 제출자가 자기 일을 정의한 것이라 이름은 제출자와 중복이고,
+    #   어떤 계산도 좌우하지 않았다(공통규칙 7 최소수집). normalize 가 옛 값을 지운다.
+    "depts": [],
     "frequency": "",
     "outputs": "",              # 산출물
     "linked_system": "",        # (구) 연계시스템 단일 — back-compat. 신규 UI 는 linked_systems 사용
@@ -300,6 +305,13 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "freq_unit": "",        # 기간 단위 (일/주/월/분기/년) — 칩 택1
     "freq_count": "",       # 단위당 횟수 (예: 주 3회 → freq_count=3)
     "annual_count": "",     # 연간 횟수 (구 데이터 폴백; 신규는 freq_count×단위연간수로 파생)
+    # ── 발생 패턴 (개인 배포판에서 입력, 부하 계산의 뼈대) ──
+    # ★ 파이썬이 이 셋을 몰라서 **취합 때 통째로 유실되던 버그가 있었다** — DETAIL_FIELDS 에
+    #   없으면 collect_jsons 가 첫 제출자 값을 복사하지 않아 "언제·몇 번 하는가"가 사라진다.
+    #   work_hours 같은 숫자만 남아 부하 엔진의 입력이 반쪽이 된다.
+    "occur_pattern": "",    # 상시루틴 / 호선루틴 / 호선이벤트 (JS OCCUR 와 같은 문자열)
+    "apply_phases": [],     # 호선루틴: 반복 구간(복수) — TRIAL_PHASES
+    "events": [],           # 호선이벤트: [{event, offset_start, offset_days}] — 줄 수 = 호선당 횟수
     # ── 취합 산출물 (메인앱 collect_jsons 가 채움; 개인 배포판은 항상 빈값) ──
     "submit_count": "",     # 이 업무(경로)를 제출한 인원수 N — (부서,이름) distinct. 이름은 저장 안 함
     "submit_detail": "",    # 제출자별 상세 요약(여러 줄, 부서 기준). 이름 미기록 (개인정보 최소수집)
@@ -475,8 +487,18 @@ def normalize(data: dict) -> dict:
         for k, dv in NODE_DEFAULTS.items():
             if k not in n or n[k] is None:
                 n[k] = list(dv) if isinstance(dv, list) else dv
-        # 다중값 리스트 필드(활용기술·향후기술·특이사항·선종) — 쉼표문자열도 관용하고 공백 정리
-        for lk in ("tech", "future_tech", "special_note", "ship_types"):
+        # 호선이벤트 events[] — [{event, offset_start, offset_days}]. 줄 수가 곧 호선당 횟수라
+        # 빈 줄은 버린다. 형태가 깨진 값(문자열 등)은 통째로 비운다(조용히 반쪽으로 두지 않는다).
+        evs = n.get("events")
+        n["events"] = [
+            {"event": str((e or {}).get("event") or "").strip(),
+             "offset_start": str((e or {}).get("offset_start") or "").strip(),
+             "offset_days": str((e or {}).get("offset_days") or "").strip()}
+            for e in (evs if isinstance(evs, list) else [])
+            if isinstance(e, dict) and str(e.get("event") or "").strip()
+        ]
+        # 다중값 리스트 필드(활용기술·향후기술·특이사항·선종·반복구간) — 쉼표문자열도 관용하고 공백 정리
+        for lk in ("tech", "future_tech", "special_note", "ship_types", "apply_phases"):
             if not isinstance(n.get(lk), list):
                 n[lk] = [s for s in str(n.get(lk) or "").split(",") if s.strip()]
             n[lk] = [str(t).strip() for t in n[lk] if str(t).strip()]
@@ -494,9 +516,26 @@ def normalize(data: dict) -> dict:
         # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
         n["has_ai_agent"] = len(n["tech"]) > 0
         n["has_ai_future"] = len(n["future_tech"]) > 0
+        # 담당자 제거 — 옛 저장본에 남은 이름을 **로드 시점에** 지운다(개인정보 최소수집).
+        # 저장을 누르면 파일에서도 사라진다. updated_by(저장한 사람)는 별개라 건드리지 않는다.
+        n.pop("owner", None)
         # 소속 정규화 — 대소문자·공백 흔들림과 옛 부서명 별칭을 정식표기로 모은다.
         # 매핑에 없는 값(부서명 등)은 원문 그대로 남고, 부서 롤업은 dept_parent 가 처리한다.
         n["dept"] = canon_dept(n.get("dept"))
+        # depts[] — 이 업무를 하는 과 전부. 순서를 지키며 중복 제거한다.
+        seen_d: set[str] = set()
+        ds: list[str] = []
+        for v in (n.get("depts") or []):
+            cv = canon_dept(v)
+            if cv and cv not in seen_d:
+                seen_d.add(cv)
+                ds.append(cv)
+        # 양방향 백필 — 옛 데이터는 dept 만 있고, 취합 산출물은 depts 만 있을 수 있다.
+        if not ds and n["dept"]:
+            ds = [n["dept"]]
+        if ds and not n["dept"]:
+            n["dept"] = ds[0]          # 대표 과 (카드·엑셀 단일 표시용)
+        n["depts"] = ds
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())
@@ -769,6 +808,52 @@ def _pct(part: int, whole: int) -> int:
     return round(part / whole * 100) if whole else 0
 
 
+# ── 소속 다중 귀속 ──────────────────────────────────────
+# 한 세부업무를 여러 과가 수행할 수 있다(취합이 제출한 과를 depts[] 에 모은다).
+# ★ 과별 집계는 **수행 주체 기준**이라 합계가 세부업무 수보다 크다 — 단위가 다른 것이지 버그가 아니다.
+#   KPI 의 detail_total(팀 단위 업무 수)과 과별 합계를 서로 검산하면 안 된다.
+
+def depts_of(node: dict) -> list[str]:
+    """이 업무를 수행하는 과 목록. 비어 있으면 ['(미지정)'] (집계 칸을 잃지 않게)."""
+    ds = [str(d).strip() for d in (node.get("depts") or []) if str(d).strip()]
+    if not ds:
+        d = str(node.get("dept") or "").strip()      # depts 백필 전 데이터 방어
+        ds = [d] if d else []
+    return ds or ["(미지정)"]
+
+
+def dept_groups_of(node: dict) -> list[str]:
+    """수행 부서 목록 — 과를 부서로 롤업하고 **중복 제거**한다.
+
+    같은 부서의 두 과가 하는 업무라도 "그 부서가 한다"는 한 번이다.
+    (과별은 2, 부서별은 1 — 두 축의 숫자가 다른 게 정상이다.)
+    """
+    out: list[str] = []
+    for d in depts_of(node):
+        g = "(미지정)" if d == "(미지정)" else dept_parent(d)
+        if g not in out:
+            out.append(g)
+    return out
+
+
+# 발생 패턴 — 값은 프론트(OCCUR)와 같은 문자열이어야 한다(twin).
+OCCUR_SHIP_ROUTINE: Final[str] = "호선루틴"
+
+
+def is_ship_routine(node: dict, cidx: dict[str, list[dict]] | None = None) -> bool:
+    """이 lv6 그룹(자신+lv7 자식)이 호선루틴인가.
+
+    호선루틴은 구간길이를 몰라 아직 연간화가 **보류**된 것이지 입력이 빠진 게 아니다.
+    '부하 미입력'(사람이 채울 것)과 섞으면 채워도 숫자가 안 줄어 지표가 죽는다.
+    """
+    if node.get("occur_pattern") == OCCUR_SHIP_ROUTINE:
+        return True
+    for c in (cidx or {}).get(node["id"], []):
+        if c.get("level") == LEVEL_MAX and c.get("occur_pattern") == OCCUR_SHIP_ROUTINE:
+            return True
+    return False
+
+
 # ── 통계 ────────────────────────────────────────────────
 
 def stats(data: dict) -> dict:
@@ -785,7 +870,6 @@ def stats(data: dict) -> dict:
     by_dept: dict[str, int] = {}
     by_dept_group: dict[str, int] = {}     # 부서 롤업 (과 → 부서)
     by_auto: dict[str, int] = {}
-    by_owner: dict[str, int] = {}          # 담당자별 (소속 · 이름) — 표시단에서 마스킹한다
     by_tech_now: dict[str, int] = {}       # 활용기술(현재)별 lv6 수 — 다중선택이라 합계 > lv6 수
     by_tech_future: dict[str, int] = {}    # 향후 AI 적용기술별 lv6 수
     # 과별 AI — 요약 화면의 "과별 현재 vs 향후" 비교 그래프 데이터. by_dept 와 같은 키를 쓴다.
@@ -793,35 +877,43 @@ def stats(data: dict) -> dict:
     by_dept_ai_future: dict[str, int] = {}
     ai_yes = 0
     ai_future_yes = 0
-    missing_total = 0                      # 미입력 lv6 = 소속이 비었거나 롤업 연간공수가 0
+    missing_total = 0                      # 부하 미입력 — 연간공수를 못 구하는 lv6 (호선루틴 제외)
+    unresolved_total = 0                   # 호선루틴 — 입력은 됐지만 구간길이 미상이라 연간화 보류
     total_hours = 0.0
     ai_hours = 0.0
     ai_future_hours = 0.0
     for n in nodes:
         by_level[n.get("level", 0)] = by_level.get(n.get("level", 0), 0) + 1
     for n in detail:
-        d = n.get("dept") or "(미지정)"
-        by_dept[d] = by_dept.get(d, 0) + 1
-        g = dept_parent(d) if n.get("dept") else "(미지정)"
-        by_dept_group[g] = by_dept_group.get(g, 0) + 1
+        # ★ 과별 축은 **수행 주체 기준**이라 한 업무가 여러 과에 잡힌다(합계 > lv6 수).
+        #   KPI 의 detail_total 은 팀 단위 업무 수라 단위가 다르다 — 둘을 검산하면 안 된다.
+        ds = depts_of(n)
+        for d in ds:
+            by_dept[d] = by_dept.get(d, 0) + 1
+        # 부서 롤업은 **부서 집합으로 중복 제거** — 같은 부서의 두 과가 해도 그 부서는 1회다.
+        for g in dept_groups_of(n):
+            by_dept_group[g] = by_dept_group.get(g, 0) + 1
         a = n.get("automation_level") or "(미지정)"
         by_auto[a] = by_auto.get(a, 0) + 1
-        o = str(n.get("owner") or "").strip()
-        # 동명이인이 부서를 넘나들 수 있어 소속과 묶어 키를 만든다. 마스킹은 표시단 책임.
-        ok = f"{n.get('dept') or '(미지정)'} · {o}" if o else "(미지정)"
-        by_owner[ok] = by_owner.get(ok, 0) + 1
         h = rollup_hours(cidx, n)                            # 자신 + lv7 자식
         total_hours += h
-        if not n.get("dept") or h <= 0:                      # 채워야 할 것 — 요약에서 바로 잡게
-            missing_total += 1
+        # 부하 미입력 = 원자값이 없어 연간공수를 못 구하는 것. 호선루틴은 "보류"라 따로 센다
+        # (사람이 채울 것 ≠ 나중에 trial_schedule 조인으로 풀릴 것).
+        if h <= 0:
+            if is_ship_routine(n, cidx):
+                unresolved_total += 1
+            else:
+                missing_total += 1
         if rollup_has_ai(cidx, n):                           # 자신 or lv7 자식
             ai_yes += 1
             ai_hours += h
-            by_dept_ai_now[d] = by_dept_ai_now.get(d, 0) + 1
+            for d in ds:
+                by_dept_ai_now[d] = by_dept_ai_now.get(d, 0) + 1
         if rollup_has_ai(cidx, n, "has_ai_future"):
             ai_future_yes += 1
             ai_future_hours += h
-            by_dept_ai_future[d] = by_dept_ai_future.get(d, 0) + 1
+            for d in ds:
+                by_dept_ai_future[d] = by_dept_ai_future.get(d, 0) + 1
         for t in rollup_techs(cidx, n, "tech"):
             by_tech_now[t] = by_tech_now.get(t, 0) + 1
         for t in rollup_techs(cidx, n, "future_tech"):
@@ -833,14 +925,14 @@ def stats(data: dict) -> dict:
         "by_dept": dict(sorted(by_dept.items(), key=lambda kv: -kv[1])),
         "by_dept_group": dict(sorted(by_dept_group.items(), key=lambda kv: -kv[1])),
         "by_automation": dict(sorted(by_auto.items(), key=lambda kv: -kv[1])),
-        "by_owner": dict(sorted(by_owner.items(), key=lambda kv: -kv[1])),
         # 기술별 — 한 업무가 기술 3개면 3칸에 각 1회. **합계 > lv6 수가 정상**(다중선택 축)
         "by_tech_now": dict(sorted(by_tech_now.items(), key=lambda kv: -kv[1])),
         "by_tech_future": dict(sorted(by_tech_future.items(), key=lambda kv: -kv[1])),
         # 과별 AI — by_dept 와 같은 키. 요약의 "과별 현재 vs 향후" 그래프가 쓴다.
         "by_dept_ai_now": by_dept_ai_now,
         "by_dept_ai_future": by_dept_ai_future,
-        "missing_total": missing_total,
+        "missing_total": missing_total,          # 부하 미입력 (사람이 채워야 할 것)
+        "unresolved_total": unresolved_total,    # 호선루틴 보류 (구간길이 조인으로 풀릴 것)
         "ai_yes": ai_yes,
         "ai_no": len(detail) - ai_yes,
         "ai_rate": _pct(ai_yes, len(detail)),

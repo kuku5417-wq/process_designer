@@ -260,6 +260,9 @@
   .fi:focus, .fa:focus, .fs:focus { border-color: #0f766e; }
   .fa { width: 100%; height: 50px; font-size: 14.5px; padding: 8px 11px; border: 1px solid #d8cfc0;
     border-radius: 9px; outline: none; resize: none; line-height: 1.5; }
+  /* 읽기 전용 값 — 입력칸처럼 보이되 편집 불가(수행 과처럼 자동으로 채워지는 값) */
+  .roval { font-size: 14.5px; padding: 8px 10px; border: 1px dashed #ddd6ca; border-radius: 8px;
+    background: #faf8f3; color: #57534e; min-height: 37px; }
   .fs { width: 100%; font-size: 14.5px; padding: 8px 10px; border: 1px solid #d8cfc0; border-radius: 8px;
     outline: none; background: #fff; cursor: pointer; }
   .note { font-size: 13.5px; color: #78716c; background: #f8f6f1; border: 1px solid #f0ede6;
@@ -511,6 +514,12 @@
     (nodes || []).forEach(function (n) {
       if (!n) return;
       if ("dept" in n) n.dept = canonDept(n.dept);
+      // depts[] 정규화 + 중복 제거, 그리고 dept 와 양방향 백필 (schema.normalize 트윈)
+      var ds = [];
+      (n.depts || []).forEach(function (d) { var c = canonDept(d); if (c && ds.indexOf(c) < 0) ds.push(c); });
+      if (!ds.length && n.dept) ds = [n.dept];
+      if (ds.length && !n.dept) n.dept = ds[0];
+      n.depts = ds;
       if (n.level === LEVEL_MIN) n.name = canonLv3Name(n.name);
     });
     return nodes;
@@ -676,6 +685,29 @@
     childrenOf(n.id).forEach(function (c) { if (c.level === LEVEL_MAX) g.push(c); });
     return g;
   }
+  // ── 소속 다중 귀속 (schema.depts_of / dept_groups_of 트윈) ──
+  // 한 세부업무를 여러 과가 수행할 수 있다(취합이 제출한 과를 depts[] 에 모은다).
+  /** 수행 과 목록. 비어 있으면 ["(미지정)"] — 집계 칸을 잃지 않게. */
+  function deptsOf(n) {
+    var ds = (n.depts || []).map(function (d) { return String(d || "").trim(); }).filter(Boolean);
+    if (!ds.length && n.dept) ds = [String(n.dept).trim()];      // depts 백필 전 데이터 방어
+    return ds.length ? ds : ["(미지정)"];
+  }
+  /** 수행 부서 목록 — 과를 부서로 롤업하고 **중복 제거**(같은 부서의 두 과가 해도 1회). */
+  function deptGroupsOf(n) {
+    var out = [];
+    deptsOf(n).forEach(function (d) {
+      var g = d === "(미지정)" ? "(미지정)" : deptParent(d);
+      if (out.indexOf(g) < 0) out.push(g);
+    });
+    return out;
+  }
+  /** 이 lv6 그룹(자신+lv7 자식)이 호선루틴인가 (schema.is_ship_routine 트윈).
+   *  구간길이 미상으로 **보류**된 것이지 입력이 빠진 게 아니다 — '부하 미입력'과 섞지 않는다. */
+  function isShipRoutine(n) {
+    if (n.occur_pattern === OCCUR.SHIP_ROUTINE) return true;
+    return childrenOf(n.id).some(function (c) { return c.level === LEVEL_MAX && c.occur_pattern === OCCUR.SHIP_ROUTINE; });
+  }
   /** lv6 유효 연간 공수 = 자신 + Σ(lv7 자식) (schema.rollup_hours 트윈). */
   function rollupHours(n) {
     var h = 0;
@@ -714,7 +746,7 @@
   function makeNode(pid, lv, name) {
     return { id: newId(), parent_id: pid, level: lv, order: 999, name: name || "", desc: "",
              dept: "", has_ai_agent: false, has_ai_future: false, tech: [], future_tech: [],
-             automation_level: "", owner: "",
+             automation_level: "", depts: [],
              frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
              linked_systems: [], special_note: [],   // 연계시스템 다건 / 특이사항(다중)
              work_hours: "", annual_count: "",
@@ -730,23 +762,26 @@
     // 분모 = 모든 lv6 (lv7 은 롤업 대상이라 분모에서 뺀다). 부하·AI 는 lv6 마다 자신+lv7 자식 롤업.
     var d = S.nodes.filter(function (n) { return isLoadLevel(n.level); });
     var ai = 0, aiFuture = 0, annual = 0, perShip = 0, unresolved = 0, missing = 0;
-    // 축별 집계 (schema.stats 트윈). 기술은 **다중선택**이라 합계가 lv6 수보다 크다 — 정상.
-    var byDept = {}, byGroup = {}, byOwner = {}, byAuto = {}, techNow = {}, techFuture = {};
+    // 축별 집계 (schema.stats 트윈). 기술·과는 **다중** 이라 합계가 lv6 수보다 크다 — 정상.
+    var byDept = {}, byGroup = {}, byAuto = {}, techNow = {}, techFuture = {};
     var byDeptAiNow = {}, byDeptAiFuture = {};   // 과별 AI — 요약의 현재 vs 향후 비교 그래프
-    var missingTotal = 0;                        // 미입력 = 소속이 비었거나 롤업 공수 0
+    var missingTotal = 0;                        // 부하 미입력 (호선루틴 보류는 제외)
+    var unresolvedTotal = 0;                     // 호선루틴 — 구간길이 미상이라 연간화 보류
     function bump(m, k) { m[k] = (m[k] || 0) + 1; }
     d.forEach(function (n) {
-      var dk = n.dept || "(미지정)";
-      if (rollupHasAi(n)) { ai++; bump(byDeptAiNow, dk); }
-      if (rollupHasAi(n, "has_ai_future")) { aiFuture++; bump(byDeptAiFuture, dk); }
-      bump(byDept, dk);
-      bump(byGroup, n.dept ? deptParent(n.dept) : "(미지정)");
+      // ★ 과별 축은 **수행 주체 기준** — 한 업무를 여러 과가 하면 각 과에 1씩 잡힌다.
+      //   KPI(detail)는 팀 단위 업무 수라 단위가 다르다. 둘을 검산하면 안 된다.
+      var ds = deptsOf(n);
+      if (rollupHasAi(n)) { ai++; ds.forEach(function (k) { bump(byDeptAiNow, k); }); }
+      if (rollupHasAi(n, "has_ai_future")) { aiFuture++; ds.forEach(function (k) { bump(byDeptAiFuture, k); }); }
+      ds.forEach(function (k) { bump(byDept, k); });
+      deptGroupsOf(n).forEach(function (g) { bump(byGroup, g); });   // 부서는 dedupe
       bump(byAuto, n.automation_level || "(미지정)");
-      var ow = String(n.owner || "").trim();
-      bump(byOwner, ow ? (n.dept || "(미지정)") + " · " + ow : "(미지정)");
       rollupTechs(n, "tech").forEach(function (t) { bump(techNow, t); });
       rollupTechs(n, "future_tech").forEach(function (t) { bump(techFuture, t); });
-      if (!n.dept || rollupHours(n) <= 0) missingTotal++;
+      // 부하 미입력 = 연간공수를 못 구하는 것. 호선루틴은 "보류"라 따로 센다
+      // (사람이 채울 것 ≠ trial_schedule 조인으로 풀릴 것).
+      if (rollupHours(n) <= 0) { if (isShipRoutine(n)) unresolvedTotal++; else missingTotal++; }
       var gAnnual = 0, gPerShip = 0, gUnresolved = 0, gHours = 0;
       loadGroup(n).forEach(function (m) {                 // 자신 + lv7 자식
         var L = SOLO ? loadOf(m) : { kind: "annual", hours: annualHours(m) };
@@ -760,10 +795,10 @@
     function pct(p) { return d.length ? Math.round(p / d.length * 100) : 0; }
     return { total: S.nodes.length, detail: d.length, ai: ai, aiFuture: aiFuture,
              rate: pct(ai), rateFuture: pct(aiFuture),
-             byDept: byDept, byGroup: byGroup, byOwner: byOwner, byAuto: byAuto,
+             byDept: byDept, byGroup: byGroup, byAuto: byAuto,
              techNow: techNow, techFuture: techFuture,
              byDeptAiNow: byDeptAiNow, byDeptAiFuture: byDeptAiFuture,
-             missingTotal: missingTotal,
+             missingTotal: missingTotal, unresolvedTotal: unresolvedTotal,
              hours: Math.round(annual * 10) / 10,          // 상시루틴만 (진짜 연간)
              perShipHours: Math.round(perShip * 10) / 10,  // 호선당 (연간 아님)
              unresolved: unresolved,                       // 호선루틴 (척수·구간 필요)
@@ -811,7 +846,7 @@
 
   function seed() {
     var n = [], i = 0;
-    function nd(id, p, lv, name, ex) { var b = { id: id, parent_id: p, level: lv, order: i++, name: name, desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", owner: "", frequency: "", outputs: "" }; if (ex) for (var k in ex) b[k] = ex[k]; return b; }
+    function nd(id, p, lv, name, ex) { var b = { id: id, parent_id: p, level: lv, order: i++, name: name, desc: "", dept: "", has_ai_agent: false, tech: [], automation_level: "", frequency: "", outputs: "" }; if (ex) for (var k in ex) b[k] = ex[k]; return b; }
     n.push(nd("s1", ROOT, 3, "선장운전", { desc: "항해·조타·갑판 관련 시운전 업무" }));
     n.push(nd("s2", ROOT, 3, "전장운전", { desc: "전기·계장 시운전 업무" }));
     n.push(nd("s3", ROOT, 3, "기장운전", { desc: "기관·추진 시운전 업무" }));
@@ -823,12 +858,12 @@
     n.push(nd("b1", "a1", 5, "항해장비 점검", { desc: "레이더·GPS·자이로 등" }));
     n.push(nd("b2", "a1", 5, "조타장치 시험", {}));
     n.push(nd("b3", "a2", 5, "계류·양묘 장비", {}));
-    n.push(nd("c1", "b1", 6, "레이더 동작시험", { desc: "X/S밴드 레이더의 표적 탐지·거리 정확도 확인", dept: "시운전1부", has_ai_agent: true, tech: ["이상탐지", "BI/대시보드"], automation_level: "부분자동", owner: "김민수", frequency: "호선별", outputs: "시운전 결과보고서 / SAP" }));
-    n.push(nd("c2", "b1", 6, "자이로컴퍼스 정렬시험", { desc: "자이로 방위 오차 측정 및 보정", dept: "시운전1부", automation_level: "수동", owner: "이정호", frequency: "호선별" }));
-    n.push(nd("c3", "b1", 6, "GPS/AIS 통신확인", { desc: "위성 측위 및 선박자동식별장치 데이터 송수신 점검", dept: "시운전1부", has_ai_agent: true, tech: ["OCR", "RPA"], automation_level: "AI자동", owner: "박서준", frequency: "호선별", outputs: "통신점검 체크리스트" }));
-    n.push(nd("c4", "b2", 6, "조타 응답시험", { desc: "타각 지령 대비 실제 응답시간 측정", dept: "시운전1부", automation_level: "수동", owner: "최유진", frequency: "호선별" }));
-    n.push(nd("c5", "b2", 6, "비상조타 절체시험", { dept: "시운전1부", owner: "최유진", frequency: "호선별" }));
-    n.push(nd("c6", "b3", 6, "윈들러스 부하시험", { desc: "양묘기 부하 및 브레이크 성능 확인", dept: "시운전2부", tech: ["예측모델"], automation_level: "부분자동", owner: "정다은", frequency: "호선별" }));
+    n.push(nd("c1", "b1", 6, "레이더 동작시험", { desc: "X/S밴드 레이더의 표적 탐지·거리 정확도 확인", dept: "시운전1부", has_ai_agent: true, tech: ["이상탐지", "BI/대시보드"], automation_level: "부분자동", frequency: "호선별", outputs: "시운전 결과보고서 / SAP" }));
+    n.push(nd("c2", "b1", 6, "자이로컴퍼스 정렬시험", { desc: "자이로 방위 오차 측정 및 보정", dept: "시운전1부", automation_level: "수동", frequency: "호선별" }));
+    n.push(nd("c3", "b1", 6, "GPS/AIS 통신확인", { desc: "위성 측위 및 선박자동식별장치 데이터 송수신 점검", dept: "시운전1부", has_ai_agent: true, tech: ["OCR", "RPA"], automation_level: "AI자동", frequency: "호선별", outputs: "통신점검 체크리스트" }));
+    n.push(nd("c4", "b2", 6, "조타 응답시험", { desc: "타각 지령 대비 실제 응답시간 측정", dept: "시운전1부", automation_level: "수동", frequency: "호선별" }));
+    n.push(nd("c5", "b2", 6, "비상조타 절체시험", { dept: "시운전1부", frequency: "호선별" }));
+    n.push(nd("c6", "b3", 6, "윈들러스 부하시험", { desc: "양묘기 부하 및 브레이크 성능 확인", dept: "시운전2부", tech: ["예측모델"], automation_level: "부분자동", frequency: "호선별" }));
     return n;
   }
   var MOCK_HIST = [
@@ -889,7 +924,7 @@
     var nn = makeNode(pid, lv, "");
     // 메인앱: 상단 기본 부서를 새 세부업무(lv6)에 채운다 — '지정 이후 만든 내용에만' 반영(소급 없음).
     //   개인 배포판은 내보낼 때 소속이 일괄 주입되므로 여기선 넣지 않는다.
-    if (!SOLO && hasDetail(lv) && S.dept) nn.dept = S.dept;   // lv6·lv7 에 기본 소속 주입
+    if (!SOLO && hasDetail(lv) && S.dept) { nn.dept = S.dept; nn.depts = [S.dept]; }   // lv6·lv7 에 기본 소속 주입
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
     S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
@@ -1363,7 +1398,7 @@
     }
     var mine = S.nodes.map(function (n) {
       var c = Object.assign({}, n);
-      if (hasDetail(c.level)) { c.dept = S.dept; c.owner = ""; }
+      if (hasDetail(c.level)) { c.dept = S.dept; c.depts = [S.dept]; }
       c.updated_by = "";        // markDirty 가 찍어둔 이름 제거 — 업무 데이터에 이름을 남기지 않는다
       return c;
     });
@@ -1391,7 +1426,7 @@
   function _dateStamp() { var d = new Date(), p = function (x) { return String(x).padStart(2, "0"); }; return "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()); }
   //    UTF-8 BOM 을 붙여 엑셀에서 한글이 깨지지 않게 하고, 컬럼은 메인앱 엑셀과 맞춘다.
   var CSV_COLS = ["lv0", "lv1", "lv2", "lv3", "lv4", "lv5", "lv6", "lv7", "레벨", "이름",
-    "부서/과", "상위부서", "담당자", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
+    "부서/과", "수행과(전체)", "상위부서", "발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
     "현재AI", "향후AI", "현재활용기술", "향후AI적용기술", "자동화수준", "적용선종", "특이사항",
     "반복구간", "산출물", "연계시스템(전체)", "업무설명"];
   function _csvCell(v) {
@@ -1407,11 +1442,12 @@
         var lvc = []; for (var i = 0; i <= LEVEL_MAX; i++) lvc.push(full[i] || "");   // lv0~lv7
         var leaf = hasDetail(n.level);
         var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6·lv7 은 소속(과) 반영
-        var owner = leaf ? (n.owner ? (mask ? maskName(n.owner) : n.owner) : "") : "";
         var ship = leaf ? (n.ship_types || []).join(", ") : "";        // 도메인 값 그대로
         var links = leaf ? (n.linked_systems || []).map(function (ls) { return (ls.system || "") + (ls.detail ? " · " + ls.detail : ""); }).filter(Boolean).join(" / ") : "";
+        // 수행과(전체) — 여러 과가 하는 업무는 과가 여럿이다(대표 과는 '부서/과' 열)
+        var allDepts = leaf ? deptsOf(n).filter(function (d) { return d !== "(미지정)"; }).join(", ") : "";
         rows.push(lvc.concat([
-          n.level, n.name || "", dept, dept ? deptParent(dept) : "", owner,
+          n.level, n.name || "", dept, allDepts, dept ? deptParent(dept) : "",
           leaf ? occurOf(n) : "", n.freq_unit || "", n.freq_count || "", n.work_hours || "",
           leaf && annualHours(n) ? annualHours(n) : "",
           leaf ? (n.has_ai_agent ? "Y" : "N") : "", leaf ? (n.has_ai_future ? "Y" : "N") : "",
@@ -1436,7 +1472,7 @@
     _dl(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }), "프로세스계층도_" + _dateStamp() + ".json");
     flash("JSON 원본을 내려받았습니다");
   }
-  // 개인 배포판 버튼용 — 소속·이름을 파일명에, 담당자는 항상 빈값(SOLO 는 owner 안 씀)
+  // 개인 배포판 버튼용 — 소속·이름을 파일명에 (담당자 필드는 폐지됐다)
   function soloCsvDownload() { csvDownload(false, "프로세스_" + (S.author || "이름") + "_" + (S.dept || "부서") + "_" + _dateStamp() + ".csv"); }
 
   function soloImport(text) {
@@ -1585,7 +1621,6 @@
     if (detail) (nn.tech || []).slice(0, 2).forEach(function (t) { chips += '<span class="mc n">' + esc(t) + "</span>"; });
     if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
     if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
-    if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
     // 취합 인원수 배지 — lv4~6 어디서나(메인앱 취합 산출물). SOLO 노드는 값이 없어 안 뜬다.
     var _sc = parseInt(nn.submit_count, 10);
     if (_sc >= 2) chips += '<span class="mc submit">👥 ' + _sc + "명</span>";
@@ -1629,7 +1664,6 @@
         var chips = "";
         if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
         if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
-        if (detail && nn.owner) chips += '<span class="mc n">' + esc(maskName(nn.owner)) + "</span>";
         if (kids.length) chips += '<span class="mc kids">▸' + kids.length + "</span>";
         body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + '" style="padding-left:' + (depth * 20) + 'px">'
           + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
@@ -1805,7 +1839,7 @@
       : '<div class="grid2" style="align-items:start">' + nameField + descField + "</div>";
 
     if (!detail) {
-      var hidden = ["dept", "owner", "outputs", "linked_system", "linked_system_detail", "automation_level", "freq_unit", "freq_count"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
+      var hidden = ["dept", "outputs", "linked_system", "linked_system_detail", "automation_level", "freq_unit", "freq_count"].some(function (k) { return n[k]; }) || n.has_ai_agent || (n.tech || []).length;
       fields += '<div class="note">📁 ' + esc(josa(LABELS[lv])) + ' 업무를 묶는 분류입니다.<br/>AI 에이전트·담당자 같은 세부 정보는 <b style="color:#0f766e">lv6 세부업무·lv7 단위작업</b>에서 입력합니다.</div>';
       if (hidden) fields += '<div class="warn">💾 이전에 입력한 세부 정보가 보존되어 있습니다. lv6으로 옮기면 다시 나타납니다.</div>';
     } else {
@@ -1817,12 +1851,14 @@
       var aiCur = (n.tech || []).length > 0, aiFut = (n.future_tech || []).length > 0;
       function aiBadge(on) { return '<span class="aicard ' + (on ? "on" : "") + '" style="display:inline-flex;align-items:center;gap:5px;margin:0;padding:2px 8px;font-size:12px;vertical-align:middle"><span class="ait" style="color:' + (on ? "#166534" : "#a8a29e") + '">🤖 ' + (on ? "AI 적용" : "미적용") + "</span></span>"; }
       var automationBlock = '<div><div class="fl">현재 자동화 수준</div><select class="fs" data-fkey="automation_level" data-id="' + esc(id) + '">' + opt("automation_level", n.automation_level) + "</select></div>";
-      // 개인 모드는 상단에 소속·이름을 이미 받았다 — 카드마다 또 묻지 않고 내보낼 때 채운다
+      // 소속은 **입력받지 않는다** — 제출 봉투의 소속(= 그 사람의 과)이 곧 이 업무의 과다.
+      // 노드마다 또 물으면 같은 값을 두 번 받는 셈이고, 취합이 여러 과를 모으는 것과도 어긋난다.
+      // 읽기 전용으로 보여만 준다(어느 과 업무인지 보이던 정보를 잃지 않게).
+      var dsList = deptsOf(n);
+      var deptRO = '<div><div class="fl">수행 과 <span style="color:#a8a29e;font-weight:600">· 제출 소속에서 자동</span></div>'
+           + '<div class="roval">' + esc(dsList.join(", ")) + (dsList.length > 1 ? ' <span style="color:#a8a29e">(' + dsList.length + "개 과)</span>" : "") + "</div></div>";
       var nonSolo = SOLO ? "" :
-             '<div class="grid2">'
-           + '<div><div class="fl">부서/과</div><select class="fs" data-fkey="dept" data-id="' + esc(id) + '">' + deptOptions(n.dept) + "</select></div>"
-           + '<div><div class="fl">담당자</div><input class="fi" style="font-size:14.5px;padding:8px 10px" data-fkey="owner" data-id="' + esc(id) + '" value="' + esc(n.owner) + '" placeholder="이름" /></div>'
-           + "</div>"
+             '<div class="grid2">' + deptRO + "</div>"
            // 수행 주기 = 기간 단위 칩(택1) + 횟수. 연간 횟수는 횟수×단위연간수로 파생하므로 별도 입력칸 없음
            + '<div style="margin-top:9px">' + freqUnitChips(id, n.freq_unit) + "</div>"
            + '<div class="grid2" style="margin-top:8px">'
@@ -2241,7 +2277,10 @@
                 ["AI 적용 — 현재", st.ai, st.rate + "%", "ai_now"],
                 ["AI 적용 — 향후", st.aiFuture, st.rateFuture + "%", "ai_future"],
                 ["연간 공수", st.hours, "시간 (상시루틴 기준)", "hours"],
-                ["미입력", st.missingTotal, "소속·부하가 빈 업무", "missing"]]
+                // 부하 미입력 = 사람이 채울 것. 호선루틴 보류는 구간길이 조인으로 풀릴 것이라 따로 적는다.
+                ["부하 미입력", st.missingTotal,
+                 "연간공수 산출 불가" + (st.unresolvedTotal ? " · 호선루틴 " + st.unresolvedTotal + "건 보류" : ""),
+                 "missing"]]
       .map(function (m) {
         var on = S.sumPick && S.sumPick.axis === m[3];
         return '<div class="metric clickable' + (on ? " picked" : "") + '" data-act="sumpick" data-axis="' + m[3] + '" data-key="">'
@@ -2251,14 +2290,20 @@
     // 세 그래프 공통 스케일 = 과별 업무 수의 최댓값. 이게 이 화면의 핵심이다.
     var scale = 0;
     Object.keys(st.byDept).forEach(function (g) { scale = Math.max(scale, st.byDept[g]); });
-    var charts = deptChart("과별 세부업무 수", "dept", st.byDept, "#78716c", rows, scale, "부서별 그룹 · 최대 " + scale)
+    var charts = deptChart("과별 세부업무 수", "dept", st.byDept, "#78716c", rows, scale, "수행 과 기준 · 합계 ≠ lv6 수")
       + deptChart("과별 AI 적용 — 현재", "dept_ai_now", st.byDeptAiNow, "#0f766e", rows, scale, "위 그래프와 같은 눈금")
       + deptChart("과별 AI 적용 — 향후", "dept_ai_future", st.byDeptAiFuture, "#7c3aed", rows, scale, "위 그래프와 같은 눈금");
+    // ★ KPI 는 **팀 단위 업무 수**, 과별 그래프는 **수행 주체 기준**이라 단위가 다르다.
+    //   한 업무를 3개 과가 하면 KPI 는 1, 과별 합계는 3 — 서로 검산하면 안 된다.
+    //   이 문구가 없으면 "숫자가 안 맞는다"는 문의가 반드시 나온다.
+    var UNIT_NOTE = '<div class="warn" style="margin-top:14px;border-radius:10px;font-size:13.5px">'
+      + '※ <b>과별 집계의 합은 위 KPI 와 다릅니다.</b> 한 업무를 여러 과가 수행하면 각 과에 1회씩 잡히기 때문입니다 '
+      + '(KPI 는 팀 단위 업무 수).</div>';
     return '<div class="page scroll"><div class="pw wide"><div class="h1">📊 요약</div>'
       + '<div class="sub">세부업무(lv6) 기준 현황입니다. lv7 단위작업 값은 부모 lv6 으로 롤업됩니다. '
       + '<b>KPI·막대를 클릭하면</b> 오른쪽 목록이 그 업무들로 좁혀집니다.</div>'
       + '<div class="metricgrid five" style="margin-top:16px">' + kpis + "</div>"
-      + '<div class="sumgrid"><div>' + charts + "</div>" + sumSide() + "</div></div></div>";
+      + '<div class="sumgrid"><div>' + UNIT_NOTE + charts + "</div>" + sumSide() + "</div></div></div>";
   }
 
   /** 요약 드릴다운 — 선택한 집계 칸에 속한 lv6 목록.
@@ -2269,18 +2314,15 @@
       if (!isLoadLevel(n.level)) return false;
       if (axis === "all") return true;
       if (axis === "hours") return true;                     // 전체 — 정렬만 다르다
-      if (axis === "missing") return !n.dept || rollupHours(n) <= 0;
+      if (axis === "missing") return rollupHours(n) <= 0 && !isShipRoutine(n);
+      if (axis === "unresolved") return rollupHours(n) <= 0 && isShipRoutine(n);
       if (axis === "ai_now") return rollupHasAi(n);
       if (axis === "ai_future") return rollupHasAi(n, "has_ai_future");
-      if (axis === "dept_ai_now") return (n.dept || "(미지정)") === key && rollupHasAi(n);
-      if (axis === "dept_ai_future") return (n.dept || "(미지정)") === key && rollupHasAi(n, "has_ai_future");
-      if (axis === "dept") return (n.dept || "(미지정)") === key;
-      if (axis === "dept_group") return (n.dept ? deptParent(n.dept) : "(미지정)") === key;
+      if (axis === "dept_ai_now") return deptsOf(n).indexOf(key) >= 0 && rollupHasAi(n);
+      if (axis === "dept_ai_future") return deptsOf(n).indexOf(key) >= 0 && rollupHasAi(n, "has_ai_future");
+      if (axis === "dept") return deptsOf(n).indexOf(key) >= 0;
+      if (axis === "dept_group") return deptGroupsOf(n).indexOf(key) >= 0;
       if (axis === "automation") return (n.automation_level || "(미지정)") === key;
-      if (axis === "owner") {
-        var ow = String(n.owner || "").trim();
-        return (ow ? (n.dept || "(미지정)") + " · " + ow : "(미지정)") === key;
-      }
       if (axis === "tech_now") return rollupTechs(n, "tech").indexOf(key) >= 0;
       if (axis === "tech_future") return rollupTechs(n, "future_tech").indexOf(key) >= 0;
       return false;
@@ -2289,29 +2331,26 @@
     if (axis === "hours") out.sort(function (a, b) { return rollupHours(b) - rollupHours(a); });
     return out;
   }
-  /** `소속 · 이름` 키의 이름만 마스킹 (excel_io._mask_owner_key 트윈). 요약은 편집 위젯이 아니다. */
-  function maskOwnerKey(key) {
-    var i = String(key).lastIndexOf(" · ");
-    return i < 0 ? key : key.slice(0, i + 3) + maskName(key.slice(i + 3));
-  }
   /** 우측 목록. 선택이 없으면 **전체 lv6** 을 보여준다(빈 안내판보다 쓸모 있다). */
   function sumSide() {
     var p = S.sumPick || { axis: "all", key: "" };
-    var AX = { all: "전체 세부업무", hours: "연간 공수 큰 순", missing: "미입력 (소속·부하)",
+    var AX = { all: "전체 세부업무", hours: "연간 공수 큰 순", missing: "부하 미입력",
+               unresolved: "호선루틴 보류 (구간길이 미상)",
                ai_now: "AI 적용 — 현재", ai_future: "AI 적용 — 향후", dept: "과", dept_group: "부서",
                dept_ai_now: "AI 현재 · 과", dept_ai_future: "AI 향후 · 과",
-               owner: "담당자", automation: "자동화 수준", tech_now: "활용기술 — 현재", tech_future: "활용기술 — 향후" };
+               automation: "자동화 수준", tech_now: "활용기술 — 현재", tech_future: "활용기술 — 향후" };
     var list = sumNodes(p.axis, p.key);
-    var title = (AX[p.axis] || p.axis) + (p.key ? " · " + (p.axis === "owner" ? maskOwnerKey(p.key) : p.key) : "");
+    var title = (AX[p.axis] || p.axis) + (p.key ? " · " + p.key : "");
     var rows = list.map(function (n) {
       // 위: lv6 이름 / 아래: 상위 경로(작게) / 그 아래: 소속·기술·공수
       var up = pathNames(n.id).slice(3, -1).join(" › ");
       var techs = rollupTechs(n, "tech"), ftechs = rollupTechs(n, "future_tech");
       var h = rollupHours(n);
-      var meta = [n.dept || "소속 미지정",
+      var ds = deptsOf(n);          // 여러 과가 하는 업무면 전부 보여준다
+      var meta = [ds.join(", "),
                   techs.length ? "현재 " + techs.join(", ") : "",
                   ftechs.length ? "향후 " + ftechs.join(", ") : "",
-                  h ? h + "h/년" : "부하 미입력"].filter(Boolean).join(" · ");
+                  h ? h + "h/년" : (isShipRoutine(n) ? "호선루틴 보류" : "부하 미입력")].filter(Boolean).join(" · ");
       return '<div class="sumrow" data-act="gonode" data-id="' + esc(n.id) + '" title="클릭하면 계층 편집에서 이 업무를 엽니다">'
         + '<div class="sp">' + esc(n.name || "이름 없음") + "</div>"
         + (up ? '<div class="spath">' + esc(up) + "</div>" : "")
@@ -2599,7 +2638,7 @@
       return;
     }
     if (f === "ls_detail") { actLinkSet(id, +el.dataset.idx, "detail", el.value); return; }   // 연계 추가정보 — 모델만
-    var FIELDS = { owner: 1, outputs: 1, linked_system_detail: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
+    var FIELDS = { outputs: 1, linked_system_detail: 1, work_hours: 1, annual_count: 1, freq_count: 1 };
     if (FIELDS[f]) { var nf = byId(id); if (nf) { nf[f] = el.value; markDirty(id); } return; }
     // 도메인 값(dom)은 여기가 아니라 onChange(블러)에서 한 번만 커밋 — 글자마다 커밋하면 미완성 값이 박힌다.
     // 검색은 디바운스 rerender — 타이핑을 멈춘 뒤에만 다시 그려 input 파괴(글자 유실)를 피하고 라이브도 유지.
@@ -2634,7 +2673,7 @@
     actAddTech(el.dataset.id, el.value);
   }
   // 타이핑 중엔 모델만 갱신하고, 블러(change) 때 rerender 로 동기화하는 자유 텍스트/숫자 필드들.
-  var BLUR_SYNC = { name: 1, desc: 1, owner: 1, outputs: 1, linked_system_detail: 1, ls_detail: 1,
+  var BLUR_SYNC = { name: 1, desc: 1, outputs: 1, linked_system_detail: 1, ls_detail: 1,
                     work_hours: 1, annual_count: 1, freq_count: 1, ev_offset_start: 1, ev_offset_days: 1 };
   // change = 값이 확정된 시점(칸을 벗어나거나 Enter). select/checkbox 와 도메인 값 입력이 여기 온다.
   function onChange(e) {

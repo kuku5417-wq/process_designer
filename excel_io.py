@@ -5,8 +5,10 @@
 lv0~lv2 는 저장 데이터에 없는 고정값이므로 이 시점에 재부착한다.
 
 업로드: 같은 포맷을 읽어 id 로 기존 노드와 매칭하고, 부모는 lv 경로로 해석한다.
-담당자 컬럼이 마스킹된 값(홍*동)이면 원본을 덮어쓰지 않는다 — 마스킹된 엑셀을 그대로
-올렸을 때 이름이 파괴되는 것을 막는 안전장치다.
+
+담당자(owner) 컬럼은 **폐지됐다** — 제출자가 자기 일을 정의한 것이라 이름은 제출자와
+중복이고 어떤 계산도 좌우하지 않았다(공통규칙 7 최소수집). 옛 엑셀에 그 열이 남아 있어도
+무시된다(오류 아님).
 """
 from __future__ import annotations
 
@@ -31,7 +33,6 @@ FIELD_COLS: dict[str, str] = {
     "활용기술": "tech",
     "부서/과": "dept",
     "자동화수준": "automation_level",
-    "담당자": "owner",
     "수행주기": "frequency",
     "1회소요시간(h)": "work_hours",
     "기간단위": "freq_unit",
@@ -69,7 +70,7 @@ def _dfs_order(data: dict) -> list[dict]:
 
 
 def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
-    """계층도를 엑셀용 평면 표로. mask=True 면 담당자 이름을 마스킹한다."""
+    """계층도를 엑셀용 평면 표로. mask=True 면 작성자 이름을 마스킹한다."""
     nmap = schema.node_map(data.get("nodes", []))
     rows: list[dict] = []
     for n in _dfs_order(data):
@@ -84,8 +85,6 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["부서/과"] = n.get("dept", "")
         row["상위부서"] = schema.dept_parent(n.get("dept")) if n.get("dept") else ""   # 파생(과→부서)
         row["자동화수준"] = n.get("automation_level", "")
-        owner = n.get("owner", "")
-        row["담당자"] = mask_name(owner) if (mask and owner) else owner
         row["수행주기"] = n.get("frequency", "")
         row["1회소요시간(h)"] = n.get("work_hours", "")
         row["기간단위"] = n.get("freq_unit", "")
@@ -132,9 +131,13 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     s = schema.stats(data)
     lv6 = f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}"
     multi = "※ 다중선택 — 한 업무가 여러 값을 가지면 각 값에 1회씩(합계 ≠ 업무 수)"
+    # 과·부서 축은 **수행 주체 기준**이라 한 업무가 여러 과에 잡힌다. lv6 수와 단위가 다르다.
+    multi_dept = "※ 한 업무를 여러 과가 수행하면 각 과에 1회씩 — 합계는 세부업무 수와 다릅니다"
     rows: list[dict] = [
         {"구분": "전체", "항목": "업무 수(전 레벨)", "값": s["total"]},
         {"구분": "전체", "항목": f"{lv6} 수", "값": s["detail_total"]},
+        {"구분": "전체", "항목": "부하 미입력", "값": s["missing_total"]},
+        {"구분": "전체", "항목": "호선루틴 보류", "값": s["unresolved_total"]},
         {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "적용", "값": s["ai_yes"]},
         {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "미적용", "값": s["ai_no"]},
         {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "적용률(%)", "값": s["ai_rate"]},
@@ -145,12 +148,10 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     for lv, c in s["by_level"].items():
         rows.append({"구분": "레벨별", "항목": f"lv{lv} ({schema.LEVEL_LABELS.get(lv, '')})", "값": c})
     for d, c in s["by_dept"].items():
-        rows.append({"구분": f"과별 ({lv6} 기준)", "항목": d, "값": c})
+        rows.append({"구분": f"과별 ({lv6} 기준)", "항목": d, "값": c, "비고": multi_dept})
     # 부서 롤업 — 화면(JS)은 부서별로 보여주는데 엑셀엔 없어서 축이 어긋나 있었다
     for g, c in s["by_dept_group"].items():
-        rows.append({"구분": f"부서별 ({lv6} 기준)", "항목": g, "값": c})
-    for o, c in s["by_owner"].items():
-        rows.append({"구분": f"담당자별 ({lv6} 기준)", "항목": _mask_owner_key(o, mask), "값": c})
+        rows.append({"구분": f"부서별 ({lv6} 기준)", "항목": g, "값": c, "비고": multi_dept})
     for a, c in s["by_automation"].items():
         rows.append({"구분": f"자동화수준별 ({lv6} 기준)", "항목": a, "값": c})
     for t, c in s["by_tech_now"].items():
@@ -158,14 +159,6 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     for t, c in s["by_tech_future"].items():
         rows.append({"구분": f"활용기술 — 향후 ({lv6} 기준)", "항목": t, "값": c, "비고": multi})
     return pd.DataFrame(rows)
-
-
-def _mask_owner_key(key: str, mask: bool = True) -> str:
-    """`소속 · 이름` 키의 이름 부분만 마스킹. 요약은 편집 위젯이 아니라 항상 마스킹 대상이다."""
-    if not mask or " · " not in key:
-        return key
-    dept, _, name = key.rpartition(" · ")
-    return f"{dept} · {mask_name(name)}"
 
 
 def build_xlsx(data: dict, mask: bool = True) -> bytes:
@@ -181,7 +174,7 @@ def build_xlsx(data: dict, mask: bool = True) -> bytes:
 
         widths = {"lv0": 8, "lv1": 8, "lv2": 10, "lv3": 16, "lv4": 20, "lv5": 20, "lv6": 22, "lv7": 22,
                   "레벨": 6, "이름": 22, "AI에이전트": 11, "활용기술": 20, "부서/과": 12,
-                  "자동화수준": 11, "담당자": 10, "수행주기": 10,
+                  "자동화수준": 11, "수행주기": 10,
                   "산출물/연계시스템": 26, "업무설명": 40, "작성자": 10, "수정일시": 20, "id": 12}
         ws = xw.sheets[SHEET_TREE]
         for i, c in enumerate(tree.columns, start=1):
@@ -240,7 +233,6 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
 
     · id → 이름 경로 순으로 기존 노드와 매칭(created_at 보존), 둘 다 없으면 신규
     · 부모는 lv3~lv6 경로로 해석 — 부모 행이 반드시 존재해야 한다
-    · 담당자가 마스킹된 값이면 기존 원본을 유지
     """
     errs: list[str] = []
     try:
@@ -295,11 +287,6 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
         used_ids.add(nid)
         level = schema.LEVEL_MIN + len(path) - 1
 
-        owner_in = _cell(r.get("담당자"))
-        owner_old = (base or {}).get("owner", "")
-        # 마스킹된 값을 그대로 올린 경우 원본 보존 (홍*동 → 홍길동 유지)
-        owner = owner_old if (owner_in and owner_old and owner_in == mask_name(owner_old)) else owner_in
-
         tech_raw = _cell(r.get("활용기술"))
         _split = lambda s: [t.strip() for t in _cell(s).split(",") if t.strip()]
         node = {
@@ -313,7 +300,6 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             "has_ai_agent": _cell(r.get("AI에이전트")).upper() in ("Y", "YES", "TRUE", "1", "O"),
             "tech": [t.strip() for t in tech_raw.split(",") if t.strip()],
             "automation_level": _cell(r.get("자동화수준")),
-            "owner": owner,
             "frequency": _cell(r.get("수행주기")),
             "work_hours": _cell(r.get("1회소요시간(h)")),
             "freq_unit": _cell(r.get("기간단위")),
@@ -532,6 +518,7 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
     idx = _current_path_ids(master)                    # 경로튜플 → master 노드 id
     mmap = schema.node_map(master["nodes"])
     submitters: dict[tuple, set] = {}                  # 경로 → {(부서,이름)}
+    dept_sets: dict[tuple, list[str]] = {}             # 경로 → [수행 과, ...] (순서 유지, 뒤에서 dedup)
     details: dict[tuple, list[str]] = {}               # 경로 → [부서 · 요약, ...]
     reports: list[dict] = []
 
@@ -602,12 +589,31 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
             #   결론): "이 세부업무를 몇 명이 하는가"만 센다.
             if n.get("level") == schema.LOAD_LEVEL:
                 submitters.setdefault(path, set()).add((dept, author))
+                # 수행 과 누적 — 한 업무를 여러 과가 하면 **모두** 기록해야 과별 집계에 다 잡힌다.
+                # 예전엔 첫 제출자의 과만 남아, 나머지 과의 업무가 집계에서 사라졌다
+                # (submit_count 는 3명이라는데 by_dept 는 한 과에만 1을 주는 모순).
+                if dept:
+                    dept_sets.setdefault(path, []).append(dept)
                 summ = _detail_summary(n)
                 if summ:
                     details.setdefault(path, []).append(f"{dept} · {summ}")
 
         reports.append({"filename": filename, "dept": dept, "author": author,
                         "nodes": len(incoming["nodes"]), "new": new_cnt, "skipped": skipped, "errors": ""})
+
+    # 수행 과 기록 — 기존 값과 합집합(여러 번 취합해도 과가 사라지지 않게). 정규화는 normalize 가 한다.
+    for path, ds in dept_sets.items():
+        mid = idx.get(path)
+        node = mmap.get(mid) if mid else None
+        if not node:
+            continue
+        merged_ds = list(node.get("depts") or [])
+        for d in ds:
+            if d not in merged_ds:
+                merged_ds.append(d)
+        node["depts"] = merged_ds
+        if not node.get("dept") and merged_ds:
+            node["dept"] = merged_ds[0]          # 대표 과 (카드·엑셀 단일 표시용)
 
     # 집계 결과를 노드에 기록 — N≥2 인 경로만 (혼자 한 업무는 배지 노이즈)
     for path, subs in submitters.items():

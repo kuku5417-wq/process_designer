@@ -80,7 +80,7 @@ uv run streamlit run app.py --server.port 8540
 > **다운로드는 파이썬을 거치지 않는다(클라이언트 사이드).** 예전엔 `download` 이벤트로 파이썬이
 > bytes 를 만들어 sandboxed iframe 의 data-URI 로 내려줬는데, 최신 Chrome 이 **사용자 제스처 밖
 > sandbox 다운로드를 차단**해 실패했다. 지금은 프론트가 클릭 제스처 안에서 Blob 을 만들어
-> 바로 내려받는다(`csvRows`/`csvDownload`/`jsonDownload`, 담당자 마스킹 유지). 메인앱 버튼도
+> 바로 내려받는다(`csvRows`/`csvDownload`/`jsonDownload`). 메인앱 버튼도
 > **"엑셀(CSV) 다운로드"** (진짜 `.xlsx` 아님 — 브라우저에 xlsx 라이브러리 없음). `app.py` 의 구
 > `download` 핸들러는 사실상 죽은 경로다.
 
@@ -102,7 +102,34 @@ uv run streamlit run app.py --server.port 8540
 ### 상세 필드·도메인 (lv6·lv7 공통)
 
 - **부서/과 2단**: `DEPT_TREE`(부서→과) + `dept_parent(과)` 로 과(leaf)만 노드에 저장하고 부서는 파생.
-  선택 UI 는 `<optgroup>`, 집계는 `by_dept`(과별) + `by_dept_group`(부서 롤업).
+  집계는 `by_dept`(과별) + `by_dept_group`(부서 롤업).
+- **소속은 입력받지 않는다.** 제출 JSON 봉투의 소속(`exported_dept`)이 곧 그 사람의 과다.
+  값이 들어오는 경로는 둘뿐 — ① 취합(봉투) ② 메인앱 상단 `부서`(새 lv6 자동 채움).
+  상세 패널은 **읽기 전용**(`.roval`)으로 보여만 준다. 노드마다 또 물으면 같은 값을 두 번 받는 셈이다.
+  (엑셀 `부서/과` 열은 일괄 보정 수단으로 남긴다.)
+- **`depts[]` — 한 업무를 여러 과가 수행한다.** `collect_jsons` 가 제출한 과를 모두 누적한다.
+  `dept` 는 **대표 과**(카드·엑셀 단일 표시용)이고 `normalize` 가 둘을 양방향 백필한다.
+  예전엔 첫 제출자의 과만 남아 **`submit_count` 는 3명인데 `by_dept` 는 한 과에만 1을 주는 모순**이 있었다.
+- **담당자(`owner`)는 폐지됐다.** 제출자가 자기 일을 정의한 것이라 이름은 제출자와 중복이고,
+  어떤 계산도 좌우하지 않았다(공통규칙 7 최소수집). `normalize` 가 **로드 시점에 옛 값을 지운다** —
+  저장을 누르면 파일에서도 사라진다. `updated_by`(저장한 사람)·상단 `작성자`(`S.author`,
+  제출 파일명 구분자)는 **별개 필드**라 그대로 둔다. 되살리지 말 것.
+
+#### ★ KPI 와 과별 집계는 단위가 다르다 — 합이 안 맞는 게 정상
+
+| 축 | 세는 단위 | 3개 과가 같은 업무를 할 때 |
+|---|---|---|
+| KPI `세부업무(lv6)` (`detail_total`) | **팀 단위 업무 수** | **1** |
+| 과별 집계·그래프 (`by_dept`) | **수행 주체(과)** | 과마다 1 → **합 3** |
+
+**과별 합계로 KPI 를 검산하면 안 된다.** AI 적용률(`ai_yes/detail_total`)도 팀 단위다.
+부서 롤업(`by_dept_group`)은 **부서 집합으로 중복 제거** — 같은 부서의 두 과가 해도 그 부서는 1회다
+(과별 3, 부서별 1~3). 요약 화면 상단에 이 문구를 상시 노출한다 — 없으면 "숫자가 안 맞는다"는
+문의가 반드시 나온다. 헬퍼는 `depts_of` / `dept_groups_of`(JS `deptsOf`/`deptGroupsOf`).
+
+- **`occur_pattern`·`apply_phases`·`events` 는 파이썬 스키마에도 있어야 한다.** 없던 시절엔
+  `DETAIL_FIELDS` 에 빠져 있어 **취합이 발생패턴을 통째로 유실**했다(숫자만 남고 "언제·몇 번"이 사라짐).
+  부하 엔진의 입력이므로 빼지 말 것.
 - **소속 정규화 3단** (`canon_dept` / `dept_parent`, JS 트윈 `canonDept`/`deptParent`):
   ① 과면 그 부서 → ② **값 자체가 부서명이면 그 부서** → ③ 그 외 `미분류`.
   ②가 핵심이다 — 옛 버전은 소속을 `시운전1부` 처럼 **부서명으로** 적은 노드가 많고, 과만 알던
@@ -176,9 +203,10 @@ uv run streamlit run app.py --server.port 8540
   를 표현 못 했다.** 이 분리로 상시·호선루틴이 같은 형태가 된다.
 - **`MILESTONE_EVENTS` 는 운영 12종 전부**(tbm `_PJTEVNT_MAP` 키). 사외망 더미 milestone 에
   G/T 가 없는 건 나중 조인 시 결측 문제이지 수집 옵션에서 뺄 이유가 아니다.
-- **개인 파일에 이름을 넣지 않는다** — `soloExport` 가 lv6 에 `dept` 만 주입하고 `owner`·
-  `updated_by` 를 비운다. 취합은 소속별 집계다. **이름칸은 필수 아님**(소속만 필수) — 어차피
-  제출 파일에서 지워지므로 `canSave`/`ready` 는 `!!S.dept` 만 본다.
+- **개인 파일에 이름을 넣지 않는다** — `soloExport` 가 lv6 에 `dept`·`depts` 만 주입하고
+  `updated_by` 를 비운다(`owner` 필드는 폐지됐다). 취합은 소속별 집계다.
+  상단 **소속·이름 둘 다 필수**다 — `canSave`/`ready`/`identReady` 가 `!!S.dept && !!S.author` 를 본다.
+  이름은 업무 데이터에 저장되지 않고 **제출 파일명 구분자**로만 쓰인다.
 - **세부 패널은 짧게, 요약은 카드로.** lv6 카드(`cardHTML`, SOLO)에 발생패턴·부하·자동화·선종을
   `.mc occ/load/auto/ship` 배지로 띄우고, 세부 패널(`occurBlock`)에서 부하 수치·선종 힌트 같은
   **읽기전용 요약은 뺐다**(미완성일 때만 한 줄 안내). 보드에서 한눈에 비교되고 패널 스크롤이 준다.
@@ -227,7 +255,11 @@ uv run streamlit run app.py --server.port 8540
 - 막대는 costplan `.cp-barh` 패턴 이식 — `grid` 행 + 트랙 + `<i style="width:N%">`.
   **인라인 스타일은 width/background 뿐, 라이브러리·CDN 0**(사내망). 0 아니면 최소 2% 는 보인다.
 - 색 의미 고정: 업무 수 = 회색 `#78716c` / AI 현재 = teal `#0f766e` / AI 향후 = 보라 `#7c3aed`.
-- `missing`(미입력) = **소속이 비었거나 롤업 연간공수가 0** 인 lv6. `stats.missing_total` 정본.
+- **`missing`(부하 미입력) = 롤업 연간공수가 0 이고 호선루틴이 아닌 lv6.** `stats.missing_total` 정본.
+  목적은 "부하가 안 들어와 연간공수를 못 구하는 업무 찾기"다 — **소속 유무는 보지 않는다**
+  (소속은 봉투에서 자동으로 오므로 비어 있을 일이 없고, 섞으면 무엇을 채워야 하는지가 흐려진다).
+  **호선루틴은 `unresolved_total` 로 따로 센다** — 구간길이 미상으로 **보류**된 것이지 입력이
+  빠진 게 아니다. 섞으면 다 채워도 숫자가 안 줄어 지표가 죽는다. 판정은 `is_ship_routine`(JS `isShipRoutine`).
 
 ### 요약 드릴다운
 
@@ -236,10 +268,8 @@ uv run streamlit run app.py --server.port 8540
 
 - **`sumNodes` 의 필터는 `stats()` 가 쓰는 게이트를 그대로 재사용한다**(`isLoadLevel` +
   `rollupHasAi`/`rollupTechs`). 조건을 새로 쓰면 표의 숫자와 목록 개수가 조용히 어긋난다.
-- 축별 중복 정책: 부서·과·담당자·자동화·AI 는 **중복 없음**(lv6 하나가 한 칸에만),
-  기술·선종·특이사항은 **다중선택이라 합계 > 업무 수가 정상**(표에 부제로 명시).
-- 담당자 축(`by_owner`)의 키는 `소속 · 이름`이고 **표시는 항상 마스킹**
-  (`excel_io._mask_owner_key` ↔ JS `maskOwnerKey`). 요약은 편집 위젯이 아니다.
+- 축별 중복 정책: 자동화·AI 는 **중복 없음**(lv6 하나가 한 칸에만).
+  기술·선종·특이사항은 **다중선택**, **과·부서는 다중 수행**이라 합계 > 업무 수가 정상(표에 부제로 명시).
 - 도메인 관리의 기술 뱃지는 `현재 N · 향후 M`(lv6 롤업 기준)이지만,
   **삭제 잠금은 `domUsage`(어디든 쓰이면 잠금)** 로 따로 판단한다 — 잠금까지 lv6 로 좁히면
   lv3~lv5 에 숨어 있는 값(레벨 승격 시 보존분)이 안 잡혀 쓰는 중인데 지워진다.
@@ -255,7 +285,7 @@ uv run streamlit run app.py --server.port 8540
   사내 SOLA 만 설정된 환경에서도 그대로 동작한다. 실패는 provider 별 사유를 모아 화면에 띄운다.
 - SOLA 금기(토큰 상한 미전송·`stream` 금지·`proxies={"http":None,"https":None}`·`verify=False`·
   `<think>` 제거)는 `llm_client` 주석에 그대로 있다 — 지우지 말 것.
-- **컨텍스트에 `owner`/`updated_by` 를 넣지 않는다**(개인정보 최소수집). 담당자를 물으면 소속으로 답한다.
+- **컨텍스트에 `updated_by` 를 넣지 않는다**(개인정보 최소수집). 담당자를 물으면 수행 과로 답한다.
 - 스트리밍 없음 — 이 앱은 "사용자 조작 1건 = 왕복 1회" 구조다.
 
 ### 시드 배포 · lv3 칩 · 다중 드래그
