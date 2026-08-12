@@ -1,9 +1,9 @@
 @echo off
 setlocal
 REM ============================================================
-REM  process_designer - corporate-net venv setup + check + run
+REM  process_designer - venv setup + check + run
 REM  (ASCII only: avoids Korean-encoding batch parse errors)
-REM  local C: venv -> deps(native-tls) -> check_env.py -> run app
+REM  local C: venv -> net detect -> deps(locked) -> check -> run
 REM ============================================================
 set "APP=process_designer"
 title %APP%
@@ -15,7 +15,10 @@ cd /d "%~dp0"
 REM ---- network (proxy on/off) is auto-detected below, after the python guard ----
 
 REM ---- use Windows cert store (fixes SSL UnknownIssuer behind corp SSL inspection) ----
+REM      UV_NATIVE_TLS is deprecated in new uv; UV_SYSTEM_CERTS replaces it.
+REM      Both are set so old and new uv builds behave the same.
 set "UV_NATIVE_TLS=true"
+set "UV_SYSTEM_CERTS=true"
 
 REM ---- corp proxy drops large parallel downloads: serialize + longer timeout (resumable) ----
 set "UV_CONCURRENT_DOWNLOADS=1"
@@ -39,7 +42,7 @@ if errorlevel 1 (
 set "UV_PROJECT_ENVIRONMENT=%VENV%"
 
 echo.
-echo [1/3] install deps (UV_NATIVE_TLS=true : use Windows cert store)
+echo [1/3] install deps (UV_SYSTEM_CERTS=true : use Windows cert store)
 REM --- require 64-bit Python 3.12 (32-bit Python312-32 auto-excluded by x86_64) ---
 uv python find cpython-3.12-windows-x86_64 >nul 2>nul
 if errorlevel 1 (
@@ -50,18 +53,21 @@ if errorlevel 1 (
 )
 
 REM --- network: pypi needs the proxy on the corporate net, and must NOT use it outside.
-REM     Detected with path_config.is_internal() (= NAS_BASE_PATH reachable?), the same rule
-REM     the app itself uses. It imports stdlib only, so it runs before deps are installed.
+REM     _netcheck.py decides: NAS_BASE_PATH reachable OR proxy port reachable = corporate.
+REM     It is stdlib-only on purpose - deps are not installed yet, so app_config cannot be
+REM     used here (it needs python-dotenv and would silently report "external").
 REM     Do NOT ask the user: an unanswered prompt silently picked the wrong network before.
-REM     Override when detection is wrong (e.g. corporate net with NAS unmounted):
-REM       set PD_NET=corporate     (or  set PD_NET=external)  before running this file.
+REM     Override when detection is wrong:
+REM       set SHI_NET=corporate     (or  set SHI_NET=external)  before running this file.
 set "NETMODE="
+if defined SHI_NET set "NETMODE=%SHI_NET%"
 if defined PD_NET set "NETMODE=%PD_NET%"
 if defined NETMODE goto :netdone
+if not exist "%~dp0_netcheck.py" goto :netext
 set "SYSPY="
 for /f "delims=" %%P in ('uv python find cpython-3.12-windows-x86_64 2^>nul') do set "SYSPY=%%P"
 if not defined SYSPY goto :netext
-"%SYSPY%" -c "import path_config,sys; sys.exit(0 if path_config.is_internal() else 1)" >nul 2>nul
+"%SYSPY%" "%~dp0_netcheck.py" >nul 2>nul
 if errorlevel 1 goto :netext
 set "NETMODE=corporate"
 goto :netdone
@@ -71,14 +77,14 @@ set "NETMODE=external"
 if /I "%NETMODE%"=="corporate" (
   set "HTTP_PROXY=http://60.200.254.1:9090"
   set "HTTPS_PROXY=http://60.200.254.1:9090"
-  echo   [net] corporate ^(NAS reachable^) : proxy ON
+  echo   [net] corporate ^(NAS or proxy reachable^) : proxy ON
 ) else (
-  echo   [net] external ^(NAS not reachable^) : proxy OFF   [override: set PD_NET=corporate]
+  echo   [net] external ^(NAS and proxy not reachable^) : proxy OFF   [override: set SHI_NET=corporate]
 )
 
 REM --- --locked: honor uv.lock as-is. Without it uv silently re-resolves to the newest
-REM     releases when the lock drifts - that is exactly how this app ended up needing a
-REM     fresh pyarrow download and failing on the corporate net. Fail loudly instead.
+REM     releases when the lock drifts, which turns into large fresh downloads that the
+REM     corporate proxy then kills. Fail loudly instead.
 if exist "pyproject.toml" (
   uv sync --locked --python cpython-3.12-windows-x86_64
 ) else (
@@ -89,11 +95,15 @@ if errorlevel 1 (
   echo.
   echo [FAIL] dependency install failed. Read the actual uv error above first.
   echo        These are only hints - not detections:
-  echo   - Connect / timeout    : on the corporate net? rerun and answer I at the Network prompt
-  echo   - SSL UnknownIssuer    : UV_NATIVE_TLS=true is already set.
-  echo                            else  set SSL_CERT_FILE=C:\path\corp-ca.pem
-  echo   - lock is out of date  : uv lock   ^(then rerun; --locked refuses a drifted lock^)
-  echo   - last resort: uv sync --native-tls --allow-insecure-host pypi.org --allow-insecure-host files.pythonhosted.org
+  echo   - Connect / timed out : corporate net but proxy OFF? rerun after  set SHI_NET=corporate
+  echo                           if pypi is blocked by policy, bring wheels in offline:
+  echo                             python -m pip download ^<pkg^>==^<ver^> -d wheels --only-binary=:all: --python-version 312 --platform win_amd64
+  echo                             then  uv sync --locked --find-links wheels --offline
+  echo   - SSL UnknownIssuer   : UV_SYSTEM_CERTS=true is already set.
+  echo                           else  set SSL_CERT_FILE=C:\path\corp-ca.pem
+  echo   - lock is out of date : uv lock   then rerun. --locked refuses a drifted lock.
+  echo   - 32-bit Python       : ONLY if the failing wheel name ends with win32.
+  echo                           a win_amd64 wheel that fails to download is a NETWORK problem.
   goto :end
 )
 
