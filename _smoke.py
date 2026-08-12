@@ -420,7 +420,7 @@ def main() -> int:
        "제출인원·취합상세 엑셀 왕복 보존")
 
     # 23. 부서/과 2단 (과만 저장, 부서는 매핑)
-    ck(len(schema.DEPT_TREE) == 8, f"DEPT_TREE 부서 8개 (실제 {len(schema.DEPT_TREE)})")
+    ck(len(schema.DEPT_TREE) == 9, f"DEPT_TREE 부서 9개 (실제 {len(schema.DEPT_TREE)})")
     ck(schema.dept_parent("친환경실증랩") == "친환경실증랩", "친환경실증랩 단독 부서(동명 과) 매핑")
     ck("친환경실증랩" in schema.DEFAULT_DOMAINS["dept"], "친환경실증랩 과가 dept 도메인에 자동 포함")
     ck(schema.dept_parent("선장운전1과") == "시운전1부", "dept_parent 과→부서 매핑")
@@ -434,6 +434,71 @@ def main() -> int:
        "구 기본 부서리스트 → 과리스트 마이그레이션")
     keep = schema.normalize({"domains": {"dept": ["우리과", "너네과"]}})
     ck(keep["domains"]["dept"] == ["우리과", "너네과"], "사용자 편집 dept 는 마이그레이션 안 함(보존)")
+
+    # 23-b. 소속 정규화 — 옛 부서명·오타·대소문자 흡수 (미분류로 새지 않게)
+    ck(schema.dept_parent("시운전1부") == "시운전1부", "부서명 그대로 적힌 옛 값도 부서로 인식")
+    ck(schema.dept_parent("기획운영부") == "기획운영", "옛 부서명 별칭 → 현 부서")
+    ck(schema.dept_parent("해양사업부") == "해양사업부", "해양사업부 단독 부서 매핑")
+    ck(schema.dept_parent("cedar  csu") == "시운전3부", "대소문자·공백 흔들림 흡수")
+    ck(schema.canon_dept("cedar csu") == "CEDAR CSU", "canon_dept 과 정식표기로 교정")
+    ck(schema.canon_dept("듣보과") == "듣보과", "매핑에 없는 값은 원문 보존(유실 금지)")
+    ck(schema.canon_dept("") == "", "빈 소속은 빈 문자열")
+    nd_dp = schema.bootstrap()
+    _n4 = schema.add_node(nd_dp, "lv3_seonjang", 4, "x", "A")
+    _n5 = schema.add_node(nd_dp, _n4, 5, "x", "B")
+    _n6 = schema.add_node(nd_dp, _n5, 6, "x", "C")
+    schema.update_node(nd_dp, _n6, {"dept": "cedar csu"}, "x")
+    nd_dp = schema.normalize(nd_dp)
+    ck(schema.node_map(nd_dp["nodes"])[_n6]["dept"] == "CEDAR CSU", "normalize 가 노드 dept 를 정식표기로")
+
+    # 23-c. lv3 부문 이름 오타 교정 (CUS → CSU). 취합이 이름 경로로 병합하므로 갈리면 안 된다.
+    nd_l3 = schema.bootstrap()
+    bad3 = schema.add_node(nd_l3, schema.ROOT_ID, 3, "x", "Cedar CUS")
+    bad3b = schema.add_node(nd_l3, schema.ROOT_ID, 3, "x", "eni  cus")
+    deep = schema.add_node(nd_l3, bad3, 4, "x", "ENI CUS")     # lv4 는 건드리지 않는다
+    nd_l3 = schema.normalize(nd_l3)
+    m3 = schema.node_map(nd_l3["nodes"])
+    ck(m3[bad3]["name"] == "CEDAR CSU", "lv3 CUS 오타 → CEDAR CSU")
+    ck(m3[bad3b]["name"] == "ENI CSU", "lv3 오타 교정은 대소문자·공백 무시")
+    ck(m3[deep]["name"] == "ENI CUS", "lv3 아닌 레벨의 이름은 건드리지 않는다")
+    ck(schema.canon_lv3_name("선장운전") == "선장운전", "교정 대상 아닌 부문명은 원문 그대로")
+
+    # 23-d. 집계 현재/향후 분리 + 담당자별 (요약·드릴다운의 근거)
+    nd_st = schema.bootstrap()
+    _s4 = schema.add_node(nd_st, "lv3_seonjang", 4, "x", "S4")
+    _s5 = schema.add_node(nd_st, _s4, 5, "x", "S5")
+    _a6 = schema.add_node(nd_st, _s5, 6, "x", "A6")
+    _b6 = schema.add_node(nd_st, _s5, 6, "x", "B6")
+    _c6 = schema.add_node(nd_st, _s5, 6, "x", "C6")
+    _a7 = schema.add_node(nd_st, _a6, 7, "x", "A7")
+    schema.update_node(nd_st, _a6, {"tech": ["LLM"], "dept": "선장운전1과", "owner": "홍길동"}, "x")
+    schema.update_node(nd_st, _a7, {"tech": ["LLM", "OCR"], "future_tech": ["RPA"]}, "x")   # lv7 → lv6 롤업
+    schema.update_node(nd_st, _b6, {"future_tech": ["RPA"], "dept": "선장운전1과", "owner": "홍길동"}, "x")
+    schema.update_node(nd_st, _c6, {"dept": "시운전1부"}, "x")        # 옛 부서명이 그대로 들어간 노드
+    stt = schema.stats(schema.normalize(nd_st))
+    ck(stt["detail_total"] == 3, f"분모는 lv6 만 (실제 {stt['detail_total']})")
+    ck(stt["ai_yes"] == 1 and stt["ai_future_yes"] == 2,
+       f"현재/향후 AI 를 따로 센다 (현재 {stt['ai_yes']} 향후 {stt['ai_future_yes']})")
+    ck(stt["ai_rate"] == 33 and stt["ai_future_rate"] == 67, "적용률은 파이썬이 계산한다(현재·향후 각각)")
+    ck(stt["by_tech_now"] == {"LLM": 1, "OCR": 1}, f"현재기술은 lv7 자식까지 롤업 (실제 {stt['by_tech_now']})")
+    ck(stt["by_tech_future"] == {"RPA": 2}, f"향후기술 집계 분리 (실제 {stt['by_tech_future']})")
+    # 과 2개(선장운전1과) + 부서명 그대로인 1개가 모두 '시운전1부' 로 모인다
+    ck(stt["by_dept_group"].get("시운전1부") == 3,
+       f"옛 부서명 노드도 부서 롤업에 잡힌다(미분류 아님) — {stt['by_dept_group']}")
+    ck("미분류" not in stt["by_dept_group"], "매핑되는 값은 미분류로 새지 않는다")
+    ck(stt["by_dept"].get("시운전1부") == 1 and stt["by_dept"].get("선장운전1과") == 2,
+       f"과별 표에는 저장된 원문 그대로 (실제 {stt['by_dept']})")
+    ck(stt["by_owner"].get("선장운전1과 · 홍길동") == 2, f"담당자별 집계 (실제 {stt['by_owner']})")
+    ck(stt["by_owner"].get("(미지정)") == 1, "담당자 없는 lv6 은 (미지정)")
+    # 기술은 다중선택이라 합계가 lv6 수보다 클 수 있다 — 중복이 아니라 정상
+    ck(sum(stt["by_tech_now"].values()) >= stt["ai_yes"], "다중선택 축 합계 ≥ 업무 수")
+    # 요약 시트에도 두 축이 다 나오는지 (엑셀·화면 축 일치)
+    sdf = excel_io._summary_df(schema.normalize(nd_st))
+    gubun = set(sdf["구분"])
+    for want in ("AI 에이전트 — 현재", "AI 에이전트 — 향후", "활용기술 — 현재", "활용기술 — 향후", "담당자별", "부서별"):
+        ck(any(str(g).startswith(want) for g in gubun), f"요약 시트에 '{want}' 축이 있다")
+    owner_rows = [r for _, r in sdf.iterrows() if str(r["구분"]).startswith("담당자별")]
+    ck(all("홍길동" not in str(r["항목"]) for r in owner_rows), "요약 담당자는 마스킹된다(원본 이름 금지)")
 
     # 24. 취합 인원수 = lv6 실제 작성 기준 (공유 골격 lv4/lv5 부풀림 없음)
     def _mkf(gwa, author, l6name):
@@ -455,6 +520,35 @@ def main() -> int:
     ck(not byname["자이로시험"].get("submit_count"), "1명만 한 lv6 는 배지 없음(N<2)")
     ck(schema.dept_parent(byname["레이더동작시험"]["submit_detail"].split(" · ")[0]) in ("시운전1부", "시운전2부"),
        "submit_detail 은 과 기준(부서로 롤업 가능)")
+
+    # 24-b. 취합은 **lv6 에 닿는 가지만** 병합한다 (골격만 낸 제출은 통째로 제외)
+    def _mk_skel():
+        """lv5 까지만 만든 제출 — 세부업무가 하나도 없다."""
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_gijang", 4, "x", "골격대분류")
+        schema.add_node(nd, n4, 5, "x", "골격중분류")
+        return json.dumps({"exported_by": "Z", "exported_dept": "기장운전1과",
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}}, ensure_ascii=False).encode("utf-8")
+    base_n = len(schema.bootstrap()["nodes"])
+    mg2, rep2, _ = excel_io.collect_jsons([("프로세스_Z_기장운전1과_20260721.json", _mk_skel())], schema.bootstrap())
+    ck(len(mg2["nodes"]) == base_n, "lv6 없는 골격 제출은 노드를 추가하지 않는다")
+    ck("골격대분류" not in {n["name"] for n in mg2["nodes"]}, "골격 lv4 가 정본 트리에 남지 않는다")
+    ck("lv6" in rep2[0]["errors"] or "세부업무" in rep2[0]["errors"], "제외 사유를 리포트에 남긴다(조용한 0건 금지)")
+    # lv6 가 있는 가지는 조상까지 살아남는다 + 형제 골격 가지만 제외
+    def _mk_mixed():
+        nd = schema.bootstrap()
+        good4 = schema.add_node(nd, "lv3_gijang", 4, "x", "쓰는대분류")
+        good5 = schema.add_node(nd, good4, 5, "x", "쓰는중분류")
+        schema.add_node(nd, good5, 6, "x", "진짜세부업무")
+        dead4 = schema.add_node(nd, "lv3_gijang", 4, "x", "빈대분류")
+        schema.add_node(nd, dead4, 5, "x", "빈중분류")
+        return json.dumps({"exported_by": "Y", "exported_dept": "기장운전2과",
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}}, ensure_ascii=False).encode("utf-8")
+    mg3, rep3, _ = excel_io.collect_jsons([("프로세스_Y_기장운전2과_20260721.json", _mk_mixed())], schema.bootstrap())
+    names3 = {n["name"] for n in mg3["nodes"]}
+    ck({"쓰는대분류", "쓰는중분류", "진짜세부업무"} <= names3, "lv6 에 닿는 가지는 조상까지 병합된다")
+    ck("빈대분류" not in names3 and "빈중분류" not in names3, "같은 파일 안의 빈 가지만 골라 제외한다")
+    ck(rep3[0]["skipped"] == 2, f"제외 노드 수를 리포트에 담는다 (실제 {rep3[0]['skipped']})")
 
     # 25. lv6 상세 개편 — 신규 도메인·필드·파생·마이그레이션·왕복
     ck("ship_type" in schema.DEFAULT_DOMAINS and "special_note" in schema.DEFAULT_DOMAINS,

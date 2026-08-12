@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260812_1235";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -108,7 +108,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
   .body { flex: 1; display: flex; min-height: 0; }
   /* 보드는 컬럼 폭만큼만 차지(flex:0) → 남는 폭은 패널이 먹어 상세 입력이 넓어지고, 컬럼~패널 사이
      빈틈이 안 생긴다. 컬럼은 좁게 고정(basis 200, 필요 시 축소). */
-  .board { flex: 0 1 auto; display: flex; gap: 12px; padding: 16px; min-width: 0; overflow-x: auto; }
+  .board { flex: 0 1 auto; display: flex; gap: 12px; padding: 16px 16px 10px; min-width: 0; overflow-x: auto; }
   .col { flex: 0 0 194px; display: flex; flex-direction: column; background: #f8f6f1;
     border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
   .col.wide { flex-basis: 233px; }   /* lv5·lv6 은 lv4(194) 의 1.2배 */
@@ -262,7 +262,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     border-radius: 5px; }
   .pname { margin-top: 8px; font-size: 15.5px; font-weight: 800; line-height: 1.3; word-break: break-all; }
   .ppath { margin-top: 3px; font-size: 12.5px; color: #a8a29e; }
-  .pbody { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 11px; }
+  .pbody { flex: 1; overflow-y: auto; padding: 16px 18px 22px; display: flex; flex-direction: column; gap: 11px; }
   .fl { font-size: 13.5px; font-weight: 700; color: #57534e; margin-bottom: 5px; }
   .fi { width: 100%; font-size: 15px; padding: 9px 11px; border: 1px solid #d8cfc0; border-radius: 9px; outline: none; }
   .fi:focus, .fa:focus, .fs:focus { border-color: #0f766e; }
@@ -276,11 +276,17 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     border-radius: 10px; padding: 11px 13px; line-height: 1.55; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  /* 상세 폼 2열 배치 — 넓은 패널의 가로를 채우고, 세로는 하단까지 늘려 여백을 없앤다.
-     align-items:stretch + flex:1 로 두 컬럼이 같은 높이가 되고, 설명 박스(.pcol-grow)가 남는 공간을 채운다. */
-  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: stretch; flex: 1 1 auto; min-height: 0; }
+  /* 상세 폼 2열 배치 — 넓은 패널의 가로를 채운다.
+     ★ flex:0 0 auto 다. 예전엔 `flex:1 1 auto; min-height:0` 이었는데, min-height:0 이
+       flex 의 기본 보호막(min-height:auto)을 꺼서 패널이 짧을 때 이 박스가 **콘텐츠보다
+       작게 눌렸다**. .pcol 에 overflow 가 없어 내용이 박스 밖으로 흘러나오고, 바로 다음
+       형제인 '상위 업무 바꾸기' 블록과 같은 자리에 겹쳐 그려졌다(z-index 문제가 아니다).
+       세로 여백은 .pbody 의 스크롤이 흡수한다. */
+  .pgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; align-items: start; flex: 0 0 auto; }
   .pcol { display: flex; flex-direction: column; gap: 11px; min-width: 0; }
   .pcol-grow { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 90px; }
+  /* 패널 하단 블록(상위 업무 바꾸기)은 줄어들면 안 된다 — 눌리면 위 폼과 겹친다 */
+  .pfoot { flex: none; margin-top: 6px; padding-top: 14px; border-top: 1px dashed #e7e1d6; }
   .aicard { border-radius: 10px; padding: 8px 12px; border: 1px solid #e7e1d6; background: #f8f6f1; }
   .aicard.on { border-color: #bbf7d0; background: #f0fdf4; }
   .aiflex { display: flex; align-items: center; gap: 10px; cursor: pointer; }
@@ -330,6 +336,45 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
   .tbl { background: #fff; border: 1px solid #ece6da; border-radius: 12px; overflow: hidden; }
   .tbl .th { padding: 10px 15px; font-size: 14px; font-weight: 800; color: #57534e; background: #faf8f3; border-bottom: 1px solid #f4f1ea; }
   .tbl .tr { display: flex; justify-content: space-between; padding: 8px 15px; font-size: 14.5px; border-bottom: 1px solid #f7f4ee; }
+  .tbl .thnote { padding: 6px 15px; font-size: 12.5px; color: #a8a29e; background: #fdfcfa; border-bottom: 1px solid #f4f1ea; line-height: 1.45; }
+  /* 요약 드릴다운 — 좌측 집계표의 숫자를 누르면 우측에 그 lv6 목록이 뜬다 */
+  .clickable { cursor: pointer; }
+  .tbl .tr.clickable:hover { background: #f5fbfa; }
+  .tbl .tr.picked { background: #ecfdf5; font-weight: 700; }
+  .metric.clickable:hover { border-color: #99f6e4; }
+  .metric.picked { border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15, 118, 110, .15); }
+  .sumgrid { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 16px; align-items: start; }
+  .sumgrid > .twocol { margin-top: 16px; }
+  .sumside { margin-top: 16px; background: #fff; border: 1px solid #ece6da; border-radius: 12px; overflow: hidden;
+    display: flex; flex-direction: column; max-height: 560px; }
+  .sumside.empty { padding: 22px 18px; font-size: 13.5px; color: #a8a29e; line-height: 1.7; text-align: center; }
+  .sumhead { display: flex; align-items: center; gap: 8px; padding: 10px 12px 10px 15px; background: #faf8f3;
+    border-bottom: 1px solid #f4f1ea; font-size: 14px; color: #57534e; }
+  .sumhead b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sumhead span { flex: none; font-weight: 800; color: #0f766e; }
+  .sumx { flex: none; border: none; background: none; cursor: pointer; color: #a8a29e; font-size: 14px; padding: 2px 4px; }
+  .sumlist { overflow-y: auto; }
+  .sumrow { padding: 9px 15px; border-bottom: 1px solid #f7f4ee; cursor: pointer; }
+  .sumrow:hover { background: #f5fbfa; }
+  .sumrow .sp { font-size: 13.5px; font-weight: 700; color: #44403c; line-height: 1.4; }
+  .sumrow .sm { font-size: 12.5px; color: #a8a29e; margin-top: 2px; line-height: 1.4; }
+  /* 💬 질의 (챗봇) */
+  .chatbox { background: #fff; border: 1px solid #ece6da; border-radius: 12px; padding: 14px;
+    margin-top: 16px; min-height: 220px; max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+  .chatempty { color: #a8a29e; font-size: 14px; line-height: 1.7; text-align: center; padding: 20px 8px; }
+  .chatmsg { display: flex; gap: 10px; align-items: flex-start; }
+  .chatmsg .who { flex: none; width: 34px; font-size: 12px; font-weight: 800; color: #0f766e; padding-top: 2px; }
+  .chatmsg.me .who { color: #a8a29e; }
+  .chatmsg .txt { flex: 1; min-width: 0; font-size: 14.5px; line-height: 1.65; color: #44403c;
+    background: #f8f6f1; border-radius: 10px; padding: 9px 12px; white-space: normal; word-break: break-word; }
+  .chatmsg.me .txt { background: #ecfdf5; }
+  .chatmsg.err .txt { background: #fef2f2; color: #b91c1c; }
+  .chatinput { display: flex; gap: 8px; margin-top: 12px; align-items: stretch; }
+  .chatinput textarea { flex: 1; resize: vertical; }
+  .chatinput button { flex: none; padding: 0 22px; }
+  .chipbtn { display: inline-block; margin: 4px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    background: #f0ede6; color: #57534e; border: 1px solid #e7e1d6; font-size: 13.5px; font-weight: 600; }
+  .chipbtn:hover { background: #e7f6f4; border-color: #99f6e4; }
   .primary { font-size: 15px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
   .secondary { font-size: 15px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
   .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
@@ -379,6 +424,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
   var ROOT = "__root__";
   var LABELS = { 3: "부문", 4: "대분류", 5: "중분류", 6: "세부업무", 7: "단위작업" };
   var LEVEL_MAX = 7;                       // schema.LEVEL_MAX 트윈 (lv7 단위작업)
+  var LEVEL_MIN = 3;                       // schema.LEVEL_MIN 트윈 (lv3 부문)
   var LOAD_LV = 6;                         // schema.LOAD_LEVEL 트윈 — 부하·AI·집계 분모 기준 (lv7 은 롤업)
   var FIXED = ["조선", "생산", "시운전"];
   // lv3 부문 칩 색 — 순서(order)대로 배정해 부문을 색으로 구분한다. 팔레트를 넘으면 순환.
@@ -395,10 +441,58 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     "시운전기술": ["LNG설비운영과", "코멘더"],
     "해운부": ["해운1과", "해운2과"],
     "친환경실증랩": ["친환경실증랩"],
+    // 과 미확정 — 옛 데이터의 '해양사업부'를 미분류로 흘리지 않으려고 둔다 (schema.DEPT_TREE twin)
+    "해양사업부": ["해양사업부"],
   };
+  // 옛 부서명 → 현 부서명 별칭 (schema.DEPT_ALIASES twin)
+  var DEPT_ALIASES = { "기획운영부": "기획운영" };
+  // lv3 부문 이름 오타 교정 (schema.LV3_NAME_FIXES twin). 취합이 이름 경로로 병합하므로
+  // 오타가 남으면 같은 부문이 둘로 갈려 인원 집계까지 갈린다.
+  var LV3_NAME_FIXES = { "CEDAR CUS": "CEDAR CSU", "ENI CUS": "ENI CSU" };
   var _DEPT_FLAT = [], _DEPT_PARENT = {};
   Object.keys(DEPT_TREE).forEach(function (b) { DEPT_TREE[b].forEach(function (g) { _DEPT_FLAT.push(g); _DEPT_PARENT[g] = b; }); });
-  function deptParent(g) { return _DEPT_PARENT[String(g || "").trim()] || "미분류"; }
+  /** 비교용 정규화 키 — 앞뒤 공백 + 연속공백 1칸 + 대문자 (schema._norm twin). 저장값은 안 바꾼다. */
+  function _norm(v) { return String(v == null ? "" : v).trim().replace(/\s+/g, " ").toUpperCase(); }
+  var _DEPT_PARENT_N = {}, _DEPT_BRANCH_N = {}, _DEPT_ALIAS_N = {}, _LV3_FIX_N = {};
+  Object.keys(_DEPT_PARENT).forEach(function (g) { _DEPT_PARENT_N[_norm(g)] = g; });
+  Object.keys(DEPT_TREE).forEach(function (b) { _DEPT_BRANCH_N[_norm(b)] = b; });
+  Object.keys(DEPT_ALIASES).forEach(function (k) { _DEPT_ALIAS_N[_norm(k)] = DEPT_ALIASES[k]; });
+  Object.keys(LV3_NAME_FIXES).forEach(function (k) { _LV3_FIX_N[_norm(k)] = LV3_NAME_FIXES[k]; });
+  /** 소속 값 정규화 — 과 정식표기로. 못 찾으면 **원문 그대로**(값 유실 금지). schema.canon_dept twin. */
+  function canonDept(v) {
+    var raw = String(v == null ? "" : v).trim();
+    if (!raw) return "";
+    var k = _norm(raw);
+    if (_DEPT_PARENT_N[k]) return _DEPT_PARENT_N[k];   // 과
+    if (_DEPT_ALIAS_N[k]) return _DEPT_ALIAS_N[k];     // 옛 부서명 별칭
+    if (_DEPT_BRANCH_N[k]) return _DEPT_BRANCH_N[k];   // 부서명 그대로 입력된 옛 데이터
+    return raw;
+  }
+  /** lv3 부문 이름 오타 교정 (schema.canon_lv3_name twin). */
+  function canonLv3Name(nm) {
+    var raw = String(nm == null ? "" : nm).trim();
+    return _LV3_FIX_N[_norm(raw)] || raw;
+  }
+  /** 소속 → 부서. 3단: 과면 그 부서 / 값 자체가 부서면 그 부서 / 그 외 미분류 (schema.dept_parent twin).
+   *  2단이 없으면 '시운전1부' 같은 옛 값이 통째로 미분류로 떨어져 부서 롤업이 무의미해진다. */
+  function deptParent(g) {
+    var k = _norm(g);
+    if (!k) return "미분류";
+    if (_DEPT_PARENT_N[k]) return _DEPT_PARENT[_DEPT_PARENT_N[k]];
+    if (_DEPT_ALIAS_N[k]) return _DEPT_ALIAS_N[k];
+    if (_DEPT_BRANCH_N[k]) return _DEPT_BRANCH_N[k];
+    return "미분류";
+  }
+  /** 트리 채택 시 1회 보정 — 소속 정규화 + lv3 이름 오타 교정 (schema.normalize 의 해당 절 twin).
+   *  JS 에는 normalize 가 없으므로 **트리를 받아들이는 지점마다** 이 함수를 통과시킨다. */
+  function canonNodes(nodes) {
+    (nodes || []).forEach(function (n) {
+      if (!n) return;
+      if ("dept" in n) n.dept = canonDept(n.dept);
+      if (n.level === LEVEL_MIN) n.name = canonLv3Name(n.name);
+    });
+    return nodes;
+  }
   /** 과 목록을 부서별 <optgroup> 으로. 값=과. 매핑에 없는 현재값은 '기타' 그룹에 노출해 유실 방지. */
   function deptOptions(cur) {
     var html = '<option value="">— 선택 —</option>';
@@ -539,6 +633,21 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     if (n[field]) return true;
     return childrenOf(n.id).some(function (c) { return c.level === LEVEL_MAX && c[field]; });
   }
+  /** lv6 유효 기술 = 자신 ∪ lv7 자식 (schema.rollup_techs 트윈). field=tech(현재)/future_tech(향후).
+   *  **집합**이라 lv6·lv7 이 같은 기술을 가져도 그 lv6 은 1회만 센다(중복 계상 방지). */
+  function rollupTechs(n, field) {
+    field = field || "tech";
+    var seen = {}, out = [];
+    function add(arr) {
+      (arr || []).forEach(function (t) {
+        var v = String(t || "").trim();
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+      });
+    }
+    add(n[field]);
+    childrenOf(n.id).forEach(function (c) { if (c.level === LEVEL_MAX) add(c[field]); });
+    return out;
+  }
   /** lv6 부하 롤업 그룹 = 자신 + lv7 자식. 부하 집계는 이 그룹 단위로 센다. */
   function loadGroup(n) {
     var g = [n];
@@ -592,9 +701,20 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
   function stats() {
     // 분모 = 모든 lv6 (lv7 은 롤업 대상이라 분모에서 뺀다). 부하·AI 는 lv6 마다 자신+lv7 자식 롤업.
     var d = S.nodes.filter(function (n) { return isLoadLevel(n.level); });
-    var ai = 0, annual = 0, perShip = 0, unresolved = 0, missing = 0;
+    var ai = 0, aiFuture = 0, annual = 0, perShip = 0, unresolved = 0, missing = 0;
+    // 축별 집계 (schema.stats 트윈). 기술은 **다중선택**이라 합계가 lv6 수보다 크다 — 정상.
+    var byDept = {}, byGroup = {}, byOwner = {}, byAuto = {}, techNow = {}, techFuture = {};
+    function bump(m, k) { m[k] = (m[k] || 0) + 1; }
     d.forEach(function (n) {
       if (rollupHasAi(n)) ai++;
+      if (rollupHasAi(n, "has_ai_future")) aiFuture++;
+      bump(byDept, n.dept || "(미지정)");
+      bump(byGroup, n.dept ? deptParent(n.dept) : "(미지정)");
+      bump(byAuto, n.automation_level || "(미지정)");
+      var ow = String(n.owner || "").trim();
+      bump(byOwner, ow ? (n.dept || "(미지정)") + " · " + ow : "(미지정)");
+      rollupTechs(n, "tech").forEach(function (t) { bump(techNow, t); });
+      rollupTechs(n, "future_tech").forEach(function (t) { bump(techFuture, t); });
       var gAnnual = 0, gPerShip = 0, gUnresolved = 0, gHours = 0;
       loadGroup(n).forEach(function (m) {                 // 자신 + lv7 자식
         var L = SOLO ? loadOf(m) : { kind: "annual", hours: annualHours(m) };
@@ -605,8 +725,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
       annual += gAnnual; perShip += gPerShip; unresolved += gUnresolved;
       if (!gHours && !gUnresolved) missing++;             // 그룹 전체가 시간 0·미해결도 아니면 미입력
     });
-    return { total: S.nodes.length, detail: d.length, ai: ai,
-             rate: d.length ? Math.round(ai / d.length * 100) : 0,
+    function pct(p) { return d.length ? Math.round(p / d.length * 100) : 0; }
+    return { total: S.nodes.length, detail: d.length, ai: ai, aiFuture: aiFuture,
+             rate: pct(ai), rateFuture: pct(aiFuture),
+             byDept: byDept, byGroup: byGroup, byOwner: byOwner, byAuto: byAuto,
+             techNow: techNow, techFuture: techFuture,
              hours: Math.round(annual * 10) / 10,          // 상시루틴만 (진짜 연간)
              perShipHours: Math.round(perShip * 10) / 10,  // 호선당 (연간 아님)
              unresolved: unresolved,                       // 호선루틴 (척수·구간 필요)
@@ -627,6 +750,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
       else if (n[key] === val) c++;
     });
     return c;
+  }
+  /** 활용기술 도메인 값의 **현재/향후 분리** 사용량 (lv6 롤업 기준 — 요약의 기술별 집계와 같은 축).
+   *  domUsage 는 전 노드를 세므로 lv6·lv7 이 겹쳐 잡힌다. 표시는 이 함수, **삭제 잠금은
+   *  domUsage**(어디든 쓰이면 잠금)로 나눈다 — 잠금까지 lv6 로 좁히면 lv3~lv5 에 숨어 있는
+   *  값(레벨 승격 시 보존되는 상세)이 안 잡혀 쓰는 중인데 지워진다. */
+  function techUsageSplit(st, val) {
+    if (!val || !st) return { now: 0, future: 0 };
+    return { now: st.techNow[val] || 0, future: st.techFuture[val] || 0 };
   }
 
   // ★ schema.SEED_LV3 (schema.py) 와 **id·이름이 완전히 같아야 한다**. 취합 시 부문이
@@ -686,6 +817,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     // 탭은 **문자열 키**다. 숫자 인덱스로 두면 개인 모드에서 탭을 빼는 순간 인덱스가 밀려
     // 엉뚱한 화면이 그려진다.
     activeTab: "tree", domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
+    sumPick: null,          // 요약 드릴다운 선택 {axis, key} — null 이면 우측 안내문
+    chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
     // 파이썬이 계산해 주는 것들 (JS 에서 만들지 말 것 — schema.diff / excel_io 가 정본)
     diffPreview: null,      // 복원 미리보기 {added, changed, removed, removed_list}
@@ -1274,7 +1407,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     try {
       var d = JSON.parse(text);
       if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
-      S.nodes = d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
+      S.nodes = canonNodes(d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); }));
       S.domains = withDefaultDomains(d.domains);   // 새 도메인(선종·특이사항) 기본값 병합
       if (d.exported_dept) S.dept = d.exported_dept;
       if (d.exported_by) S.author = d.exported_by;
@@ -1309,6 +1442,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
              { k: "domain", label: "도메인 관리" },
              { k: "io", label: SOLO ? "내보내기 / 불러오기" : "엑셀 가져오기 / 내보내기" }];
     if (!SOLO) t.push({ k: "hist", label: "이력 · 복원" });
+    // 질의 챗봇 — 메인앱 전용(개인 배포판은 백엔드가 없다) + LLM 키가 있을 때만.
+    if (!SOLO && S.chatReady) t.push({ k: "chat", label: "💬 질의" });
     if (SOLO) t.push({ k: "manual", label: "📖 사용법" });
     return t;
   }
@@ -1344,7 +1479,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
             + (st.perShipHours ? " · 호선당 " + st.perShipHours + "시간" : "")
             + (st.unresolved ? " · 호선루틴 " + st.unresolved + "건" : "")
             + (st.hoursMissing ? " · 미완성 " + st.hoursMissing + "개" : "") + "</span></div>"
-          : '<div class="pill"><b>AI 적용률 ' + st.rate + '%</b><span>세부업무 ' + st.detail + "개 중 " + st.ai + "개</span></div>")
+          // 현재(활용기술 보유)와 향후(향후 AI 적용기술 보유)를 한 숫자로 뭉치지 않는다 —
+          // "지금 되는 것"과 "하려는 것"은 다른 이야기다. 분모는 둘 다 lv6 세부업무 수.
+          : '<div class="pill"><b>AI 적용률 현재 ' + st.rate + '% · 향후 ' + st.rateFuture + '%</b>'
+            + "<span>세부업무 " + st.detail + "개 중 현재 " + st.ai + "개 · 향후 " + st.aiFuture + "개</span></div>")
       + ident
       + (!SOLO && S.rev ? '<span class="revcap">rev ' + esc(S.rev) + "</span>" : "")
       + badge
@@ -1365,6 +1503,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
       }).join(", ");
       h += '<div class="warn" style="margin:8px 14px 0;border-radius:10px">⚠ 같은 이름의 항목이 있습니다 — '
         + (SOLO ? '<b>내보내기 전에</b> ' : '') + '이름을 수정하세요: ' + items + "</div>";
+    }
+    // lv3 동명 부문 — 오타 교정(CEDAR CUS → CEDAR CSU) 뒤에 생길 수 있다. 위 가드는 lv5+ 라 안 잡힌다.
+    // 자동 병합은 하지 않는다(부문 통합은 하위 전체가 움직이는 조작이라 사람이 판단해야 한다).
+    var dup3 = dupSiblings(LEVEL_MIN).filter(function (d) { return Number(d.level) === LEVEL_MIN; });
+    if (dup3.length) {
+      h += '<div class="warn" style="margin:8px 14px 0;border-radius:10px">⚠ 이름이 같은 부문이 있습니다 — '
+        + dup3.map(function (d) { return "'" + esc(d.name) + "' " + d.ids.length + "개"; }).join(", ")
+        + ' · 상세 패널의 <b>상위 업무 바꾸기</b>로 한쪽 하위를 옮겨 합치세요.</div>';
     }
     if (S.conflict) {
       h += '<div class="banner conf"><b>' + esc(maskName(S.conflict.disk_author) || "다른 사람") + "</b> 님이 먼저 저장했습니다 (rev " + esc(S.conflict.disk_rev) + "). 자동 병합은 하지 않습니다."
@@ -1688,7 +1834,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
 
     // 상위 업무 바꾸기 — 드래그로 불가능한 레벨 변경(승격/강등)의 유일한 경로
     var tg = moveTargets(id), kids = descCount(id);
-    fields += '<div style="margin-top:6px;padding-top:14px;border-top:1px dashed #e7e1d6">'
+    // .pfoot = flex:none — 이 블록이 눌리면 위 상세 폼과 겹친다(CSS 주석 참조)
+    fields += '<div class="pfoot">'
       + '<div class="fl">상위 업무 바꾸기 <span style="color:#a8a29e;font-weight:600">· 레벨도 함께 바뀝니다</span></div>'
       + '<select class="fs" data-fkey="moveto" data-id="' + esc(id) + '">'
       + tg.map(function (t) { return '<option value="' + esc(t.id) + '"' + (t.id === n.parent_id ? " selected" : "") + ">" + esc(t.label) + "</option>"; }).join("")
@@ -1699,14 +1846,61 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     return '<div class="panel">' + head + '<div class="pbody scroll">' + fields + "</div></div>";
   }
 
+  /** 💬 질의 — 취합·저장된 계층 전체를 컨텍스트로 LLM 에 묻는다(읽기 전용, 트리를 바꾸지 않는다).
+   *  스트리밍은 없다 — 이 앱은 "사용자 조작 1건 = 파이썬 왕복 1회" 구조다. */
+  function pageChat() {
+    var log = S.chatLog || [];
+    var SAMPLES = ["세부업무가 가장 많은 부서는?", "AI 를 아직 적용하지 않은 업무를 10개만 알려줘",
+                   "여러 명이 함께 하는 업무는 뭐가 있어?", "연간 공수가 큰 업무 순으로 알려줘"];
+    var msgs = log.map(function (m) {
+      var mine = m.role === "user";
+      return '<div class="chatmsg' + (mine ? " me" : "") + (m.err ? " err" : "") + '">'
+        + '<div class="who">' + (mine ? "나" : "조수") + "</div>"
+        + '<div class="txt">' + esc(m.text || "").replace(/\n/g, "<br/>") + "</div></div>";
+    }).join("");
+    var empty = '<div class="chatempty">계층 편집에 들어 있는 <b>세부업무(lv6)</b> 와 <b>취합 결과</b>를 근거로 답합니다.<br/>'
+      + '담당자 이름은 전송되지 않습니다(소속만).<br/><div style="margin-top:14px">'
+      + SAMPLES.map(function (s) { return '<button class="chipbtn" data-act="chatsample" data-q="' + esc(s) + '">' + esc(s) + "</button>"; }).join("") + "</div></div>";
+    return '<div class="page scroll"><div class="pw"><div class="h1">💬 질의</div>'
+      + '<div class="sub">현재 화면의 계층(저장 전 편집 포함)에 대해 물어보세요. ' + esc(S.chatProvider || "") + "</div>"
+      + '<div class="chatbox">' + (msgs || empty) + (S.chatBusy ? '<div class="chatmsg"><div class="who">조수</div><div class="txt" style="color:#a8a29e">생각하는 중…</div></div>' : "") + "</div>"
+      + '<div class="chatinput"><textarea class="fa" data-fkey="chatq" rows="2" placeholder="예: 방폭 관련 업무는 몇 개야? (Ctrl+Enter 로 전송)">' + esc(S.chatQ || "") + "</textarea>"
+      + '<button class="primary" data-act="chatsend"' + (S.chatBusy ? " disabled" : "") + ">보내기</button></div>"
+      + (log.length ? '<div style="margin-top:10px"><button class="secondary" data-act="chatclear">대화 지우기</button></div>' : "")
+      + '<div style="font-size:13px;color:#a8a29e;margin-top:12px">답변은 참고용입니다 — 수치는 요약·엑셀에서 확인하세요. 대화는 저장되지 않습니다.</div>'
+      + "</div></div>";
+  }
+
+  function chatSend(q) {
+    q = String(q || "").trim();
+    if (!q) return flash("질문을 입력하세요");
+    if (S.chatBusy) return;
+    // 낙관적 표시 — 왕복이 끝나면 파이썬의 chat_log 가 통째로 덮는다(정본은 파이썬).
+    S.chatLog = (S.chatLog || []).concat([{ role: "user", text: q }]);
+    S.chatQ = ""; S.chatBusy = true;
+    rerender();
+    emit({ type: "chat", q: q, nodes: S.nodes, domains: S.domains });
+  }
+
   function pageDomain() {
     // '수행 주기'는 두 앱 모두 기간단위 칩+횟수로 대체했으므로 도메인 목록에서 감춘다 (안 쓰는 도메인).
     var keys = ["dept", "tech", "automation_level", "ship_type", "special_note", "linked_system"];
     if (keys.indexOf(S.domTab) < 0) S.domTab = keys[0];   // 숨긴 탭이 선택돼 있으면 첫 탭으로
     var tabs = keys.map(function (k) { return '<button class="stab' + (S.domTab === k ? " on" : "") + '" data-act="domtab" data-k="' + k + '">' + esc(DL[k]) + ' <span style="opacity:.55">' + (S.domains[k] || []).length + "</span></button>"; }).join("");
     var dk = S.domTab;
+    // 활용기술만 현재/향후를 나눠 보여준다 — 합산하면 "지금 쓰는 것"과 "하려는 것"이 안 갈린다.
+    var stDom = (dk === "tech" && !SOLO) ? stats() : null;   // 행마다 재계산하지 않게 1회만
     // 사용 수 표시는 개인 배포판에선 숨긴다(부서가 늘 0이라 혼란) — 삭제 잠금 계산은 유지.
-    function drow(v, i) { var u = domUsage(dk, v), del = u > 0; return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + (SOLO ? "<span></span>" : '<span class="use ' + (u > 0 ? "y" : "n") + '">' + u + "개 업무</span>") + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>'; }
+    function drow(v, i) {
+      var u = domUsage(dk, v), del = u > 0;   // 잠금은 '어디든 쓰이면' 기준 (lv3~lv5 숨은 값 포함)
+      var badge;
+      if (SOLO) badge = "<span></span>";
+      else if (stDom) {
+        var sp = techUsageSplit(stDom, v);
+        badge = '<span class="use ' + (sp.now + sp.future > 0 ? "y" : "n") + '" title="lv6 세부업무 기준(lv7 롤업 포함)">현재 ' + sp.now + " · 향후 " + sp.future + "</span>";
+      } else badge = '<span class="use ' + (u > 0 ? "y" : "n") + '">' + u + "개 업무</span>";
+      return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + badge + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>';
+    }
     var rows;
     if (dk === "dept") {
       // 부서/과는 과 목록을 **부서별 그룹 소제목**으로 묶어 보여준다(값·index 는 그대로).
@@ -1809,7 +2003,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
         + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">여러 제출을 한 번에 취합</div>'
         + '<div style="font-size:14px;color:#78716c;line-height:1.6;margin-bottom:16px">개인 배포판이 내보낸 <b>프로세스_이름_부서_날짜.json</b> 들을 모아, 같은 업무는 한 노드로 합치고 <b>제출 인원수</b>를 셉니다. 업무 데이터에는 소속만 들어갑니다(이름 미저장).</div>'
         + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 취합이 되지 않습니다.</div>')
-        + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로 · 하위 폴더 포함</span></div>'
+        + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로 · 하위 폴더 포함 · 기본값이 채워져 있으면 [스캔] 만 누르면 됩니다</span></div>'
         + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07 (하위 폴더 전부 스캔)" />'
         + '<button class="primary" style="flex:none;padding:9px 18px" data-act="collectscan">스캔</button></div>'
         + '<div style="text-align:center;color:#a8a29e;font-size:13px;margin:14px 0 10px">— 또는 —</div>'
@@ -1822,11 +2016,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     var okFiles = files.filter(function (f) { return !f.errors; });
     var rowsHtml = files.map(function (f) {
       var bad = !!f.errors;
-      return '<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:13.5px;align-items:center'
+      // 제외 = lv6 에 닿지 않아 취합에서 뺀 노드 수(골격만 만든 제출). 조용히 버리지 않고 보여준다.
+      var sk = Number(f.skipped || 0);
+      return '<div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:8px;padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:13.5px;align-items:center'
         + (bad ? ';background:#fef2f2' : '') + '">'
         + '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:12.5px" title="' + esc(f.filename) + '">' + esc(f.filename) + "</span>"
         + '<span style="color:#57534e">' + esc(f.dept || "—") + "</span>"
         + '<span style="color:#a8a29e">노드 ' + esc(f.nodes) + "</span>"
+        + '<span style="color:' + (sk ? "#b45309" : "#d6d3d1") + '" title="세부업무(lv6)에 닿지 않아 제외한 노드">제외 ' + sk + "</span>"
         + (bad ? '<span style="color:#b91c1c">' + esc(f.errors) + "</span>" : '<span style="color:#166534">신규 ' + esc(f.new) + "</span>")
         + "</div>";
     }).join("");
@@ -1840,9 +2037,17 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     var warns = p.warns || [];
     var warnHtml = warns.length ? '<div class="warn" style="margin:12px 0;font-size:13px">⚠ ' + warns.length + '개 파일 읽기 경고<br/>'
       + warns.map(function (w) { return "· " + esc(w); }).join("<br/>") + "</div>" : "";
+    // 제출자 총원 = (부서, 이름) distinct. 트리에 이름을 저장하지 않으므로 스캔 시점에만 알 수 있다.
+    var subT = p.submitters_total, subD = p.submitters_by_dept || {};
+    var subKeys = Object.keys(subD).sort(function (a, b) { return subD[b] - subD[a]; });
+    var subHtml = (typeof subT === "number")
+      ? '<div style="font-size:14px;color:#57534e;margin-bottom:10px">👤 제출자 <b style="color:#0f766e">' + subT + '명</b> · 소속 ' + subKeys.length + '곳'
+        + (subKeys.length ? ' <span style="color:#a8a29e;font-size:13px">(' + subKeys.map(function (k) { return esc(k) + " " + subD[k]; }).join(" · ") + ")</span>" : "") + "</div>"
+      : "";
     return '<div class="cardbox" style="padding:22px">'
       + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:10px">반영 전 확인 — 발견한 JSON ' + scanned + '개 · 성공 ' + okFiles.length + '개' + (errCnt > 0 ? ' · 오류 ' + errCnt + '개' : "") + '</div>'
-      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:6px">파일별 상태 <span style="font-weight:600;color:#a8a29e">· 하위 폴더는 상대경로로 표시</span></div>'
+      + subHtml
+      + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:6px">파일별 상태 <span style="font-weight:600;color:#a8a29e">· 하위 폴더는 상대경로로 표시 · 세부업무(lv6)에 닿지 않는 가지는 제외됩니다</span></div>'
       + '<div class="cardbox" style="max-height:200px;overflow:auto;margin-bottom:14px">' + (rowsHtml || '<div style="padding:10px;color:#a8a29e">파일 없음</div>') + "</div>"
       + warnHtml
       + '<div class="diffgrid" style="grid-template-columns:1fr 1fr">' + cells + "</div>"
@@ -1934,17 +2139,90 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
         + (!S.mask ? '<div class="warn" style="margin-bottom:14px">⚠ 마스킹을 끄면 개인정보가 담긴 파일이 됩니다. 외부 공유에 주의하세요.</div>' : "")
         + '<div style="display:flex;gap:10px"><button class="primary" style="flex:1" data-act="down" data-fmt="xlsx">⬇ 엑셀(CSV) 다운로드</button><button class="secondary" style="flex:1" data-act="down" data-fmt="json">JSON 원본 다운로드</button></div></div>';
     }
-    var metrics = [["전체 업무", st.total, "lv3~lv6 전 레벨"], ["세부업무(lv6)", st.detail, "AI 지표의 분모"], ["AI 에이전트 적용", st.ai, st.rate + "%"], ["미적용", st.detail - st.ai, "lv6 중"]]
-      .map(function (m) { return '<div class="metric"><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>"; }).join("");
-    var byLevel = [3, 4, 5, 6, 7].map(function (lv) { return '<div class="tr"><span>lv' + lv + " " + esc(LABELS[lv]) + '</span><b>' + S.nodes.filter(function (n) { return n.level === lv; }).length + "</b></div>"; }).join("");
-    // 부서 롤업(과 → 부서). 노드엔 과만 저장하므로 deptParent 로 묶는다(schema.by_dept_group twin).
-    var dc = {}; S.nodes.filter(function (n) { return isLoadLevel(n.level); }).forEach(function (n) { var d = n.dept ? deptParent(n.dept) : "(미지정)"; dc[d] = (dc[d] || 0) + 1; });
-    var byDept = Object.keys(dc).sort(function (a, b) { return dc[b] - dc[a]; }).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + dc[k] + "</b></div>"; }).join("");
+    // 지표 카드 — AI 는 현재/향후를 나눈다. 클릭하면 우측에 해당 lv6 목록이 뜬다.
+    var metrics = [["전체 업무", st.total, "lv3~lv7 전 레벨", ""],
+                   ["세부업무(lv6)", st.detail, "AI 지표의 분모", ""],
+                   ["AI 적용 — 현재", st.ai, st.rate + "%", "ai_now"],
+                   ["AI 적용 — 향후", st.aiFuture, st.rateFuture + "%", "ai_future"]]
+      .map(function (m) {
+        return '<div class="metric' + (m[3] ? " clickable" : "") + (m[3] && S.sumPick && S.sumPick.axis === m[3] ? " picked" : "") + '"'
+          + (m[3] ? ' data-act="sumpick" data-axis="' + m[3] + '" data-key=""' : "")
+          + '><div class="l">' + m[0] + '</div><div class="v">' + m[1] + '</div><div class="h">' + m[2] + "</div></div>";
+      }).join("");
+    // 축 하나 = 표 하나. 행 클릭 → 우측 드릴다운. 숫자와 목록이 어긋나지 않게 **같은 집계 맵**을 쓴다.
+    function tbl(title, axis, map, note) {
+      var keys = Object.keys(map).sort(function (a, b) { return map[b] - map[a]; });
+      if (!keys.length) return "";
+      return '<div class="tbl"><div class="th">' + esc(title) + "</div>"
+        + (note ? '<div class="thnote">' + esc(note) + "</div>" : "")
+        + keys.map(function (k) {
+            var on = S.sumPick && S.sumPick.axis === axis && S.sumPick.key === k;
+            return '<div class="tr clickable' + (on ? " picked" : "") + '" data-act="sumpick" data-axis="' + axis + '" data-key="' + esc(k) + '"><span>'
+              + esc(axis === "owner" ? maskOwnerKey(k) : k) + '</span><b>' + map[k] + "</b></div>";
+          }).join("")
+        + "</div>";
+    }
+    var lvMap = {}; [3, 4, 5, 6, 7].forEach(function (lv) { lvMap["lv" + lv + " " + LABELS[lv]] = S.nodes.filter(function (n) { return n.level === lv; }).length; });
+    var lvHtml = '<div class="tbl"><div class="th">레벨별 업무 수</div>'
+      + Object.keys(lvMap).map(function (k) { return '<div class="tr"><span>' + esc(k) + '</span><b>' + lvMap[k] + "</b></div>"; }).join("") + "</div>";
+    var MULTI = "※ 다중선택 — 한 업무가 여러 값을 가지면 각 값에 1회씩(합계 ≠ 업무 수)";
+    var tables = lvHtml
+      + tbl("부서별 세부업무 수", "dept_group", st.byGroup)
+      + tbl("과별 세부업무 수", "dept", st.byDept)
+      + tbl("담당자별 세부업무 수", "owner", st.byOwner, "※ 소속 · 이름 기준 (이름은 마스킹 표시)")
+      + tbl("활용기술 — 현재", "tech_now", st.techNow, MULTI)
+      + tbl("활용기술 — 향후", "tech_future", st.techFuture, MULTI)
+      + tbl("자동화 수준별", "automation", st.byAuto);
     return '<div class="page scroll"><div class="pw"><div class="h1">엑셀 가져오기 / 내보내기</div><div class="sub">업무가 많을 때는 화면에서 하나씩 만들지 말고 엑셀로 한 번에 등록·수정하세요.</div>'
       + '<div class="subtabs">' + sub + "</div>" + pane
-      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 4px">요약</div><div style="font-size:13.5px;color:#a8a29e;margin-bottom:14px">AI·부서·자동화 지표는 lv6 세부업무만 셉니다.</div>'
+      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 4px">요약</div><div style="font-size:13.5px;color:#a8a29e;margin-bottom:14px">AI·부서·자동화 지표는 lv6 세부업무만 셉니다(lv7 값은 부모 lv6 으로 롤업). <b>숫자를 클릭하면</b> 우측에 해당 업무 목록이 뜹니다.</div>'
       + '<div class="metricgrid">' + metrics + "</div>"
-      + '<div class="twocol"><div class="tbl"><div class="th">레벨별 업무 수</div>' + byLevel + '</div><div class="tbl"><div class="th">부서별 세부업무 수</div>' + byDept + "</div></div></div></div>";
+      + '<div class="sumgrid"><div class="twocol">' + tables + "</div>" + sumSide() + "</div></div></div>";
+  }
+
+  /** 요약 드릴다운 — 선택한 집계 칸에 속한 lv6 목록.
+   *  ★ 필터는 stats() 가 쓰는 게이트(isLoadLevel/rollupHasAi/rollupTechs)를 **그대로** 재사용한다.
+   *    별도 조건을 새로 쓰면 표의 숫자와 목록 개수가 조용히 어긋난다. */
+  function sumNodes(axis, key) {
+    return S.nodes.filter(function (n) {
+      if (!isLoadLevel(n.level)) return false;
+      if (axis === "ai_now") return rollupHasAi(n);
+      if (axis === "ai_future") return rollupHasAi(n, "has_ai_future");
+      if (axis === "dept") return (n.dept || "(미지정)") === key;
+      if (axis === "dept_group") return (n.dept ? deptParent(n.dept) : "(미지정)") === key;
+      if (axis === "automation") return (n.automation_level || "(미지정)") === key;
+      if (axis === "owner") {
+        var ow = String(n.owner || "").trim();
+        return (ow ? (n.dept || "(미지정)") + " · " + ow : "(미지정)") === key;
+      }
+      if (axis === "tech_now") return rollupTechs(n, "tech").indexOf(key) >= 0;
+      if (axis === "tech_future") return rollupTechs(n, "future_tech").indexOf(key) >= 0;
+      return false;
+    });
+  }
+  /** `소속 · 이름` 키의 이름만 마스킹 (excel_io._mask_owner_key 트윈). 요약은 편집 위젯이 아니다. */
+  function maskOwnerKey(key) {
+    var i = String(key).lastIndexOf(" · ");
+    return i < 0 ? key : key.slice(0, i + 3) + maskName(key.slice(i + 3));
+  }
+  function sumSide() {
+    var p = S.sumPick;
+    if (!p) return '<div class="sumside empty">왼쪽 숫자를 클릭하면<br/>해당 세부업무 목록이 여기에 뜹니다.</div>';
+    var AX = { ai_now: "AI 적용 — 현재", ai_future: "AI 적용 — 향후", dept: "과", dept_group: "부서",
+               owner: "담당자", automation: "자동화 수준", tech_now: "활용기술 — 현재", tech_future: "활용기술 — 향후" };
+    var list = sumNodes(p.axis, p.key);
+    var title = (AX[p.axis] || p.axis) + (p.key ? " · " + (p.axis === "owner" ? maskOwnerKey(p.key) : p.key) : "");
+    var rows = list.map(function (n) {
+      var path = pathNames(n.id).slice(3).join(" › ");
+      var techs = rollupTechs(n, "tech"), ftechs = rollupTechs(n, "future_tech");
+      var meta = [n.dept || "소속 미지정", n.owner ? maskName(n.owner) : "", techs.length ? "현재: " + techs.join(", ") : "",
+                  ftechs.length ? "향후: " + ftechs.join(", ") : ""].filter(Boolean).join(" · ");
+      return '<div class="sumrow" data-act="gonode" data-id="' + esc(n.id) + '" title="클릭하면 계층 편집에서 이 업무를 엽니다">'
+        + '<div class="sp">' + esc(path) + "</div>" + (meta ? '<div class="sm">' + esc(meta) + "</div>" : "") + "</div>";
+    }).join("");
+    return '<div class="sumside"><div class="sumhead"><b>' + esc(title) + '</b><span>' + list.length + '개</span>'
+      + '<button class="sumx" data-act="sumclose" title="닫기">✕</button></div>'
+      + '<div class="sumlist">' + (rows || '<div class="sumrow" style="color:#a8a29e">해당 업무가 없습니다.</div>') + "</div></div>";
   }
 
   function pageHistory() {
@@ -2012,6 +2290,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     else if (S.activeTab === "io") body = pageExcel();
     else if (S.activeTab === "manual" && SOLO) body = pageManual();
     else if (S.activeTab === "hist" && !SOLO) body = pageHistory();
+    else if (S.activeTab === "chat" && !SOLO && S.chatReady) body = pageChat();
     else body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
   }
@@ -2039,10 +2318,60 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
       }
     }
   }
+  var H_MIN = 560, H_MAX = 900;     // 프레임 높이 하한/상한 (아래 needHeight 참조)
+  /** 지금 화면이 실제로 필요로 하는 높이(px).
+   *
+   *  예전엔 항상 820 고정이었다 — 카드가 몇 장뿐이어도 컬럼이 820px 까지 늘어나
+   *  **화면 아래가 통째로 비었다.** 이제 콘텐츠를 재서 clamp 한다.
+   *  상한을 두는 이유: iframe 은 scrolling:"no" 라 내부(.list/.page)가 스크롤을 맡아야 하는데,
+   *  무한정 키우면 Streamlit 페이지 자체가 길어져 헤더가 화면 밖으로 밀린다.
+   */
+  /** 스크롤 상자가 "콘텐츠만으로" 필요한 높이.
+   *
+   *  ★ scrollHeight 를 쓰면 안 된다 — 콘텐츠가 상자보다 짧아도 scrollHeight 는 절대
+   *    clientHeight 아래로 안 내려간다. 그러면 "지금 높이 이상"만 나와서 프레임이
+   *    **한 번 커지면 영영 안 줄어드는 래칫**이 된다(실제로 상한 900 에 눌러붙었다).
+   *    그래서 자식들의 실제 높이를 직접 더한다.
+   */
+  function innerNeed(el) {
+    var cs = getComputedStyle(el);
+    var h = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    var kids = el.children;
+    for (var i = 0; i < kids.length; i++) {
+      var ks = getComputedStyle(kids[i]);
+      h += kids[i].offsetHeight + (parseFloat(ks.marginTop) || 0) + (parseFloat(ks.marginBottom) || 0);
+    }
+    var gap = parseFloat(cs.rowGap) || 0;
+    if (kids.length > 1 && gap) h += gap * (kids.length - 1);
+    return h;
+  }
+  function needHeight() {
+    // 스크롤을 맡는 안쪽 상자들. 바깥 상자는 프레임 높이에 맞춰 늘어나므로 재봐야 소용없다.
+    var INNER = ".list, .pbody, .page";
+    var total = 0;
+    Array.prototype.forEach.call(contentEl.children, function (ch) {
+      var inner = ch.matches && ch.matches(INNER) ? [ch] : (ch.querySelectorAll ? ch.querySelectorAll(INNER) : []);
+      if (!inner.length) { total += ch.offsetHeight; return; }   // 헤더·배너 등 고정 블록
+      // 이 블록의 필요 높이 = 자기 높이 + (안쪽 콘텐츠 - 안쪽 상자). 안쪽이 여럿이면
+      // (컬럼 보드) 가장 많이 필요한 것을 따른다.
+      // ★ extra 는 **음수가 될 수 있다** — 콘텐츠가 상자보다 짧으면 그만큼 줄여야 한다.
+      //   0 으로 초기화하면 줄어들 길이 막혀 프레임이 상한에 눌러붙는다.
+      var extra = null;
+      Array.prototype.forEach.call(inner, function (el) {
+        var e = innerNeed(el) - el.offsetHeight;
+        if (extra === null || e > extra) extra = e;
+      });
+      total += ch.offsetHeight + (extra || 0);
+    });
+    if (!total) total = 700;
+    return Math.max(H_MIN, Math.min(H_MAX, Math.round(total + 8)));
+  }
   function layout() {
-    // iframe 높이 자동 — Streamlit 스크롤은 컴포넌트 안에서 처리한다
-    var target = IN_ST ? 820 : (document.querySelector(".app") ? document.querySelector(".app").offsetHeight : 820);
-    if (IN_ST) setHeight(824);
+    // iframe 높이 — Streamlit 스크롤은 컴포넌트 안에서 처리한다(scrolling:"no" 계약).
+    if (!IN_ST || !contentEl) return;
+    var h = needHeight();
+    contentEl.style.height = h + "px";
+    setHeight(h + 4);
   }
 
   // ── 이벤트 위임 (한 번만 바인딩) ─────────────────────
@@ -2085,6 +2414,20 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     else if (a === "domadd") domAdd(d.k);
     else if (a === "domdel") domDelete(d.k, +d.i);
     else if (a === "exceltab") S.excelTab = d.k, rerender();
+    // 요약 드릴다운 — 같은 칸을 다시 누르면 닫힌다(토글)
+    else if (a === "sumpick") {
+      var same = S.sumPick && S.sumPick.axis === d.axis && S.sumPick.key === (d.key || "");
+      S.sumPick = same ? null : { axis: d.axis, key: d.key || "" };
+      rerender();
+    }
+    else if (a === "sumclose") S.sumPick = null, rerender();
+    // 질의 챗봇 — 저장 전 편집분까지 답에 반영되게 현재 트리를 함께 보낸다.
+    // ★ 파이썬은 이 왕복에서 _set_data 를 부르지 않는다(tree_epoch 불변) → 미저장 편집 보존.
+    else if (a === "chatsend") chatSend(S.chatQ);
+    else if (a === "chatsample") chatSend(d.q);
+    else if (a === "chatclear") { S.chatLog = []; S.chatBusy = false; rerender(); emit({ type: "chat_clear" }); }
+    // 요약 목록에서 업무 클릭 → 계층 편집 탭으로 이동해 그 노드를 연다
+    else if (a === "gonode") { selectPath(d.id); S.activeTab = "tree"; rerender(); }
     else if (a === "down") { if (d.fmt === "json") jsonDownload(); else csvDownload(S.mask, "프로세스계층도_" + _dateStamp() + ".csv"); }
     else if (a === "histpick") actHistPick(+d.i);
     else if (a === "restore") { if (!S.author) return flash("작성자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
@@ -2143,6 +2486,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
       return;
     }
     if (f === "collectfolder") { S.collectFolder = el.value; return; }   // 폴더 경로 — 모델만, 스캔 클릭 때 사용
+    if (f === "chatq") { S.chatQ = el.value; return; }                   // 질문 — 모델만(rerender 하면 타이핑이 끊긴다)
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
     //   rerender 하면 contentEl.innerHTML 이 통째로 갈려 포커스된 input 이 파괴돼 글자가 사라진다.
     //   칸을 벗어날 때(onChange)에 한 번만 전체를 다시 그려 배지·힌트를 동기화한다. (name·desc 는
@@ -2180,6 +2524,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     // 한글 조합을 Enter 로 확정하는 순간에도 keydown 이 온다 — 그걸 "추가" 로 오인하면
     // "레이더" 를 치다 Enter 를 눌렀을 뿐인데 미완성 기술이 등록된다.
     if (_composing || e.isComposing || e.keyCode === 229) return;
+    // 질의 입력은 여러 줄이라 Enter 로 줄바꿈을 남기고 Ctrl(⌘)+Enter 로만 보낸다.
+    var cq = e.target.closest('[data-fkey="chatq"]');
+    if (cq) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      return chatSend(cq.value);
+    }
     var el = e.target.closest('[data-fkey="newtech"]'); if (!el) return;
     e.preventDefault();
     actAddTech(el.dataset.id, el.value);
@@ -2247,7 +2598,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     var ep = args.tree_epoch;
     if (args.tree && (S.treeEpoch === null || ep !== S.treeEpoch)) {
       S.treeEpoch = ep;
-      S.nodes = (args.tree.nodes || []).map(function (n) { return Object.assign({}, n); });
+      S.nodes = canonNodes((args.tree.nodes || []).map(function (n) { return Object.assign({}, n); }));
       S.domains = withDefaultDomains(args.tree.domains);   // 새 도메인 기본값 병합
       S.rev = args.tree.rev || 0;
       S.dirty = [];             // 파이썬이 준 새 정본 = 미저장 변경 없음
@@ -2269,6 +2620,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     S.importErrors = args.import_errors || [];
     S.collectPreview = args.collect_preview || null;
     S.collectErrors = args.collect_errors || [];
+    // 취합 폴더 기본값 — **아직 손대지 않았을 때만** 채운다(사용자가 지운 값을 되살리지 않게).
+    if (S.collectFolder == null && args.collect_folder_default) S.collectFolder = args.collect_folder_default;
+    // 질의 챗봇 — 대화록의 정본은 파이썬이다(낙관적으로 그린 내 질문도 여기서 덮인다).
+    S.chatReady = !!args.chat_ready;
+    S.chatProvider = args.chat_provider || "";
+    if (Array.isArray(args.chat_log)) { S.chatLog = args.chat_log; S.chatBusy = false; }
+    if (S.activeTab === "chat" && !(S.chatReady && !SOLO)) S.activeTab = "tree";   // 탭이 사라지면 되돌린다
     if (!S.importPreview) S.delMissing = false;   // 다음 업로드에 삭제 옵션이 딸려가지 않게
     if (typeof args.flash === "string" && args.flash) flash(args.flash);
     if (S.histPick >= (S.history.length || 1)) S.histPick = 0;
@@ -2279,10 +2637,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     contentEl = document.createElement("div");
     contentEl.style.display = "flex";
     contentEl.style.flexDirection = "column";
-    // Streamlit iframe 안에선 setFrameHeight 로 820 고정. 단독 배포판은 뷰포트 전체를 채운다
-    // (안 그러면 큰 모니터에서 하단에 빈 여백이 크게 남는다).
+    // Streamlit iframe 안에선 layout() 이 콘텐츠를 재서 높이를 정한다(H_MIN~H_MAX).
+    // 단독 배포판은 뷰포트 전체를 채운다(큰 모니터에서 하단 여백이 크게 남지 않게).
     if (!IN_ST) document.documentElement.classList.add("solo");
-    contentEl.style.height = IN_ST ? "820px" : "100vh";
+    contentEl.style.height = IN_ST ? H_MIN + "px" : "100vh";   // 첫 렌더 전 임시값, 곧 layout() 이 덮는다
     appEl.appendChild(contentEl);
     appEl.addEventListener("click", onClick);
     appEl.addEventListener("input", onInput);
@@ -2308,11 +2666,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260728_1054";
     // 시드는 무시하고 이어서 — 이미 작성 중인 사람의 작업분을 골격이 덮지 않게 한다.
     var seedDept = "";
     if (saved) {
-      S.nodes = saved.nodes.map(coerceEvents); S.domains = withDefaultDomains(saved.domains);   // 새 도메인 기본값 병합
+      S.nodes = canonNodes(saved.nodes.map(coerceEvents)); S.domains = withDefaultDomains(saved.domains);   // 새 도메인 기본값 병합
       S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
     } else if (window.__PD_SEED__ && Array.isArray(window.__PD_SEED__.nodes) && window.__PD_SEED__.nodes.length) {
       var sd = window.__PD_SEED__;
-      S.nodes = sd.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); });
+      S.nodes = canonNodes(sd.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); }));
       S.domains = withDefaultDomains(sd.domains);   // 새 도메인 기본값 병합
       S.dept = sd.dept || sd.exported_dept || "";   // 과 자동 지정(있으면)
       seedDept = S.dept;

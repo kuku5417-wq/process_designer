@@ -95,6 +95,12 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "import_errors": st.session_state.get("import_errors") or [],
         "collect_preview": st.session_state.get("collect_preview"),
         "collect_errors": st.session_state.get("collect_errors") or [],
+        # 취합 스캔 폴더 기본값 — 프론트가 빈 칸일 때만 채운다([스캔]만 누르면 되게)
+        "collect_folder_default": pc.get_collect_default(),
+        # 질의 챗봇 — 키가 없으면 탭 자체를 숨긴다(사외망에서 빈 탭을 보여줄 이유가 없다)
+        "chat_ready": _chat_ready(),
+        "chat_provider": _chat_provider(),
+        "chat_log": st.session_state.get("chat_log") or [],
     }
 
 
@@ -216,10 +222,20 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     subs.sort(key=lambda n: int(n["submit_count"]), reverse=True)
     top = [{"path": " › ".join(schema.path_names(nmap, n["id"])[3:]) or n.get("name", ""),
             "count": int(n["submit_count"])} for n in subs[:30]]
+    # 제출자 총원 — (부서, 이름) distinct. 트리에는 이름을 저장하지 않으므로 이 수치는
+    # 스캔 시점에만 낼 수 있다. 파일 1개 = 제출자 1명이므로 성공 리포트에서 센다.
+    ok = [r for r in reports if not r.get("errors")]
+    subs_set = {(r.get("dept", ""), r.get("author", "")) for r in ok}
+    subs_by_dept: dict[str, int] = {}
+    for dept, _author in subs_set:
+        k = dept or "(소속 미지정)"
+        subs_by_dept[k] = subs_by_dept.get(k, 0) + 1
     st.session_state["pending_collect"] = merged
     st.session_state["collect_preview"] = {
         "files": reports,
         "scanned": len(files),   # 발견(읽은) JSON 파일 수 — 하위 폴더 포함
+        "submitters_total": len(subs_set),
+        "submitters_by_dept": dict(sorted(subs_by_dept.items(), key=lambda kv: -kv[1])),
         "added": len(d["added"]), "changed": len(d["changed"]),
         "added_list": _node_brief(d["added"], merged),
         "top_submits": top,
@@ -249,6 +265,56 @@ def _apply_collect() -> None:
         st.session_state.pop(k, None)
     st.session_state["flash"] = (f"취합 반영: 추가 {len(d['added'])} · 변경 {len(d['changed'])}. "
                                  f"상단 [저장]을 눌러야 파일에 기록됩니다.")
+
+
+def _handle_chat(evt: dict) -> None:
+    """질의 챗봇 — 트리를 컨텍스트로 LLM 에 한 번 묻고 답을 대화록에 쌓는다.
+
+    ★ `_set_data()` 를 부르지 않는다 — 조회성 왕복이라 tree_epoch 이 바뀌면 안 된다.
+      epoch 이 오르면 프론트가 자기 트리를 저장본으로 갈아끼워 **미저장 편집이 사라진다.**
+    ★ 화면의 미저장 편집까지 포함해 답해야 하므로 컴포넌트가 보낸 nodes 를 우선 쓴다.
+    """
+    q = str(evt.get("q") or "").strip()
+    if not q:
+        return
+    log: list[dict] = st.session_state.setdefault("chat_log", [])
+    log.append({"role": "user", "text": q})
+    data = dict(st.session_state["data"])
+    if evt.get("nodes") is not None:                      # 저장 전 편집분 반영
+        data["nodes"] = evt["nodes"]
+        data["domains"] = evt.get("domains", data.get("domains", {}))
+    try:
+        # 지연 import — 모듈·키가 없어도 앱 전체가 죽지 않게 (공통규칙 4 폴백)
+        import chat_context
+        import llm_client
+        prompt = chat_context.build_prompt(data, q, log[:-1])
+        ans = llm_client.call_llm_text(prompt, system=chat_context.SYSTEM_PROMPT)
+        if ans:
+            log.append({"role": "bot", "text": ans})
+        else:
+            errs = "; ".join(llm_client.last_errors()) or "알 수 없는 오류"
+            log.append({"role": "bot", "text": f"답변을 받지 못했습니다. ({errs})", "err": True})
+    except Exception as e:                                # noqa: BLE001 — LLM 실패로 앱이 죽지 않게
+        log.append({"role": "bot", "text": f"질의 처리 중 오류: {type(e).__name__}: {e}", "err": True})
+    st.session_state["chat_log"] = log[-40:]              # 대화록 상한 (세션 메모리만, 저장 안 함)
+
+
+def _chat_ready() -> bool:
+    """LLM 키가 설정돼 있는가. 값은 절대 보지 않는다(설정 여부만)."""
+    try:
+        import llm_client
+        return llm_client.is_configured()
+    except Exception:   # noqa: BLE001 — requests 미설치 등 → 챗봇 탭만 숨기고 앱은 뜬다
+        return False
+
+
+def _chat_provider() -> str:
+    """설정된 LLM provider 표시 문자열 (키 값은 노출하지 않는다 — 이름만)."""
+    try:
+        import llm_client
+        return f"({llm_client.provider_label()} 순으로 시도)"
+    except Exception:   # noqa: BLE001 — 표시용이라 실패해도 무시
+        return ""
 
 
 def _preview_restore(name: str, nodes: list[dict] | None) -> None:
@@ -363,6 +429,12 @@ def _handle(evt: dict) -> None:
         st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
         st.session_state.pop("conflict", None)
         st.session_state["flash"] = "최신 내용을 불러왔습니다."
+
+    elif t == "chat":                        # 질의 챗봇 — 트리 질의응답(읽기 전용)
+        _handle_chat(evt)
+
+    elif t == "chat_clear":
+        st.session_state["chat_log"] = []
 
 
 def main() -> None:

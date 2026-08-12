@@ -11,6 +11,7 @@ parent_id 는 ROOT_ID 이며, 엑셀 내보내기 시점에만 lv0~lv2 컬럼으
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Final
@@ -157,6 +158,8 @@ DEPT_TREE: Final[dict[str, tuple[str, ...]]] = {
     "시운전기술": ("LNG설비운영과", "코멘더"),
     "해운부": ("해운1과", "해운2과"),
     "친환경실증랩": ("친환경실증랩",),
+    # 과 미확정 — 친환경실증랩과 같은 단독 패턴. 옛 데이터의 '해양사업부'를 미분류로 흘리지 않으려고 둔다.
+    "해양사업부": ("해양사업부",),
 }
 # 과 → 부서 역인덱스 (표시·집계 롤업용)
 _DEPT_PARENT: Final[dict[str, str]] = {g: b for b, gs in DEPT_TREE.items() for g in gs}
@@ -166,10 +169,75 @@ _DEPT_FLAT: Final[list[str]] = [g for gs in DEPT_TREE.values() for g in gs]
 _OLD_DEFAULT_DEPT: Final[frozenset[str]] = frozenset(
     ["시운전1부", "시운전2부", "시운전3부", "기획운영부", "해운부", "해양사업부"])
 
+# 옛 부서명 → 현 부서명 별칭. 조직명이 바뀐 것들만 둔다(과 이름이 아니라 **부서** 이름).
+DEPT_ALIASES: Final[dict[str, str]] = {"기획운영부": "기획운영"}
+
+# lv3 부문 이름 오타 교정 — 정규화 키(대문자·공백정리) → 정식 표기.
+# 시운전3부 과 이름(CEDAR CSU / ENI CSU)을 부문으로 쓰면서 CSU 를 CUS 로 뒤집어 친 사례가 있어,
+# 같은 부문이 둘로 갈렸다. 취합이 **이름 경로**로 병합하므로 이름이 갈리면 인원 집계도 갈린다.
+LV3_NAME_FIXES: Final[dict[str, str]] = {
+    "CEDAR CUS": "CEDAR CSU",
+    "ENI CUS": "ENI CSU",
+}
+
+
+def _norm(v: Any) -> str:
+    """비교용 정규화 키 — 앞뒤 공백 제거 + 연속공백 1칸 + 대문자.
+
+    'Cedar  cus' / 'CEDAR CUS' 를 한 키로 모은다. 저장값은 바꾸지 않고 **조회에만** 쓴다.
+    """
+    return re.sub(r"\s+", " ", str(v or "").strip()).upper()
+
+
+# 정규화 키 기반 역인덱스 (대소문자·공백 흔들림 흡수)
+_DEPT_PARENT_N: Final[dict[str, str]] = {_norm(g): g for g in _DEPT_PARENT}
+_DEPT_BRANCH_N: Final[dict[str, str]] = {_norm(b): b for b in DEPT_TREE}
+_DEPT_ALIAS_N: Final[dict[str, str]] = {_norm(k): v for k, v in DEPT_ALIASES.items()}
+_LV3_FIX_N: Final[dict[str, str]] = {_norm(k): v for k, v in LV3_NAME_FIXES.items()}
+
+
+def canon_dept(v: str) -> str:
+    """소속 값 정규화 — 과 정식표기로 맞춘다. 못 찾으면 **원문 그대로**(값 유실 금지).
+
+    대소문자·공백 차이와 옛 부서명 별칭을 흡수한다. 부서명 자체(시운전1부 등)는
+    과가 아니므로 그대로 남고, 부서 롤업은 dept_parent 가 처리한다.
+    """
+    raw = str(v or "").strip()
+    if not raw:
+        return ""
+    k = _norm(raw)
+    if k in _DEPT_PARENT_N:                  # 과 (오타·대소문자 흔들림 포함)
+        return _DEPT_PARENT_N[k]
+    if k in _DEPT_ALIAS_N:                   # 옛 부서명 → 현 부서명
+        return _DEPT_ALIAS_N[k]
+    if k in _DEPT_BRANCH_N:                  # 부서명 그대로 입력된 옛 데이터
+        return _DEPT_BRANCH_N[k]
+    return raw
+
+
+def canon_lv3_name(name: str) -> str:
+    """lv3 부문 이름 오타 교정 (LV3_NAME_FIXES). 해당 없으면 원문 그대로."""
+    raw = str(name or "").strip()
+    return _LV3_FIX_N.get(_norm(raw), raw)
+
 
 def dept_parent(gwa: str) -> str:
-    """과 → 부서. 매핑에 없으면 '미분류'. (표시·집계 롤업 전용, 저장은 과만.)"""
-    return _DEPT_PARENT.get(str(gwa or "").strip(), "미분류")
+    """소속 → 부서. (표시·집계 롤업 전용, 저장은 과만.)
+
+    옛 데이터가 **부서명**을 그대로 적어둔 경우가 많아 3단으로 찾는다:
+      1) 과면 그 과의 부서   2) 값 자체가 부서면 그 부서   3) 그 외 '미분류'
+    2단이 없으면 '시운전1부' 같은 옛 값이 통째로 미분류로 떨어져 부서 롤업이 무의미해진다.
+    """
+    k = _norm(gwa)
+    if not k:
+        return "미분류"
+    if k in _DEPT_PARENT_N:
+        return _DEPT_PARENT[_DEPT_PARENT_N[k]]
+    if k in _DEPT_ALIAS_N:
+        return _DEPT_ALIAS_N[k]
+    if k in _DEPT_BRANCH_N:
+        return _DEPT_BRANCH_N[k]
+    return "미분류"
 
 
 # ── 도메인 마스터 기본값 ────────────────────────────────
@@ -409,6 +477,9 @@ def normalize(data: dict) -> dict:
         # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
         n["has_ai_agent"] = len(n["tech"]) > 0
         n["has_ai_future"] = len(n["future_tech"]) > 0
+        # 소속 정규화 — 대소문자·공백 흔들림과 옛 부서명 별칭을 정식표기로 모은다.
+        # 매핑에 없는 값(부서명 등)은 원문 그대로 남고, 부서 롤업은 dept_parent 가 처리한다.
+        n["dept"] = canon_dept(n.get("dept"))
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())
@@ -438,6 +509,12 @@ def normalize(data: dict) -> dict:
     for n in nodes:
         depth = len(ancestors(nmap, n["id"])) + LEVEL_MIN
         n["level"] = max(LEVEL_MIN, min(LEVEL_MAX, depth))
+
+    # lv3 부문 이름 오타 교정 — level 확정 뒤에 해야 lv3 만 정확히 걸린다.
+    # 취합이 이름 경로로 병합하므로, 오타가 남으면 같은 부문이 둘로 갈려 인원 집계까지 갈린다.
+    for n in nodes:
+        if n["level"] == LEVEL_MIN:
+            n["name"] = canon_lv3_name(n["name"])
 
     for pid in {n["parent_id"] for n in nodes} | {ROOT_ID}:
         renumber(data, pid)
@@ -657,6 +734,24 @@ def rollup_has_ai(cidx: dict[str, list[dict]], node: dict, field: str = "has_ai_
     return any(c.get(field) for c in cidx.get(node["id"], []) if c.get("level") == LEVEL_MAX)
 
 
+def rollup_techs(cidx: dict[str, list[dict]], node: dict, field: str = "tech") -> set[str]:
+    """lv6 유효 기술 = 자신 ∪ lv7 자식들. field=tech(현재)/future_tech(향후).
+
+    **집합**이라 같은 기술을 lv6 과 lv7 이 둘 다 가져도 그 lv6 은 1회만 센다
+    (기술별 집계에서 한 업무가 중복 계상되지 않게).
+    """
+    out = {str(t).strip() for t in (node.get(field) or []) if str(t).strip()}
+    for c in cidx.get(node["id"], []):
+        if c.get("level") == LEVEL_MAX:
+            out |= {str(t).strip() for t in (c.get(field) or []) if str(t).strip()}
+    return out
+
+
+def _pct(part: int, whole: int) -> int:
+    """적용률(%) — 분모 0 이면 0. 퍼센트는 파이썬이 계산한다(JS 재구현 금지 규칙)."""
+    return round(part / whole * 100) if whole else 0
+
+
 # ── 통계 ────────────────────────────────────────────────
 
 def stats(data: dict) -> dict:
@@ -673,9 +768,14 @@ def stats(data: dict) -> dict:
     by_dept: dict[str, int] = {}
     by_dept_group: dict[str, int] = {}     # 부서 롤업 (과 → 부서)
     by_auto: dict[str, int] = {}
+    by_owner: dict[str, int] = {}          # 담당자별 (소속 · 이름) — 표시단에서 마스킹한다
+    by_tech_now: dict[str, int] = {}       # 활용기술(현재)별 lv6 수 — 다중선택이라 합계 > lv6 수
+    by_tech_future: dict[str, int] = {}    # 향후 AI 적용기술별 lv6 수
     ai_yes = 0
+    ai_future_yes = 0
     total_hours = 0.0
     ai_hours = 0.0
+    ai_future_hours = 0.0
     for n in nodes:
         by_level[n.get("level", 0)] = by_level.get(n.get("level", 0), 0) + 1
     for n in detail:
@@ -685,11 +785,22 @@ def stats(data: dict) -> dict:
         by_dept_group[g] = by_dept_group.get(g, 0) + 1
         a = n.get("automation_level") or "(미지정)"
         by_auto[a] = by_auto.get(a, 0) + 1
+        o = str(n.get("owner") or "").strip()
+        # 동명이인이 부서를 넘나들 수 있어 소속과 묶어 키를 만든다. 마스킹은 표시단 책임.
+        ok = f"{n.get('dept') or '(미지정)'} · {o}" if o else "(미지정)"
+        by_owner[ok] = by_owner.get(ok, 0) + 1
         h = rollup_hours(cidx, n)                            # 자신 + lv7 자식
         total_hours += h
         if rollup_has_ai(cidx, n):                           # 자신 or lv7 자식
             ai_yes += 1
             ai_hours += h
+        if rollup_has_ai(cidx, n, "has_ai_future"):
+            ai_future_yes += 1
+            ai_future_hours += h
+        for t in rollup_techs(cidx, n, "tech"):
+            by_tech_now[t] = by_tech_now.get(t, 0) + 1
+        for t in rollup_techs(cidx, n, "future_tech"):
+            by_tech_future[t] = by_tech_future.get(t, 0) + 1
     return {
         "total": len(nodes),
         "detail_total": len(detail),          # lv6 세부업무 수 = AI 지표의 분모
@@ -697,11 +808,21 @@ def stats(data: dict) -> dict:
         "by_dept": dict(sorted(by_dept.items(), key=lambda kv: -kv[1])),
         "by_dept_group": dict(sorted(by_dept_group.items(), key=lambda kv: -kv[1])),
         "by_automation": dict(sorted(by_auto.items(), key=lambda kv: -kv[1])),
+        "by_owner": dict(sorted(by_owner.items(), key=lambda kv: -kv[1])),
+        # 기술별 — 한 업무가 기술 3개면 3칸에 각 1회. **합계 > lv6 수가 정상**(다중선택 축)
+        "by_tech_now": dict(sorted(by_tech_now.items(), key=lambda kv: -kv[1])),
+        "by_tech_future": dict(sorted(by_tech_future.items(), key=lambda kv: -kv[1])),
         "ai_yes": ai_yes,
         "ai_no": len(detail) - ai_yes,
+        "ai_rate": _pct(ai_yes, len(detail)),
+        # 향후 AI — has_ai_future(=향후기술 보유) 기준. 현재와 분모는 같고 분자만 다르다.
+        "ai_future_yes": ai_future_yes,
+        "ai_future_no": len(detail) - ai_future_yes,
+        "ai_future_rate": _pct(ai_future_yes, len(detail)),
         # 연간 공수 — "어느 업무가 시간을 먹는가 / 자동화하면 몇 시간이 빠지는가"
         "total_hours": round(total_hours, 1),
         "ai_hours": round(ai_hours, 1),
+        "ai_future_hours": round(ai_future_hours, 1),
     }
 
 

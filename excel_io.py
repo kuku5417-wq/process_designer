@@ -123,23 +123,49 @@ def _domain_df(data: dict) -> pd.DataFrame:
     return pd.DataFrame({k: v + [""] * (width - len(v)) for k, v in cols.items()})
 
 
-def _summary_df(data: dict) -> pd.DataFrame:
-    """요약 시트. AI·부서·자동화 지표의 분모는 lv6 세부업무 (상위 레벨은 상세를 입력하지 않는다)."""
+def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
+    """요약 시트. AI·부서·자동화 지표의 분모는 lv6 세부업무 (상위 레벨은 상세를 입력하지 않는다).
+
+    AI·활용기술은 **현재/향후 두 축**으로 나눠 낸다 — 한 칸에 섞으면 "지금 되는 것"과
+    "하고 싶은 것"이 구분되지 않는다. 기술 축은 다중선택이라 합계가 lv6 수보다 크다(정상).
+    """
     s = schema.stats(data)
     lv6 = f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}"
+    multi = "※ 다중선택 — 한 업무가 여러 값을 가지면 각 값에 1회씩(합계 ≠ 업무 수)"
     rows: list[dict] = [
         {"구분": "전체", "항목": "업무 수(전 레벨)", "값": s["total"]},
         {"구분": "전체", "항목": f"{lv6} 수", "값": s["detail_total"]},
-        {"구분": f"AI 에이전트 ({lv6} 기준)", "항목": "적용", "값": s["ai_yes"]},
-        {"구분": f"AI 에이전트 ({lv6} 기준)", "항목": "미적용", "값": s["ai_no"]},
+        {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "적용", "값": s["ai_yes"]},
+        {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "미적용", "값": s["ai_no"]},
+        {"구분": f"AI 에이전트 — 현재 ({lv6} 기준)", "항목": "적용률(%)", "값": s["ai_rate"]},
+        {"구분": f"AI 에이전트 — 향후 ({lv6} 기준)", "항목": "적용", "값": s["ai_future_yes"]},
+        {"구분": f"AI 에이전트 — 향후 ({lv6} 기준)", "항목": "미적용", "값": s["ai_future_no"]},
+        {"구분": f"AI 에이전트 — 향후 ({lv6} 기준)", "항목": "적용률(%)", "값": s["ai_future_rate"]},
     ]
     for lv, c in s["by_level"].items():
         rows.append({"구분": "레벨별", "항목": f"lv{lv} ({schema.LEVEL_LABELS.get(lv, '')})", "값": c})
     for d, c in s["by_dept"].items():
-        rows.append({"구분": f"부서별 ({lv6} 기준)", "항목": d, "값": c})
+        rows.append({"구분": f"과별 ({lv6} 기준)", "항목": d, "값": c})
+    # 부서 롤업 — 화면(JS)은 부서별로 보여주는데 엑셀엔 없어서 축이 어긋나 있었다
+    for g, c in s["by_dept_group"].items():
+        rows.append({"구분": f"부서별 ({lv6} 기준)", "항목": g, "값": c})
+    for o, c in s["by_owner"].items():
+        rows.append({"구분": f"담당자별 ({lv6} 기준)", "항목": _mask_owner_key(o, mask), "값": c})
     for a, c in s["by_automation"].items():
         rows.append({"구분": f"자동화수준별 ({lv6} 기준)", "항목": a, "값": c})
+    for t, c in s["by_tech_now"].items():
+        rows.append({"구분": f"활용기술 — 현재 ({lv6} 기준)", "항목": t, "값": c, "비고": multi})
+    for t, c in s["by_tech_future"].items():
+        rows.append({"구분": f"활용기술 — 향후 ({lv6} 기준)", "항목": t, "값": c, "비고": multi})
     return pd.DataFrame(rows)
+
+
+def _mask_owner_key(key: str, mask: bool = True) -> str:
+    """`소속 · 이름` 키의 이름 부분만 마스킹. 요약은 편집 위젯이 아니라 항상 마스킹 대상이다."""
+    if not mask or " · " not in key:
+        return key
+    dept, _, name = key.rpartition(" · ")
+    return f"{dept} · {mask_name(name)}"
 
 
 def build_xlsx(data: dict, mask: bool = True) -> bytes:
@@ -151,7 +177,7 @@ def build_xlsx(data: dict, mask: bool = True) -> bytes:
         dom = _domain_df(data)
         if not dom.empty:
             dom.to_excel(xw, sheet_name=SHEET_DOMAIN, index=False, freeze_panes=(1, 0))
-        _summary_df(data).to_excel(xw, sheet_name=SHEET_SUMMARY, index=False, freeze_panes=(1, 0))
+        _summary_df(data, mask=mask).to_excel(xw, sheet_name=SHEET_SUMMARY, index=False, freeze_panes=(1, 0))
 
         widths = {"lv0": 8, "lv1": 8, "lv2": 10, "lv3": 16, "lv4": 20, "lv5": 20, "lv6": 22, "lv7": 22,
                   "레벨": 6, "이름": 22, "AI에이전트": 11, "활용기술": 20, "부서/과": 12,
@@ -447,16 +473,36 @@ def _detail_summary(n: dict) -> str:
     return " · ".join(parts)
 
 
+def _branches_with_detail(nodes: list[dict], nmap: dict[str, dict]) -> set[str]:
+    """실제 세부업무(lv6 이상)에 닿는 가지의 노드 id 집합 = lv6·lv7 + 그 조상 전부.
+
+    취합이 이 집합 밖 노드를 버리는 근거다. 골격(lv3~lv5)만 만든 제출을 그대로 병합하면
+    아무도 채우지 않은 분류 노드가 정본 트리에 영구히 남는다.
+    """
+    keep: set[str] = set()
+    for n in nodes:
+        if n.get("level", 0) < schema.LOAD_LEVEL:
+            continue
+        cur: dict | None = n
+        while cur is not None and cur["id"] not in keep:
+            keep.add(cur["id"])
+            cur = nmap.get(cur.get("parent_id", schema.ROOT_ID))
+    return keep
+
+
 def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, list[dict], list[str]]:
     """여러 제출 JSON 을 **경로 기준으로 취합**한다. parse_json(단일 이어붙이기)과는 다른 연산이다.
 
     · 같은 이름 경로(lv3~lv6)는 **한 노드로 합친다** — parse_json 은 lv4~6 을 중복으로 남기지만
       취합은 "이 업무를 몇 명이 하는가"를 세는 게 목적이라 합친다.
+    · **lv6 에 닿는 가지만 취합한다**(_branches_with_detail). 골격만 만든 제출은 통째로 제외하고
+      리포트에 사유를 남긴다 — 조용히 0건 처리하면 "냈는데 왜 없지"가 된다.
     · 상세값은 **첫 제출자 승리** — 먼저 스캔된 파일 값을 쓰고, 뒤 제출자의 다른 상세는
       submit_detail(부서 기준, 이름 없음)에 모은다.
     · submit_count = 그 경로를 제출한 (부서,이름) distinct 인원수 N (lv4~6). 이름은 저장하지 않는다.
 
-    반환: (병합트리, 파일별_리포트, 전역오류). 리포트 = [{filename, dept, author, nodes, new, errors}].
+    반환: (병합트리, 파일별_리포트, 전역오류).
+    리포트 = [{filename, dept, author, nodes, new, skipped, errors}] (skipped = lv6 미도달로 제외한 노드 수).
     """
     import copy
 
@@ -474,11 +520,11 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
             payload = json.loads(raw.decode("utf-8"))
         except Exception as e:
             reports.append({"filename": filename, "dept": "", "author": "",
-                            "nodes": 0, "new": 0, "errors": f"JSON 읽기 실패: {e}"})
+                            "nodes": 0, "new": 0, "skipped": 0, "errors": f"JSON 읽기 실패: {e}"})
             continue
         if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
             reports.append({"filename": filename, "dept": "", "author": "",
-                            "nodes": 0, "new": 0, "errors": "이 앱의 제출 JSON 이 아닙니다 (nodes 없음)"})
+                            "nodes": 0, "new": 0, "skipped": 0, "errors": "이 앱의 제출 JSON 이 아닙니다 (nodes 없음)"})
             continue
 
         dept, author = _submitter_of(payload, filename)
@@ -489,15 +535,30 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
             })
         except Exception as e:
             reports.append({"filename": filename, "dept": dept, "author": author,
-                            "nodes": 0, "new": 0, "errors": f"구조 오류: {e}"})
+                            "nodes": 0, "new": 0, "skipped": 0, "errors": f"구조 오류: {e}"})
             continue
 
         imap = schema.node_map(incoming["nodes"])
+        keep = _branches_with_detail(incoming["nodes"], imap)
+        if not keep:
+            reports.append({"filename": filename, "dept": dept, "author": author,
+                            "nodes": len(incoming["nodes"]), "new": 0, "skipped": len(incoming["nodes"]),
+                            "errors": f"세부업무(lv{schema.LOAD_LEVEL}) 없음 — 취합에서 제외"})
+            continue
         new_cnt = 0
+        skipped = 0
         # 얕은 레벨부터 — 부모 경로가 master 에 먼저 존재해야 자식을 매단다
         for n in sorted(incoming["nodes"], key=lambda x: x.get("level", 3)):
             path = tuple(schema.path_names(imap, n["id"])[3:])
             if not path:
+                continue
+            # lv6 에 닿지 않는 가지는 버린다 — 골격만 만든 제출이 정본 트리에 노드를 남기면,
+            # 아무도 채우지 않은 lv4/lv5 가 영구히 쌓여 부문·대분류가 부풀어 오른다.
+            if n["id"] not in keep:
+                # 이미 master 에 있는 경로(손대지 않은 시드 부문 등)는 세지 않는다 —
+                # 모든 제출에 똑같이 뜨는 잡음이라 "제외 N" 이 의미를 잃는다.
+                if path not in idx:
+                    skipped += 1
                 continue
             mid = idx.get(path)
             if mid is None:
@@ -525,7 +586,7 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                     details.setdefault(path, []).append(f"{dept} · {summ}")
 
         reports.append({"filename": filename, "dept": dept, "author": author,
-                        "nodes": len(incoming["nodes"]), "new": new_cnt, "errors": ""})
+                        "nodes": len(incoming["nodes"]), "new": new_cnt, "skipped": skipped, "errors": ""})
 
     # 집계 결과를 노드에 기록 — N≥2 인 경로만 (혼자 한 업무는 배지 노이즈)
     for path, subs in submitters.items():
@@ -555,6 +616,10 @@ def unknown_domain_values(data: dict) -> dict[str, list[str]]:
     for n in data.get("nodes", []):
         for k in ("dept", "automation_level", "frequency", "linked_system"):
             v = n.get(k)
+            if k == "dept":
+                # 오타·대소문자·옛 부서명 별칭은 정식표기로 맞춰 비교한다 —
+                # 안 그러면 'Cedar CSU' 같은 흔들림이 매번 "도메인에 추가할까요?" 로 뜬다.
+                v = schema.canon_dept(v)
             if v and v not in doms.get(k, []):
                 found[k].add(v)
         # 연계시스템 다건의 system 값도 검사

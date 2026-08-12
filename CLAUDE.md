@@ -54,9 +54,11 @@ uv run streamlit run app.py --server.port 8540
 | `schema.py` | **데이터 모델 정본** — 상수·노드 생성·트리 조작·정규화·검증. Streamlit 의존 없는 순수 함수 |
 | `store.py` | JSON 원자적 저장 · 스냅샷 이력 · rev 충돌 검사 · 감사로그 |
 | `excel_io.py` | 계층 ↔ 엑셀 (다운로드 3시트 / 업로드 파싱) |
-| `path_config.py` | 데이터 경로 (NAS/로컬 자동 전환) |
+| `path_config.py` | 데이터 경로 (NAS/로컬 자동 전환) + 취합 스캔 기본 폴더(`get_collect_default`) |
 | `app_config.py` | 전 repo 동일본 (수정 시 7개 repo 동기화) |
 | `pii.py` | `mask_name`/`mask_phone` — 엑셀 출력용. **화면 마스킹은 index.html 의 `maskName()`** |
+| `llm_client.py` | 질의 챗봇용 LLM 호출 — data_manager 이식본, **SOLA→Upstage→OpenAI 3단 폴백** |
+| `chat_context.py` | 트리 → 질의용 텍스트 컨텍스트 압축 + 시스템 프롬프트 |
 
 > v1(Streamlit 위젯 UI) 파일 `state.py`·`ui_styles.py`·`dnd_component.py`·`views/` 는 **삭제됐다**.
 > 기능은 모두 `frontend/index.html` 로 옮겼다. 되살리지 말 것.
@@ -69,10 +71,11 @@ uv run streamlit run app.py --server.port 8540
 | `import` | JS→PY | 엑셀 **파싱·미리보기만**. 결과는 `pending_import` 에 보류 |
 | `import_apply` | JS→PY | `{delete_missing, add_domains}` 옵션으로 보류분 반영 |
 | `import_cancel` | JS→PY | 보류분 폐기 |
-| `collect_scan` | JS→PY | 다수 제출 JSON 취합(폴더 경로 **재귀 `rglob` — 하위 폴더 전부** 또는 다중 업로드) → `excel_io.collect_jsons` 로 **경로 병합·인원수 집계**, `pending_collect` 에 보류. 파일명은 폴더 기준 **상대경로**(하위 폴더 구분·표시용, 신원은 봉투 우선/basename 폴백), 미리보기에 **발견 파일 수(scanned)·파일명** 노출 |
+| `collect_scan` | JS→PY | 다수 제출 JSON 취합(폴더 경로 **재귀 `rglob` — 하위 폴더 전부** 또는 다중 업로드) → `excel_io.collect_jsons` 로 **경로 병합·인원수 집계**, `pending_collect` 에 보류. 파일명은 폴더 기준 **상대경로**(하위 폴더 구분·표시용, 신원은 봉투 우선/basename 폴백), 미리보기에 **발견 파일 수(scanned)·파일명·제출자 총원·파일별 제외 수** 노출. 폴더 입력칸 기본값은 `path_config.get_collect_default()`(빈 칸일 때만 채움 → **[스캔]만 누르면 됨**) |
 | `collect_apply` / `collect_cancel` | JS→PY | 취합 보류분 반영 / 폐기 (취합은 추가·병합만, 삭제 옵트인 없음) |
 | `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 |
 | `restore` / `reload` | JS→PY | 스냅샷 복원 / 디스크 재로드 |
+| `chat` / `chat_clear` | JS→PY | 질의 챗봇 — 트리를 컨텍스트로 LLM 1회 호출 → `chat_log` 적재 / 대화록 비우기. **`_set_data` 를 부르지 않는다**(조회성 왕복 → epoch 불변 → 미저장 편집 보존) |
 
 > **다운로드는 파이썬을 거치지 않는다(클라이언트 사이드).** 예전엔 `download` 이벤트로 파이썬이
 > bytes 를 만들어 sandboxed iframe 의 data-URI 로 내려줬는데, 최신 Chrome 이 **사용자 제스처 밖
@@ -100,9 +103,23 @@ uv run streamlit run app.py --server.port 8540
 
 - **부서/과 2단**: `DEPT_TREE`(부서→과) + `dept_parent(과)` 로 과(leaf)만 노드에 저장하고 부서는 파생.
   선택 UI 는 `<optgroup>`, 집계는 `by_dept`(과별) + `by_dept_group`(부서 롤업).
+- **소속 정규화 3단** (`canon_dept` / `dept_parent`, JS 트윈 `canonDept`/`deptParent`):
+  ① 과면 그 부서 → ② **값 자체가 부서명이면 그 부서** → ③ 그 외 `미분류`.
+  ②가 핵심이다 — 옛 버전은 소속을 `시운전1부` 처럼 **부서명으로** 적은 노드가 많고, 과만 알던
+  예전 `dept_parent` 는 그걸 전부 미분류로 흘려 부서 롤업을 무의미하게 만들었다.
+  대소문자·공백 흔들림은 `_norm`(공백정리+대문자)으로 흡수하고, 옛 부서명은 `DEPT_ALIASES`
+  (`기획운영부 → 기획운영`)로 받는다. **매핑에 없는 값은 원문 그대로 남긴다**(유실 금지).
+- **lv3 부문 이름 오타 교정**: `LV3_NAME_FIXES`(`CEDAR CUS→CEDAR CSU`, `ENI CUS→ENI CSU`)를
+  `normalize()` 가 **level 확정 뒤** lv3 에만 적용한다. 취합이 **이름 경로**로 병합하므로 오타가
+  남으면 같은 부문이 둘로 갈리고 인원 집계까지 갈린다. 교정 결과 동명 lv3 형제가 생기면
+  상단 배너로 알리고 **병합은 사람이** 한다(부문 통합은 하위 전체가 움직이는 조작).
 - **AI 적용은 파생값**: `has_ai_agent = bool(tech)`(현재), `has_ai_future = bool(future_tech)`(향후).
   수동 토글은 없다 — `normalize()`(JS 토글 콜백)가 기술 선택 유무로 강제한다. 따라서 **AI 적용률 =
   "활용기술을 가진 lv6 비율"**(롤업 포함).
+- **현재/향후는 끝까지 분리한다** — `stats()` 가 `ai_yes`/`ai_future_yes`, `ai_rate`/`ai_future_rate`,
+  `by_tech_now`/`by_tech_future` 를 따로 낸다. 헤더 pill·엑셀 요약·도메인 관리 뱃지 모두 두 축이다.
+  "지금 되는 것"과 "하려는 것"을 한 숫자로 뭉치면 계획 판단이 불가능해진다.
+  기술 롤업은 `rollup_techs`(JS `rollupTechs`) — **집합**이라 lv6·lv7 이 같은 기술을 가져도 1회만 센다.
 - 다중선택 도메인 칩: `tech`(현재·향후 공유) · `automation_level` · `ship_type`
   (CNT·COT·LNG·SHTL·VLAC·VLCC·FLNG) · `special_note`(SG·DF(LNG)·메탄올·LPG). **적용 선종·특이사항은
   메인앱 패널에도** 노출된다(발생 패턴이 호선일 때) — 예전의 "SOLO 전용" 이 아니다.
@@ -164,6 +181,48 @@ uv run streamlit run app.py --server.port 8540
 - **개인 배포판 탭 4종** — 계층 편집 / 도메인 관리 / 내보내기·불러오기 / **📖 사용법**(`pageManual`,
   SOLO 전용). 도메인 관리는 SOLO 에서 **수행 주기 목록을 감춘다**(발생 패턴으로 대체돼 안 씀).
 
+### 취합 — lv6 에 닿는 가지만 병합
+
+`collect_jsons` 는 `_branches_with_detail`(lv6·lv7 + 그 조상 전부)로 **실제 세부업무에 닿는
+가지만** 취합한다. 골격(lv3~lv5)만 만들어 낸 제출을 그대로 병합하면 아무도 채우지 않은
+분류 노드가 정본 트리에 영구히 쌓인다.
+
+- 제외한 노드 수는 리포트 `skipped` → 미리보기 표의 **제외 N** 열. 조용히 버리지 않는다.
+- lv6 이 하나도 없는 파일은 오류가 아니라 **사유를 남기고 통째 제외**("세부업무(lv6) 없음").
+- `skipped` 는 **master 에 없는 경로만** 센다 — 손대지 않은 시드 부문까지 세면 모든 제출에
+  똑같이 뜨는 잡음이라 숫자가 의미를 잃는다.
+- **제출자 총원**은 `(부서, 이름)` distinct 로 **스캔 시점에만** 낼 수 있다(트리에 이름 미저장).
+  `_preview_collect` 가 성공 리포트에서 세어 `submitters_total`/`submitters_by_dept` 로 내려준다.
+
+### 요약 드릴다운 (엑셀 탭)
+
+집계표의 **숫자를 클릭하면 우측에 그 lv6 목록**이 뜨고, 항목을 클릭하면 계층 편집에서 열린다
+(`S.sumPick` / `sumNodes` / `sumSide`).
+
+- **`sumNodes` 의 필터는 `stats()` 가 쓰는 게이트를 그대로 재사용한다**(`isLoadLevel` +
+  `rollupHasAi`/`rollupTechs`). 조건을 새로 쓰면 표의 숫자와 목록 개수가 조용히 어긋난다.
+- 축별 중복 정책: 부서·과·담당자·자동화·AI 는 **중복 없음**(lv6 하나가 한 칸에만),
+  기술·선종·특이사항은 **다중선택이라 합계 > 업무 수가 정상**(표에 부제로 명시).
+- 담당자 축(`by_owner`)의 키는 `소속 · 이름`이고 **표시는 항상 마스킹**
+  (`excel_io._mask_owner_key` ↔ JS `maskOwnerKey`). 요약은 편집 위젯이 아니다.
+- 도메인 관리의 기술 뱃지는 `현재 N · 향후 M`(lv6 롤업 기준)이지만,
+  **삭제 잠금은 `domUsage`(어디든 쓰이면 잠금)** 로 따로 판단한다 — 잠금까지 lv6 로 좁히면
+  lv3~lv5 에 숨어 있는 값(레벨 승격 시 보존분)이 안 잡혀 쓰는 중인데 지워진다.
+
+### 💬 질의 (챗봇)
+
+메인앱 전용 탭. `args.chat_ready`(LLM 키 유무)가 false 면 탭 자체가 안 뜬다. 개인 배포판은
+백엔드가 없어 항상 숨김.
+
+- `llm_client.call_llm_text()` — 자연어 답이라 `response_format=json_object` 를 **걸지 않는다**
+  (걸면 `{"answer":…}` 껍데기가 오고 파싱 실패 시 답이 통째로 사라진다).
+- **폴백은 SOLA→Upstage→OpenAI 3단 유지**(공통규칙 5). 키 없는 provider 는 자연히 건너뛰므로
+  사내 SOLA 만 설정된 환경에서도 그대로 동작한다. 실패는 provider 별 사유를 모아 화면에 띄운다.
+- SOLA 금기(토큰 상한 미전송·`stream` 금지·`proxies={"http":None,"https":None}`·`verify=False`·
+  `<think>` 제거)는 `llm_client` 주석에 그대로 있다 — 지우지 말 것.
+- **컨텍스트에 `owner`/`updated_by` 를 넣지 않는다**(개인정보 최소수집). 담당자를 물으면 소속으로 답한다.
+- 스트리밍 없음 — 이 앱은 "사용자 조작 1건 = 왕복 1회" 구조다.
+
 ### 시드 배포 · lv3 칩 · 다중 드래그
 
 - **과별 lv5 골격 배포**: `build_standalone.py --seed <파일>`(단일) / `--seeds <폴더>`(과별 일괄) /
@@ -207,6 +266,17 @@ uv run streamlit run app.py --server.port 8540
   그려 동기화한다(미저장 점·빵부스러기·설명 카드 생성). 숫자 필드는 부하 배지 실시간 갱신이 필요해
   기존 rerender 경로를 유지한다.
 - **되돌릴 수 없는 조작은 확인 모달**(`S.confirm`)을 거친다 — 자손 있는 삭제, 미저장 상태의 다시 읽기.
+- **프레임 높이는 콘텐츠를 재서 정한다** (`layout`/`needHeight`/`innerNeed`, `H_MIN 560`~`H_MAX 900`).
+  예전엔 `setHeight(824)` 상수라 카드가 몇 장뿐이어도 아래가 통째로 비었다.
+  ★ 측정에 **`scrollHeight` 를 쓰면 안 된다** — 콘텐츠가 상자보다 짧아도 `clientHeight` 아래로는
+  안 내려가서 "지금 높이 이상"만 나오고, 프레임이 **한 번 커지면 영영 안 줄어드는 래칫**이 된다
+  (실제로 상한 900 에 눌러붙었다). 그래서 `innerNeed` 가 자식 높이를 직접 더한다. 같은 이유로
+  `extra` 는 **음수를 허용**해야 한다 — 0 으로 초기화하면 줄어들 길이 막힌다.
+  iframe `scrolling:"no"` 계약은 그대로다(내부 스크롤은 `.list`/`.pbody`/`.page` 담당).
+- **상세 패널 `.pgrid` 는 `flex: 0 0 auto`** 다. `flex:1 1 auto; min-height:0` 이던 시절엔
+  `min-height:0` 이 flex 기본 보호막을 꺼서 패널이 짧을 때 박스가 **콘텐츠보다 작게 눌렸고**,
+  `.pcol` 에 overflow 가 없어 내용이 밖으로 흘러 다음 형제인 `상위 업무 바꾸기`(`.pfoot`)와
+  같은 자리에 겹쳐 그려졌다. **z-index 문제가 아니다.** `.pfoot` 은 `flex:none` 으로 눌리지 않게 둔다.
 - **드래그 콜백(onEnd/onAdd)에서 곧바로 `rerender()` 하지 말 것.** `rerender` → `wireDnD` 가
   드래그 중인 Sortable 을 destroy 해 `onEnd` 가 영영 오지 않고, `dragging` 클래스와 `_dragging`
   가드가 남아 **앱 전체가 클릭 불능**이 된다. 반드시 `setTimeout(...,0)` 으로 다음 틱에 미룬다.
@@ -219,6 +289,11 @@ uv run streamlit run app.py --server.port 8540
 ## 데이터
 
 `path_config.get_process_dir()` = `.env PROCESS_DATA_PATH` → `<NAS or DATA_PATH>/process` → `code_N/data/process`
+
+취합 스캔 폴더 기본값 = `path_config.get_collect_default()` = `.env PROCESS_COLLECT_PATH` → 팀 공유폴더 상수.
+**경로 리터럴은 `path_config` 한 곳에만** 둔다(공통규칙 1). `exists()` 검사를 하지 않는 게 중요하다 —
+사외망에서 UNC stat 이 수 초씩 블록되는데 이 함수는 매 렌더마다 불린다. 경로 오류는 [스캔] 시점에
+`_collect_files_from_folder` 가 표면화한다.
 
 ```
 <base>/process/
@@ -306,8 +381,9 @@ npm 빌드 없는 정적 컴포넌트다. 아래는 Streamlit 번들에서 확�
 
 ## UI
 
-- 텍스트는 한국어. Streamlit 사이드바는 쓰지 않는다 — 상단 헤더(브랜드·환경·AI적용률·작성자·저장)와
-  탭 4종(계층 편집 / 도메인 관리 / 엑셀 가져오기·내보내기 / 이력·복원)이 모두 컴포넌트 안에 있다.
+- 텍스트는 한국어. Streamlit 사이드바는 쓰지 않는다 — 상단 헤더(브랜드·환경·AI적용률 현재/향후·작성자·저장)와
+  탭 4~5종(계층 편집 / 도메인 관리 / 엑셀 가져오기·내보내기 / 이력·복원 / 💬 질의)이 모두 컴포넌트 안에 있다.
+  (💬 질의는 LLM 키가 있을 때만 뜬다.)
 - 보드: `lv3 │ lv4 │ lv5 │ lv6 │ lv7` 컬럼 드릴다운(`▦ 컬럼`) + 들여쓰기 `☰ 전체보기` 두 모드.
   카드 클릭=선택, `＋`=추가, `⧉`=복사, 드래그=순서 변경, 카드 안 드롭존=상위 바꾸기(레벨 유지).
 - **복사(`⧉`, lv5+)**: 노드+하위 전체를 형제로 복제(`actCopySubtree`) — 모든 노드에 새 id 발급·부모

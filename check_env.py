@@ -94,9 +94,21 @@ def main() -> int:
         else:
             info(f"데이터 파일 없음 — 첫 실행 시 기본 계층으로 시작합니다. ({t.name})")
         info(f"secret/.env: {'설정됨' if pc.SECRET_ENV.exists() else '미설정 (사외망 로컬 경로로 동작)'}")
+        info(f"취합 스캔 기본 폴더: {pc.get_collect_default()}")
     except Exception as e:
         fail(f"path_config 로드 실패: {e}")
         return 1
+
+    # 4-b. 질의 챗봇 (LLM) — 없어도 앱은 정상 동작하므로 FAIL 이 아니라 안내다.
+    #      ★ 키 값은 절대 출력하지 않는다 — provider 이름과 설정 여부만.
+    try:
+        import llm_client
+        if llm_client.is_configured():
+            ok(f"LLM 설정됨 — 💬 질의 탭 사용 가능 ({llm_client.provider_label()} 순으로 시도)")
+        else:
+            info("LLM 미설정 — 💬 질의 탭이 숨겨집니다 (.env LLM_SOLAR_API_KEY/_API_URL 등)")
+    except Exception as e:      # noqa: BLE001 — requests 미설치 등. 챗봇만 못 쓰고 앱은 뜬다
+        warn(f"llm_client 로드 실패 — 💬 질의 탭 비활성 ({type(e).__name__}: {e})")
 
     # 5. 데이터 무결성
     try:

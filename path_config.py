@@ -18,6 +18,11 @@ BASE_DIR   = Path(__file__).resolve().parent      # process_designer/
 CODE_DIR   = BASE_DIR.parent                       # code_N/
 DATA_LOCAL = CODE_DIR / "data"                     # code_N/data (폴백 base)
 
+# 제출 취합 스캔 폴더 기본값 (팀 공유폴더). **경로 리터럴은 이 파일에만 둔다** —
+# 다른 파일은 get_collect_default() 만 부른다(공통규칙 1: 경로 하드코딩 금지).
+# 현장에서 폴더가 바뀌면 .env 의 PROCESS_COLLECT_PATH 로 덮어쓴다(코드 수정 불필요).
+_COLLECT_DEFAULT = r"\\60.100.91.155\시운전팀\(공통) [SCC]\프로세스분석"
+
 
 def _find_secret_env() -> Path:
     """secret/.env 위치를 포터블하게 탐색 (app_config._find_env_file 과 동일 규칙).
@@ -116,6 +121,20 @@ def get_history_dir() -> Path:
 def audit_path() -> Path:
     """저장 감사로그 (append-only jsonl)."""
     return get_history_dir() / "_audit.jsonl"
+
+
+def get_collect_default() -> str:
+    """제출 취합 스캔 폴더의 기본값 (관리자 PC 기준 경로).
+
+    우선순위: .env PROCESS_COLLECT_PATH → 환경변수 → 사내 공유폴더 기본값.
+    화면 입력칸을 미리 채워 [스캔] 만 누르면 되게 하는 용도라 **문자열만** 돌려준다.
+
+    ★ exists() 로 검증하지 않는다 — 사외망에서 UNC 경로 stat 은 수 초씩 블록되고,
+      이 함수는 매 렌더마다 불린다. 경로 오류는 [스캔] 시점에 _collect_files_from_folder 가
+      "폴더를 찾을 수 없습니다" 로 표면화한다.
+    """
+    ov = read_secret("PROCESS_COLLECT_PATH") or os.getenv("PROCESS_COLLECT_PATH", "")
+    return ov or _COLLECT_DEFAULT
 
 
 def get_env_label() -> str:

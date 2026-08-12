@@ -8,6 +8,9 @@ dependencies = [
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",       # 엑셀 다운로드/업로드
     "python-dotenv>=1.0.0",  # app_config(.env 로드) 필수
+    # llm_client(질의 챗봇) — httpx(OpenAI SDK)는 사내 MITM 프록시에서 행(hang)이 나므로 requests 를 쓴다.
+    # 키가 없으면 챗봇 탭 자체가 안 뜨므로 사외망에서도 무해하다.
+    "requests>=2.31.0",
     # ★ parquet 을 생산하지 않지만 pyarrow 가 필요하다:
     #   streamlit/components/v1/custom_component.py 의 create_instance 가 pyarrow 를
     #   import 하므로, 없으면 DnD 커스텀 컴포넌트가 StreamlitAPIException 으로 죽는다.
