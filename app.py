@@ -230,6 +230,11 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     for dept, _author in subs_set:
         k = dept or "(소속 미지정)"
         subs_by_dept[k] = subs_by_dept.get(k, 0) + 1
+    # 소속 재설정 건수 — 취합은 이번 스캔의 제출자 소속으로 depts 를 **교체**한다(누적 아님).
+    # 제출본의 소속을 고쳐 다시 취합하면 여기 잡힌다. 조용히 바꾸지 않고 미리보기에 보여준다.
+    old_depts = {n["id"]: list(n.get("depts") or []) for n in data.get("nodes", [])}
+    dept_reset = sum(1 for n in merged.get("nodes", [])
+                     if n["id"] in old_depts and old_depts[n["id"]] != list(n.get("depts") or []))
     # 빈 가지(lv6 미도달) 삭제 후보 — **미리보기 계산만** 한다.
     # pending_collect 에는 병합만 된 트리를 두고, 실제 제거는 _apply_collect 에서 옵트인일 때만.
     _, empties = excel_io.prune_empty_branches(merged)
@@ -241,6 +246,7 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
         "submitters_by_dept": dict(sorted(subs_by_dept.items(), key=lambda kv: -kv[1])),
         "removed": len(empties),
         "removed_list": _node_brief(empties, merged),
+        "dept_reset": dept_reset,
         "added": len(d["added"]), "changed": len(d["changed"]),
         "added_list": _node_brief(d["added"], merged),
         "top_submits": top,

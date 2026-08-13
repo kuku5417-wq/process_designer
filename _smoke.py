@@ -420,7 +420,7 @@ def main() -> int:
        "제출인원·취합상세 엑셀 왕복 보존")
 
     # 23. 부서/과 2단 (과만 저장, 부서는 매핑)
-    ck(len(schema.DEPT_TREE) == 9, f"DEPT_TREE 부서 9개 (실제 {len(schema.DEPT_TREE)})")
+    ck(len(schema.DEPT_TREE) == 8, f"DEPT_TREE 부서 8개 (실제 {len(schema.DEPT_TREE)})")
     ck(schema.dept_parent("친환경실증랩") == "친환경실증랩", "친환경실증랩 단독 부서(동명 과) 매핑")
     ck("친환경실증랩" in schema.DEFAULT_DOMAINS["dept"], "친환경실증랩 과가 dept 도메인에 자동 포함")
     ck(schema.dept_parent("선장운전1과") == "시운전1부", "dept_parent 과→부서 매핑")
@@ -438,7 +438,9 @@ def main() -> int:
     # 23-b. 소속 정규화 — 옛 부서명·오타·대소문자 흡수 (미분류로 새지 않게)
     ck(schema.dept_parent("시운전1부") == "시운전1부", "부서명 그대로 적힌 옛 값도 부서로 인식")
     ck(schema.dept_parent("기획운영부") == "기획운영", "옛 부서명 별칭 → 현 부서")
-    ck(schema.dept_parent("해양사업부") == "해양사업부", "해양사업부 단독 부서 매핑")
+    # 해양사업부는 부서 목록에서 제거했다 — 되살아나면 선택 목록에 과처럼 한 줄 생긴다
+    ck(schema.dept_parent("해양사업부") == "미분류", "해양사업부는 부서가 아니다(제거됨)")
+    ck("해양사업부" not in schema.DEFAULT_DOMAINS["dept"], "해양사업부가 dept 도메인에 없다")
     ck(schema.dept_parent("cedar  csu") == "시운전3부", "대소문자·공백 흔들림 흡수")
     ck(schema.canon_dept("cedar csu") == "CEDAR CSU", "canon_dept 과 정식표기로 교정")
     ck(schema.canon_dept("듣보과") == "듣보과", "매핑에 없는 값은 원문 보존(유실 금지)")
@@ -624,6 +626,40 @@ def main() -> int:
        f"취합 후 과별 집계가 두 과 모두에 (실제 {s_mg['by_dept']})")
     ck(s_mg["detail_total"] == 2, f"KPI 는 팀 단위 2건 (실제 {s_mg['detail_total']})")
     ck(sum(s_mg["by_dept"].values()) == 3, "과별 합계 3 ≠ KPI 2 — 단위가 다르다")
+
+    # 24-d. **재취합이 소속을 정정한다** — 누적이면 옛 과가 영영 안 사라져 정정이 불가능하다
+    def _mk_one(gwa, author, l6name):
+        nd = schema.bootstrap()
+        n4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        n5 = schema.add_node(nd, n4, 5, "x", "레이더")
+        n6 = schema.add_node(nd, n5, 6, "x", l6name)
+        schema.update_node(nd, n6, {"dept": gwa, "depts": [gwa], "work_hours": "1"}, "x")
+        return json.dumps({"exported_by": author, "exported_dept": gwa,
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}}, ensure_ascii=False).encode("utf-8")
+    # ① 먼저 '시운전과' 로 취합된 상태를 만든다
+    m1, _, _ = excel_io.collect_jsons([("p_A_시운전과.json", _mk_one("시운전과", "A", "정정대상"))], schema.bootstrap())
+    t1 = [n for n in m1["nodes"] if n["name"] == "정정대상"][0]
+    ck(t1["depts"] == ["시운전과"], f"1회차: 시운전과 (실제 {t1['depts']})")
+    ck(schema.stats(m1)["by_dept_group"].get("안벽의장") == 1, "시운전과는 안벽의장으로 롤업된다")
+    # ② 제출본의 소속을 고쳐 **다시 취합** → 옛 과가 사라져야 한다
+    m2, _, _ = excel_io.collect_jsons([("p_A_안벽의장1과.json", _mk_one("안벽의장1과", "A", "정정대상"))], m1)
+    t2 = [n for n in m2["nodes"] if n["name"] == "정정대상"][0]
+    ck(t2["depts"] == ["안벽의장1과"], f"재취합: 소속이 **교체**된다 (실제 {t2['depts']})")
+    ck("시운전과" not in t2["depts"], "옛 소속이 남지 않는다 (누적이면 정정 불가)")
+    ck(t2["dept"] == "안벽의장1과", "대표 과도 함께 갱신")
+    s2 = schema.stats(m2)
+    ck(s2["by_dept"].get("시운전과") is None, f"과별 집계에서 옛 과가 사라진다 (실제 {s2['by_dept']})")
+    ck(sum(s2["by_dept"].values()) == 1, "중복 계상되지 않는다 (누적이면 2가 된다)")
+    # ③ 같은 회차에 두 과가 내면 다중 귀속은 그대로 유지
+    m3, _, _ = excel_io.collect_jsons(
+        [("p_A_안벽의장1과.json", _mk_one("안벽의장1과", "A", "공동작업")),
+         ("p_B_안벽의장2과.json", _mk_one("안벽의장2과", "B", "공동작업"))], schema.bootstrap())
+    t3 = [n for n in m3["nodes"] if n["name"] == "공동작업"][0]
+    ck(sorted(t3["depts"]) == ["안벽의장1과", "안벽의장2과"], f"같은 회차 다중 제출은 유지 (실제 {t3['depts']})")
+    # ④ 이번 스캔에 없는 경로는 건드리지 않는다
+    m4, _, _ = excel_io.collect_jsons([("p_A_안벽의장1과.json", _mk_one("안벽의장1과", "A", "다른업무"))], m1)
+    keep = [n for n in m4["nodes"] if n["name"] == "정정대상"][0]
+    ck(keep["depts"] == ["시운전과"], "이번 스캔에 없는 경로의 소속은 그대로 둔다")
 
     # 24-b. 취합은 **lv6 에 닿는 가지만** 병합한다 (골격만 낸 제출은 통째로 제외)
     def _mk_skel():

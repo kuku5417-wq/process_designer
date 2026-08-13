@@ -601,19 +601,25 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
         reports.append({"filename": filename, "dept": dept, "author": author,
                         "nodes": len(incoming["nodes"]), "new": new_cnt, "skipped": skipped, "errors": ""})
 
-    # 수행 과 기록 — 기존 값과 합집합(여러 번 취합해도 과가 사라지지 않게). 정규화는 normalize 가 한다.
+    # 수행 과 기록 — **이번 스캔에 나온 경로는 이번 제출자 소속으로 교체한다(누적 아님).**
+    #
+    # ★ 예전엔 기존 값과 합집합이라 **줄어들 길이 없었다.** 제출본의 소속을 고쳐 다시 취합해도
+    #   옛 과가 남아 한 업무가 두 과에 중복 계상됐고, 정정이 원천적으로 불가능했다.
+    #   운영은 공유폴더 전체를 재귀 스캔하므로 **한 회차의 스캔 = 그 시점의 완전한 진실**이다.
+    #   같은 업무를 여러 과가 실제로 하면 그 회차에 여러 명이 제출하므로 다중 귀속은 그대로 유지된다.
+    # ★ 이번 스캔에 **없는 경로는 건드리지 않는다** — 폴더 일부만 스캔해도 나머지 귀속이 날아가지 않는다.
     for path, ds in dept_sets.items():
         mid = idx.get(path)
         node = mmap.get(mid) if mid else None
         if not node:
             continue
-        merged_ds = list(node.get("depts") or [])
-        for d in ds:
-            if d not in merged_ds:
-                merged_ds.append(d)
-        node["depts"] = merged_ds
-        if not node.get("dept") and merged_ds:
-            node["dept"] = merged_ds[0]          # 대표 과 (카드·엑셀 단일 표시용)
+        new_ds: list[str] = []
+        for d in ds:                              # 순서 유지 dedup (파일명 정렬 = 결정론적)
+            if d not in new_ds:
+                new_ds.append(d)
+        node["depts"] = new_ds
+        if new_ds:
+            node["dept"] = new_ds[0]              # 대표 과 (카드·엑셀 단일 표시용)
 
     # 집계 결과를 노드에 기록 — N≥2 인 경로만 (혼자 한 업무는 배지 노이즈)
     for path, subs in submitters.items():
