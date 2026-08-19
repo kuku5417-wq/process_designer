@@ -461,9 +461,9 @@ def _handle(evt: dict) -> None:
         if evt.get("nodes") is not None:     # 저장 전 편집분까지 담는다 (download 와 같은 규칙)
             data["nodes"] = evt["nodes"]
             data["domains"] = evt.get("domains", data.get("domains", {}))
-        res = store.save_named(data, evt.get("name", ""), evt.get("author", ""),
-                               overwrite=bool(evt.get("overwrite")))
-        st.session_state["flash"] = (f"'{evt.get('name', '')}' 이름으로 보관했습니다."
+        # 같은 이름이면 덮지 않고 다음 버전으로 쌓인다 — 확인 모달이 필요 없는 이유(잃는 게 없다).
+        res = store.save_named(data, evt.get("name", ""), evt.get("author", ""))
+        st.session_state["flash"] = (f"'{evt.get('name', '')}' v{res.version} 으로 보관했습니다."
                                      if res.ok else (res.error or "보관에 실패했습니다."))
 
     elif t == "saves_load":
@@ -471,7 +471,8 @@ def _handle(evt: dict) -> None:
         #   취합 반영(_apply_collect)과 같은 규칙이다. 스냅샷 복원(restore)이 즉시 저장하는 것과
         #   일부러 다르게 뒀다: 보관본은 "되돌리기"가 아니라 "이 버전을 가져와 이어서 작업"이라
         #   실수로 눌렀을 때 정본이 이미 덮여 있으면 안 된다.
-        loaded = store.load_named(evt.get("file") or "")
+        _v = evt.get("version")
+        loaded = store.load_named(evt.get("name") or "", None if _v in (None, "") else int(_v))
         if loaded is None:
             st.session_state["flash"] = "보관본을 읽을 수 없습니다."
         else:
@@ -480,12 +481,13 @@ def _handle(evt: dict) -> None:
             _set_data(loaded)
             st.session_state["dirty_all"] = True
             st.session_state["flash"] = (
-                f"보관본을 화면에 불러왔습니다 (업무 {len(loaded.get('nodes', []))}개). "
-                "상단 [저장]을 눌러야 파일에 기록됩니다.")
+                f"'{evt.get('name', '')}' v{loaded.get('saved_version', '?')} 를 화면에 불러왔습니다 "
+                f"(업무 {len(loaded.get('nodes', []))}개). 상단 [저장]을 눌러야 파일에 기록됩니다.")
 
     elif t == "saves_delete":
-        ok = store.delete_named(evt.get("file") or "")
-        st.session_state["flash"] = "보관본을 삭제했습니다." if ok else "보관본을 삭제하지 못했습니다."
+        _dv = evt.get("version")
+        ok = store.delete_named(evt.get("name") or "", None if _dv in (None, "") else int(_dv))
+        st.session_state["flash"] = ("보관본을 삭제했습니다." if ok else "보관본을 삭제하지 못했습니다.")
 
     elif t == "reload":
         _set_data(store.load_tree()[0])

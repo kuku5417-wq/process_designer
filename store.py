@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ class SaveResult:
     disk_author: str = ""
     disk_updated_at: str = ""
     error: str = ""
+    version: int = 0            # 보관본 저장 시 부여된 버전 번호 (save_named 전용)
 
 
 # ── 원자적 저장 ─────────────────────────────────────────
@@ -256,90 +258,151 @@ def prune_history(keep_days: int = 90, keep_min: int = 50) -> int:
     return removed
 
 
-# ── 이름 붙인 보관본 (saves/) ───────────────────────────
+# ── 이름 붙인 보관본 (saves/<이름>/v0001_….json) ─────────
 # 자동 스냅샷(history/)과 목적이 다르다: 저쪽은 "덮어쓰기 직전 상태"를 기계가 남기는 안전망이고,
-# 이쪽은 "2026-08 1차 취합" 처럼 **사람이 의미를 붙여 남기는 기준점**이다. 그래서 자동 정리 대상이
-# 아니고(prune_history 는 history/ 만 본다), 목록에 이름·설명이 뜬다.
+# 이쪽은 "2026 상반기안" 처럼 **사람이 의미를 붙여 남기는 계보**다. 자동 정리 대상이 아니다.
+#
+# ★ 같은 이름으로 다시 저장하면 **덮지 않고 다음 버전으로 쌓는다.** 예전엔 덮어쓰기였는데,
+#   보관본에는 pre-image 스냅샷이 없어 덮는 순간 이전 안이 영영 사라졌다. 버전이 쌓이면
+#   "같은 이름 = 하나의 계보"가 되고 어느 버전으로든 되돌아갈 수 있다.
+# ★ 이름을 **폴더**로 쓴다(파일명에 버전을 이어붙이지 않는다). 이름에 구분자로 쓸 만한 문자가
+#   들어가도 파싱이 깨지지 않고, 버전 나열이 glob 한 번으로 끝나며, 이름 단위 삭제가 폴더 삭제다.
 
-def save_named(data: dict, name: str, author: str, overwrite: bool = False) -> SaveResult:
-    """현재 트리를 `saves/<이름>.json` 으로 보관한다.
+_VER_RE = re.compile(r"^v(\d{4,})_(\d{8})_(\d{6})\.json$")
 
-    ★ **rev 를 올리지 않는다.** 보관본은 정본이 아니라 사본이라, 올리면 정본과 번호가 경합해
-      "디스크가 더 최신" 오판이 난다. 지금 rev 를 참고값으로 그대로 적어 둘 뿐이다.
-    ★ 같은 이름이 있으면 overwrite 없이는 거부한다 — 이름이 곧 식별자라 조용히 덮으면
-      되돌릴 방법이 없다(보관본에는 pre-image 스냅샷이 없다).
+
+def _group_dir(name: str) -> Path | None:
+    """보관본 이름 → 폴더. 경로 탈출(`.`/`..`)은 여기서 막는다.
+
+    `_safe_label` 이 `.` 과 `-` 를 남기므로(정상적인 이름에 필요하다) `..` 만 넣으면 상위 폴더가
+    된다. 라벨 정규화만 믿지 말고 이 한 겹을 반드시 둘 것.
+    """
+    label = _safe_label(name)
+    if not label or label.startswith("."):
+        return None
+    return pc.get_saves_dir() / label
+
+
+def _versions_in(gdir: Path) -> list[tuple[int, Path]]:
+    """폴더 안의 (버전번호, 경로) 를 오름차순으로. 규약에 안 맞는 파일은 조용히 무시한다."""
+    out: list[tuple[int, Path]] = []
+    try:
+        for f in gdir.glob("v*.json"):
+            m = _VER_RE.match(f.name)
+            if m:
+                out.append((int(m.group(1)), f))
+    except Exception:
+        return []
+    out.sort()
+    return out
+
+
+def save_named(data: dict, name: str, author: str) -> SaveResult:
+    """현재 트리를 `saves/<이름>/v{다음번호}_….json` 으로 보관한다. **항상 새 버전이 된다.**
+
+    ★ rev 를 올리지 않는다. 보관본은 정본이 아니라 사본이라, 올리면 정본과 번호가 경합해
+      "디스크가 더 최신" 오판이 난다. 지금 rev 를 참고값으로 적어 둘 뿐이다.
     """
     if not (author or "").strip():
         return SaveResult(ok=False, error="저장자를 입력해 주세요.")
-    label = _safe_label(name)
-    if not label:
+    gdir = _group_dir(name)
+    if gdir is None:
         return SaveResult(ok=False, error="보관본 이름을 입력해 주세요.")
-    path = pc.get_saves_dir() / f"{label}.json"
-    if path.exists() and not overwrite:
-        return SaveResult(ok=False, error=f"'{label}' 이름의 보관본이 이미 있습니다.")
+    try:
+        gdir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        return SaveResult(ok=False, error=f"보관 폴더를 만들 수 없습니다: {e}")
+    nextv = (_versions_in(gdir)[-1][0] + 1) if _versions_in(gdir) else 1
     try:
         out = schema.normalize(dict(data))
-        out["saved_name"] = label
+        out["saved_name"] = gdir.name
+        out["saved_version"] = nextv
         out["saved_at"] = schema.now_iso()
         out["saved_by"] = author
-        save_json_atomic(out, path)
+        save_json_atomic(out, gdir / f"v{nextv:04d}_{datetime.now():%Y%m%d_%H%M%S}.json")
     except Exception as e:
         return SaveResult(ok=False, error=f"보관에 실패했습니다: {e}")
     audit({"author": author, "rev": int(out.get("rev", 0)), "n_nodes": len(out["nodes"]),
-           "action": "save_as", "name": label})
-    return SaveResult(ok=True, rev=int(out.get("rev", 0)))
+           "action": "save_as", "name": gdir.name, "version": nextv})
+    return SaveResult(ok=True, rev=int(out.get("rev", 0)), version=nextv)
 
 
-def list_saves(limit: int = 200) -> list[dict]:
-    """보관본 목록 (최근 보관 순). {file, name, ts, author, rev, n_nodes}."""
+def list_saves(limit: int = 100) -> list[dict]:
+    """보관본 목록 — **이름 단위로 묶고 버전을 최신순으로** 담는다.
+
+    [{name, n_versions, latest_version, ts, author, n_nodes, versions:[{version, ts, author, rev, n_nodes}]}]
+    대표값(ts/author/n_nodes)은 **최신 버전** 것이다 — 목록 한 줄만 봐도 최근 상태를 알 수 있게.
+    """
     out: list[dict] = []
     try:
-        files = list(pc.get_saves_dir().glob("*.json"))
+        gdirs = sorted(d for d in pc.get_saves_dir().iterdir() if d.is_dir())
     except Exception:
         return out
-    rows = []
-    for f in files:
-        try:
-            raw = json.loads(f.read_text(encoding="utf-8"))
-        except Exception:
-            continue                      # 손상 파일은 목록에서 조용히 빼되 파일은 남긴다
-        if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
+    for g in gdirs:
+        vs: list[dict] = []
+        for ver, f in _versions_in(g):
+            try:
+                raw = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue                  # 손상 파일은 목록에서만 빼고 파일은 남긴다
+            if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
+                continue
+            vs.append({"version": ver,
+                       "ts": str(raw.get("saved_at") or "").replace("T", " ")[:19],
+                       "author": str(raw.get("saved_by") or ""),
+                       "rev": int(raw.get("rev", 0) or 0),
+                       "n_nodes": len(raw["nodes"])})
+        if not vs:
             continue
-        rows.append({
-            "file": f.name,
-            "name": str(raw.get("saved_name") or f.stem),
-            "ts": str(raw.get("saved_at") or "").replace("T", " ")[:19],
-            "author": str(raw.get("saved_by") or raw.get("updated_by") or ""),
-            "rev": int(raw.get("rev", 0) or 0),
-            "n_nodes": len(raw["nodes"]),
-        })
-    rows.sort(key=lambda r: r["ts"], reverse=True)
-    return rows[:limit]
+        vs.sort(key=lambda v: v["version"], reverse=True)
+        top = vs[0]
+        out.append({"name": g.name, "n_versions": len(vs), "latest_version": top["version"],
+                    "ts": top["ts"], "author": top["author"], "n_nodes": top["n_nodes"],
+                    "versions": vs[:50]})
+    out.sort(key=lambda r: r["ts"], reverse=True)
+    return out[:limit]
 
 
-def load_named(file: str) -> dict | None:
-    """보관본 로드. 경로 조작 방지를 위해 **파일명만** 받는다 (load_snapshot 과 같은 규칙)."""
-    if not file or "/" in file or "\\" in file or ".." in file:
+def load_named(name: str, version: int | None = None) -> dict | None:
+    """보관본 로드. version 이 없으면 **최신 버전**. 경로 탈출은 `_group_dir` 이 막는다."""
+    gdir = _group_dir(name)
+    if gdir is None:
         return None
-    p = pc.get_saves_dir() / file
-    try:
-        if not p.exists():
+    vs = _versions_in(gdir)
+    if not vs:
+        return None
+    if version is None:
+        target = vs[-1][1]
+    else:
+        hit = [p for v, p in vs if v == int(version)]
+        if not hit:
             return None
-        return schema.normalize(json.loads(p.read_text(encoding="utf-8")))
+        target = hit[0]
+    try:
+        return schema.normalize(json.loads(target.read_text(encoding="utf-8")))
     except Exception:
         return None
 
 
-def delete_named(file: str) -> bool:
-    """보관본 삭제. 되돌릴 수 없으므로 호출 측이 확인을 받아야 한다."""
-    if not file or "/" in file or "\\" in file or ".." in file:
+def delete_named(name: str, version: int | None = None) -> bool:
+    """version 을 주면 그 버전 하나, 안 주면 **이름(계보) 통째로** 삭제. 되돌릴 수 없다."""
+    gdir = _group_dir(name)
+    if gdir is None or not gdir.exists():
         return False
     try:
-        p = pc.get_saves_dir() / file
-        if not p.exists():
-            return False
-        p.unlink()
-        return True
+        if version is None:
+            shutil.rmtree(gdir)
+            return True
+        for v, p in _versions_in(gdir):
+            if v == int(version):
+                p.unlink()
+                if not _versions_in(gdir):      # 마지막 버전을 지웠으면 빈 폴더도 치운다
+                    try:
+                        gdir.rmdir()
+                    except Exception:           # noqa: BLE001 — 빈 폴더 정리는 실패해도 무해
+                        pass
+                return True
+        return False
     except Exception:
         return False
 

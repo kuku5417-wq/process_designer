@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -445,16 +445,30 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
   .chipbtn:hover { background: #e7f6f4; border-color: #99f6e4; }
   .primary { font-size: 15px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
   .secondary { font-size: 15px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
-  .saverow { display: grid; grid-template-columns: 1.6fr 1fr 1fr .7fr auto auto; gap: 8px; align-items: center;
+  .saverow { display: grid; grid-template-columns: 1.6fr .9fr 1.1fr .6fr auto auto; gap: 8px; align-items: center;
              padding: 10px 14px; border-bottom: 1px solid #f7f4ee; font-size: 14px; }
   .saverow .sbtn { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 5px 11px;
                    cursor: pointer; font-size: 13px; font-weight: 700; color: #0f766e; }
   .saverow .sbtn.del { color: #b91c1c; }
+  .saverow .vbtn { color: #57534e; font-weight: 800; }
+  .verwrap { background: #faf8f3; border-bottom: 1px solid #f4f1ea; padding: 4px 0 6px 22px; }
+  .verrow { display: grid; grid-template-columns: .5fr 1.4fr 1fr .7fr auto auto; gap: 8px; align-items: center;
+            padding: 6px 14px; font-size: 13.5px; }
   .saverow .sbtn:hover { filter: brightness(.96); }
   .subrow { display: grid; grid-template-columns: 1.3fr .5fr .5fr .8fr .9fr .8fr 1.6fr; gap: 8px; align-items: center;
             padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
   .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
   .fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; }
+  .scopebar { margin: 0 16px; padding: 8px 0 0; }
+  /* 잠긴 노드 — 보이되 못 만진다. opacity 만으로는 클릭이 통과하므로 pointer-events 도 끈다.
+     단 카드 전체를 끄면 선택조차 못 해 내용을 볼 수 없다 → 편집 요소만 끈다(.nm/.cdel/.rowadd). */
+  .card.locked, .row.locked { opacity: .48; }
+  .card.locked .nm, .row.locked .rowname { pointer-events: none; background: transparent; border-color: transparent; }
+  .card.locked .cdel, .card.locked .addbtn, .card.locked .ccopy,
+  .row.locked .rowadd, .row.locked .rowdel { display: none; }
+  .lockchip { font-size: 11px; font-weight: 800; padding: 2px 5px; border-radius: 4px;
+    background: #f5f5f4; color: #78716c; }
+  .panel.locked .pgrid, .panel.locked .pfoot { pointer-events: none; opacity: .55; }
   .fbar select { font-size: 13.5px; padding: 6px 8px; border: 1px solid #ddd6ca; border-radius: 8px; background: #fff; }
   .fbar .fclr { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
   .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
@@ -967,10 +981,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     // 파이썬으로 내리면 tree_epoch 이 올라 미저장 편집이 사라진다(app.py _set_data 주석).
     // 계층 편집에는 걸지 않는다 — 안 보이는 노드를 저장하는 상태가 생겨 삭제 오조작을 부른다.
     fGroup: "", fDept: "",
+    // 계층 편집 **편집 범위** 필터. 요약의 fGroup/fDept(보기 전용)와 **일부러 분리**한다 —
+    // 한쪽은 "무엇을 볼까", 이쪽은 "무엇을 고칠 수 있나"라 의미가 달라 공유하면 사고가 난다.
+    eGroup: "", eDept: "",
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
-    saves: [], saveName: "",   // 이름 붙인 보관본 목록 · 입력 중인 이름 (이름은 뷰 상태라 저장 안 함)
+    saves: [], saveName: "", saveOpen: "",   // 보관본 계보 목록 · 입력 중인 이름 · 펼친 계보(뷰 상태)
     // 파이썬이 계산해 주는 것들 (JS 에서 만들지 말 것 — schema.diff / excel_io 가 정본)
     diffPreview: null,      // 복원 미리보기 {added, changed, removed, removed_list}
     importPreview: null,    // 엑셀 반영 미리보기 {added, changed, removed, lists, unknown}
@@ -1004,7 +1021,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
   function actAdd(pid, lv) {
     if (!pid) return;
     var nn = makeNode(pid, lv, "");
-    // ★ 새 노드에 소속을 주입하지 않는다. 소속의 정본은 **취합 시 스캔 폴더 경로**
+    // 편집 범위(과)를 고른 상태면 새 lv6·lv7 은 그 과 소속으로 만든다 — 안 그러면 소속이 없어
+    // 만들자마자 잠겨 손댈 수 없다. 범위를 안 걸었을 때는 아래 원칙대로 비워 둔다.
+    if (!SOLO && hasDetail(lv) && S.eDept) { nn.dept = S.eDept; nn.depts = [S.eDept]; }
+    // ★ 그 외에는 새 노드에 소속을 주입하지 않는다. 소속의 정본은 **취합 시 스캔 폴더 경로**
     //   (첫 하위폴더=부서, 두 번째=과)다. 메인앱은 취합본을 다듬는 관리 도구라, 여기서 관리자
     //   소속을 채우면 아무도 그 일을 한다고 낸 적 없는 과가 집계에 잡힌다(오염원). 되살리지 말 것.
     //   개인 배포판은 내보낼 때 소속이 일괄 주입된다(soloExport).
@@ -1330,7 +1350,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
       var lv = el.dataset.lv;
       _sorts.push(Sortable.create(el, Object.assign({}, opt, {
         group: { name: "L" + lv, pull: true, put: ["L" + lv] },
-        draggable: ".card", filter: ".addbtn,.cdrop,.nm,.cdel",
+        // .card.locked — 편집 범위 밖 카드는 드래그 자체를 막는다(순서·상위 변경도 편집이다).
+        draggable: ".card", filter: ".addbtn,.cdrop,.nm,.cdel,.card.locked",
         // Ctrl(⌘)+클릭으로 여러 카드를 골라 한 번에 드래그(MultiDrag, complete 빌드 내장).
         multiDrag: true, multiDragKey: "CTRL", selectedClass: "multisel", avoidImplicitDeselect: true,
         onStart: function () { _dragging = true; document.body.classList.add("dragging", "dragL" + lv); },
@@ -1737,6 +1758,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
 
   function cardHTML(nn, lv) {
     var detail = hasDetail(lv), chips = "";
+    var _locked = !canEdit(nn);
+    if (_locked) chips += '<span class="lockchip">🔒</span>';
     if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
     if (detail) (nn.tech || []).slice(0, 2).forEach(function (t) { chips += '<span class="mc n">' + esc(t) + "</span>"; });
     if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
@@ -1767,7 +1790,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     var onPath = !sel && S.sel[lv] === nn.id;
     // lv6 아래는 없으므로 드롭존도 없다. 드롭존은 자기보다 한 단계 아래 레벨만 받는다.
     var drop = lv < LEVEL_MAX ? '<div class="cdrop acc' + (lv + 1) + '" data-parent="' + esc(nn.id) + '"></div>' : "";
-    return '<div class="card' + (sel ? " sel" : onPath ? " path" : "") + (isHit(nn) ? " hit" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
+    return '<div class="card' + (sel ? " sel" : onPath ? " path" : "") + (isHit(nn) ? " hit" : "")
+      + (_locked ? " locked" : "") + '" data-act="select" data-id="' + esc(nn.id) + '" data-lv="' + lv + '">'
       // 이름은 카드에서 바로 편집(인라인 input), 삭제도 카드에서 바로. 둘 다 드래그/선택으로 새지 않게 처리.
       + '<div class="top1"><input class="nm" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[lv]) + '명" />'
       + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot" title="저장 안 됨"></span>' : "")
@@ -1796,7 +1820,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
                  + ">👥 " + _osc + "명</span>";
         }
         if (kids.length) chips += '<span class="mc kids">▸' + kids.length + "</span>";
-        body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + '" style="padding-left:' + (depth * 20) + 'px">'
+        var olock = !canEdit(nn);
+        if (olock) chips = '<span class="lockchip">🔒</span>' + chips;
+        body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + (olock ? " locked" : "")
+          + '" style="padding-left:' + (depth * 20) + 'px">'
           + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
           + '<div class="rowmain" data-act="select" data-id="' + esc(nn.id) + '"><span class="lvb ' + (detail ? "d" : "g") + '">lv' + nn.level + "</span>"
           + '<input class="rowname" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[nn.level]) + '명" />'
@@ -2054,7 +2081,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
       + (kids ? '<div style="font-size:13.5px;color:#a8a29e;margin-top:5px">하위 업무 ' + kids + "개도 함께 이동하며 레벨이 다시 매겨집니다.</div>" : "")
       + "</div>";
 
-    return '<div class="panel">' + head + '<div class="pbody scroll">' + fields + "</div></div>";
+    // 잠긴 노드는 폼을 통째로 비활성(.panel.locked → pointer-events:none)하고 이유를 배너로 말한다.
+    // 입력 위젯마다 disabled 를 다는 대신 CSS 한 겹으로 막는 이유는, 위젯이 늘 때마다 빠뜨리지 않기 위해서다.
+    var _lk = !canEdit(n);
+    return '<div class="panel' + (_lk ? " locked" : "") + '">' + head
+      + '<div class="pbody scroll">' + lockBanner(n) + fields + "</div></div>";
   }
 
   /** 💬 질의 — 취합·저장된 계층 전체를 컨텍스트로 LLM 에 묻는다(읽기 전용, 트리를 바꾸지 않는다).
@@ -2486,10 +2517,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
   /** 요약 탭 부서/과 필터바. 막대(deptChart)·KPI 는 **항상 전체**를 보여주고 이 필터는
    *  우측 목록만 좁힌다 — S.sumPick 과 정확히 같은 관계다. stats() 를 건드리지 않는 이유이기도
    *  하다(schema.stats 와 트윈이라 한쪽만 고치면 화면과 엑셀이 갈린다). */
-  function deptFilterBar() {
-    var groups = Object.keys(DEPT_TREE);
-    // 데이터에만 있는 소속(폴더에서 온 미등록 과 등)도 고를 수 있어야 한다 — 유실 금지 원칙.
-    var extra = [];
+  /** 부서·과 select 두 개 (요약 보기 필터 / 계층 편집 범위 공용).
+   *  데이터에만 있는 소속(폴더에서 온 미등록 과 등)도 고를 수 있어야 한다 — 유실 금지 원칙. */
+  function deptSelects(curG, curD, gKey, dKey) {
+    var groups = Object.keys(DEPT_TREE), extra = [];
     S.nodes.forEach(function (n) {
       if (!isLoadLevel(n.level)) return;
       deptGroupsOf(n).forEach(function (g) {
@@ -2498,26 +2529,46 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     });
     var gOpts = ['<option value="">전체 부서</option>'].concat(
       groups.concat(extra).map(function (g) {
-        return '<option value="' + esc(g) + '"' + (S.fGroup === g ? " selected" : "") + ">" + esc(g) + "</option>";
+        return '<option value="' + esc(g) + '"' + (curG === g ? " selected" : "") + ">" + esc(g) + "</option>";
       })).join("");
-    // 과 목록은 선택한 부서의 것만. 부서 미선택이면 데이터에 실재하는 과 전부.
     var gwa = [];
     S.nodes.forEach(function (n) {
       if (!isLoadLevel(n.level)) return;
-      deptsOf(n).forEach(function (d) {
-        if (d === "(미지정)" || gwa.indexOf(d) >= 0) return;
-        if (S.fGroup && deptParent(d) !== S.fGroup) return;
-        gwa.push(d);
+      deptsOf(n).forEach(function (dd) {
+        if (dd === "(미지정)" || gwa.indexOf(dd) >= 0) return;
+        if (curG && deptParent(dd) !== curG) return;
+        gwa.push(dd);
       });
     });
     gwa.sort();
-    var dOpts = ['<option value="">전체 과</option>'].concat(gwa.map(function (d) {
-      return '<option value="' + esc(d) + '"' + (S.fDept === d ? " selected" : "") + ">" + esc(d) + "</option>";
+    var dOpts = ['<option value="">전체 과</option>'].concat(gwa.map(function (dd) {
+      return '<option value="' + esc(dd) + '"' + (curD === dd ? " selected" : "") + ">" + esc(dd) + "</option>";
     })).join("");
+    return '<select data-fkey="' + gKey + '">' + gOpts + '</select><select data-fkey="' + dKey + '">' + dOpts + "</select>";
+  }
+
+  /** 계층 편집 **편집 범위** 바. 범위를 고르면 그 밖의 업무는 보이되 잠긴다(canEdit).
+   *  숨기지 않는 이유: 상위 분류(lv3~lv5)는 소속이 없어 숨기면 내 업무가 어디 매달렸는지를 잃고,
+   *  다른 과의 중복 제출도 안 보이게 된다. */
+  function editScopeBar() {
+    if (SOLO) return "";                       // 개인 배포판은 소속이 하나뿐이라 의미가 없다
+    var on = scopeOn();
+    return '<div class="fbar scopebar">'
+      + "<b>편집 범위</b>" + deptSelects(S.eGroup, S.eDept, "egroup", "edept")
+      + (on ? '<button class="fclr" data-act="eclear">✕ 전체 편집</button>' : "")
+      + '<span style="color:' + (on ? "#b45309" : "#a8a29e") + '">'
+      + (on
+          ? "🔒 <b>" + esc(S.eDept || S.eGroup) + "</b> 업무만 수정할 수 있습니다 · 나머지는 잠깁니다"
+              + (S.eDept ? " · 새 업무는 " + esc(S.eDept) + " 소속으로 만들어집니다"
+                         : " · <b>과</b>까지 골라야 새 업무를 추가할 수 있습니다")
+          : "부서·과를 고르면 그 범위만 수정할 수 있게 잠급니다 (실수로 남의 업무를 고치는 것을 막습니다)")
+      + "</span></div>";
+  }
+
+  function deptFilterBar() {
     var on = !!(S.fGroup || S.fDept);
     return '<div class="fbar"><b>부서/과로 보기</b>'
-      + '<select data-fkey="fgroup">' + gOpts + "</select>"
-      + '<select data-fkey="fdept">' + dOpts + "</select>"
+      + deptSelects(S.fGroup, S.fDept, "fgroup", "fdept")
       + (on ? '<button class="fclr" data-act="fclear">✕ 필터 해제</button>' : "")
       + '<span style="color:#a8a29e">' + (on
           ? "선택한 소속이 제출한 업무만 · 부하·자동화는 그 과의 제출값으로 표시합니다"
@@ -2557,6 +2608,51 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
       + '<div class="metricgrid five" style="margin-top:16px">' + kpis + "</div>"
       + deptFilterBar()
       + '<div class="sumgrid"><div>' + UNIT_NOTE + charts + "</div>" + sumSide() + "</div></div></div>";
+  }
+
+  /** 상세 패널 잠금 배너 — 왜 못 고치는지 화면에서 말해준다(회색으로만 두면 고장으로 읽힌다). */
+  function lockBanner(n) {
+    if (canEdit(n)) return "";
+    var why = hasDetail(n.level)
+      ? "이 업무의 소속(" + esc(deptsOf(n).join(", ")) + ")이 편집 범위 밖입니다."
+      : "여러 과가 함께 쓰는 상위 분류라 잠겼습니다 — 고치면 남의 업무 경로까지 바뀝니다.";
+    return '<div class="warn" style="margin:0 0 12px">🔒 <b>읽기 전용</b> · ' + why
+      + " 상단 <b>편집 범위</b>를 바꾸면 수정할 수 있습니다.</div>";
+  }
+
+  /** 이 노드 아래의 lv6(집계 기준) 전부 — "이 분류를 어느 과가 쓰는가" 판정에 쓴다. */
+  function descLoadNodes(id) {
+    var out = [], st = childrenOf(id).slice();
+    while (st.length) {
+      var x = st.pop();
+      if (isLoadLevel(x.level)) out.push(x);
+      st = st.concat(childrenOf(x.id));
+    }
+    return out;
+  }
+  /** 편집 범위 필터가 켜져 있는가. */
+  function scopeOn() { return !!(S.eGroup || S.eDept); }
+  /** 이 lv6·lv7 이 지금 선택한 부서/과에 속하는가. */
+  function inScope(n) {
+    return S.eDept ? deptsOf(n).indexOf(S.eDept) >= 0 : deptGroupsOf(n).indexOf(S.eGroup) >= 0;
+  }
+  /** ★ 편집 권한 게이트 — 이 함수 하나가 정본이다.
+   *
+   *  필터가 없으면 전부 허용(기존 동작 그대로). 걸리면:
+   *   · lv6·lv7 — 소속(depts)이 필터에 맞아야 한다.
+   *   · lv3~lv5 — 소속 필드가 없는 **공용 분류**다. 아래 lv6 이 전부 내 소속이면 허용하고,
+   *     다른 과가 섞여 있으면 잠근다 — 내가 이름을 고치면 남의 업무 경로까지 함께 바뀐다.
+   *     자손이 없는 빈 분류(방금 만든 것)는 허용해야 한다. 안 그러면 만들자마자 못 고친다.
+   */
+  function canEdit(n) {
+    if (!n) return false;
+    if (!scopeOn()) return true;
+    if (hasDetail(n.level)) return inScope(n);
+    var kids = descLoadNodes(n.id);
+    return !kids.length || kids.every(inScope);
+  }
+  function lockMsg() {
+    return "🔒 " + (S.eDept || S.eGroup) + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
   }
 
   /** 부하 표시 문자열 — loadOf 의 kind 를 그대로 살린다.
@@ -2700,38 +2796,57 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
   function pageSaves() {
     var list = S.saves || [];
     var canSave = !!S.author && !!String(S.saveName || "").trim();
+    // 같은 이름이 이미 있으면 "다음 버전으로 쌓인다"고 미리 알린다 — 덮어쓰기가 아님을 버튼 옆에서 못박는다.
+    var cur = list.filter(function (g) { return g.name === String(S.saveName || "").trim(); })[0];
+    var nextHint = cur ? " → v" + (cur.latest_version + 1) + " 로 추가됩니다" : "";
     var head = '<div style="font-size:15.5px;font-weight:800;margin:24px 0 6px">🔖 이름 붙인 보관본</div>'
       + '<div style="font-size:13.5px;color:#a8a29e;line-height:1.6;margin-bottom:10px">'
-      + '취합 회차·검토 시점처럼 <b>기준점을 이름으로 남깁니다.</b> 위의 자동 이력과 달리 '
-      + '<b>자동으로 지워지지 않습니다.</b> 불러오면 화면에만 반영되고, 상단 [저장]을 눌러야 정본이 바뀝니다.</div>'
+      + '버전·시나리오를 이름으로 남깁니다. <b>같은 이름으로 다시 보관하면 덮어쓰지 않고 다음 버전이 쌓입니다.</b> '
+      + '위의 자동 이력과 달리 자동으로 지워지지 않고, 불러오면 화면에만 반영되어 상단 [저장]을 눌러야 정본이 바뀝니다.</div>'
       + '<div class="cardbox" style="padding:14px">'
       + '<div style="display:flex;gap:8px;align-items:center">'
       + '<input class="fi" style="flex:1;font-size:14.5px" data-fkey="savename" value="' + esc(S.saveName || "")
-      + '" placeholder="예: 2026-08 1차 취합 / 부서검토 전" />'
+      + '" placeholder="예: 2026 상반기안 / AI적용 시나리오A" />'
       + '<button class="' + (canSave ? "primary" : "")
       + '" style="' + (canSave ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;cursor:not-allowed;font-weight:800;")
       + 'flex:none;padding:9px 18px" data-act="saveas">현재 내용 보관</button></div>'
+      + (nextHint ? '<div style="font-size:13px;color:#0f766e;margin-top:8px">🔖 같은 이름의 계보가 있습니다' + esc(nextHint) + "</div>" : "")
       + (S.author ? "" : '<div class="warn" style="margin-top:10px">보관하려면 상단에 저장자를 입력하세요.</div>')
       + "</div>";
     if (!list.length) {
       return head + '<div class="cardbox" style="padding:22px;margin-top:12px;text-align:center;color:#a8a29e;font-size:14.5px">'
         + "아직 보관본이 없습니다. 이름을 적고 [현재 내용 보관] 을 누르세요.</div>";
     }
-    var rows = list.map(function (v) {
-      return '<div class="saverow">'
+    var rows = list.map(function (g) {
+      var open = S.saveOpen === g.name;
+      var main = '<div class="saverow">'
         + '<span style="font-weight:700;color:#44403c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'
-        + esc(v.name) + '">' + esc(v.name) + "</span>"
-        + '<span style="color:#78716c">' + esc(v.ts || "—") + "</span>"
-        + '<span style="color:#78716c">' + esc(maskName(v.author || "")) + "</span>"
-        + '<span style="color:#a8a29e">' + esc(v.n_nodes) + "개</span>"
-        + '<button class="sbtn" data-act="savesload" data-file="' + esc(v.file) + '" data-name="' + esc(v.name)
-        + '" data-n="' + esc(v.n_nodes) + '">불러오기</button>'
-        + '<button class="sbtn del" data-act="savesdel" data-file="' + esc(v.file) + '" data-name="' + esc(v.name)
-        + '" title="삭제">🗑</button></div>';
+        + esc(g.name) + '">' + esc(g.name) + "</span>"
+        + '<span><button class="sbtn vbtn" data-act="savesopen" data-name="' + esc(g.name) + '" title="버전 목록">'
+        + "v" + esc(g.latest_version) + " · " + esc(g.n_versions) + "개 " + (open ? "▾" : "▸") + "</button></span>"
+        + '<span style="color:#78716c">' + esc(g.ts || "—") + "</span>"
+        + '<span style="color:#a8a29e">' + esc(g.n_nodes) + "개</span>"
+        + '<button class="sbtn" data-act="savesload" data-name="' + esc(g.name) + '" data-v="'
+        + esc(g.latest_version) + '" data-n="' + esc(g.n_nodes) + '">최신 불러오기</button>'
+        + '<button class="sbtn del" data-act="savesdel" data-name="' + esc(g.name)
+        + '" title="이 이름의 모든 버전 삭제">🗑</button></div>';
+      if (!open) return main;
+      // 버전 목록 — 최신순. 각 버전을 따로 불러오거나 지울 수 있다.
+      var vs = (g.versions || []).map(function (v) {
+        return '<div class="verrow"><span>v' + esc(v.version) + "</span>"
+          + '<span style="color:#78716c">' + esc(v.ts || "—") + "</span>"
+          + '<span style="color:#78716c">' + esc(maskName(v.author || "")) + "</span>"
+          + '<span style="color:#a8a29e">' + esc(v.n_nodes) + "개</span>"
+          + '<button class="sbtn" data-act="savesload" data-name="' + esc(g.name) + '" data-v="' + esc(v.version)
+          + '" data-n="' + esc(v.n_nodes) + '">불러오기</button>'
+          + '<button class="sbtn del" data-act="savesdel" data-name="' + esc(g.name) + '" data-v="' + esc(v.version)
+          + '" title="이 버전만 삭제">🗑</button></div>';
+      }).join("");
+      return main + '<div class="verwrap">' + vs + "</div>";
     }).join("");
     return head
       + '<div class="cardbox" style="margin-top:12px"><div class="saverow" style="background:#faf8f3;color:#a8a29e;font-size:13px;font-weight:800;border-bottom:1px solid #f4f1ea">'
-      + "<span>이름</span><span>보관 시각</span><span>저장자</span><span>업무 수</span><span></span><span></span></div>"
+      + "<span>이름</span><span>버전</span><span>최근 보관</span><span>업무 수</span><span></span><span></span></div>"
       + rows + "</div>";
   }
 
@@ -2805,7 +2920,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     else if (S.activeTab === "manual" && SOLO) body = pageManual();
     else if (S.activeTab === "hist" && !SOLO) body = pageHistory();
     else if (S.activeTab === "chat" && !SOLO && S.chatReady) body = pageChat();
-    else body = '<div class="treewrap">' + crumbBar() + '<div class="body' + (S.viewMode === "outline" ? " out" : "") + '">'
+    else body = '<div class="treewrap">' + crumbBar() + editScopeBar()
+        + '<div class="body' + (S.viewMode === "outline" ? " out" : "") + '">'
         + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
   }
@@ -2905,6 +3021,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
       // 이력 탭 진입 시 기본 선택의 diff 를 파이썬에 요청 (안 하면 "계산하는 중…" 에 머문다)
       if (S.activeTab === "hist" && S.history.length && !S.diffPreview) actHistPick(S.histPick || 0);
     }
+    // ★ 편집 잠금 게이트 — 부서/과 편집 범위 밖 노드의 수정·삭제를 **여기 한 곳에서** 막는다.
+    //   액션마다 조건을 흩뿌리면 새 액션이 생길 때 조용히 새어 나간다. 새 편집 액션을 추가하면
+    //   이 목록에도 반드시 넣을 것. (select 는 허용 — 내용은 읽을 수 있어야 한다. add 는 아래 별도 처리.)
+    var EDIT_ACTS = { del: 1, copy: 1, tech: 1, ftech: 1, mchip: 1, freqchip: 1, occur: 1,
+                      evadd: 1, evdel: 1, lsadd: 1, lsdel: 1 };
+    if (EDIT_ACTS[a] && d.id && !canEdit(byId(d.id))) return flash(lockMsg());
+    // 추가는 허용하되, 과를 안 고르면 새 업무에 소속을 줄 수 없어 만들자마자 잠긴다 — 미리 막는다.
+    if (a === "add" && scopeOn() && !S.eDept && hasDetail(+d.lv))
+      return flash("새 업무를 추가하려면 편집 범위에서 **과**까지 고르세요");
+    if (a === "eclear") { S.eGroup = ""; S.eDept = ""; rerender(); return; }
     else if (a === "viewcols") S.viewMode = "columns", rerender();
     else if (a === "viewout") S.viewMode = "outline", rerender();
     else if (a === "select") actSelect(d.id);
@@ -2957,40 +3083,38 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     else if (a === "gonode") { selectPath(d.id); S.activeTab = "tree"; rerender(); }
     else if (a === "down") { if (d.fmt === "json") jsonDownload(); else csvDownload(S.mask, "프로세스계층도_" + _dateStamp() + ".csv"); }
     else if (a === "histpick") actHistPick(+d.i);
-    // 이름 붙여 보관. 같은 이름이 있으면 덮어쓰기 확인을 받는다 — 보관본에는 pre-image 가 없어
-    // 조용히 덮으면 되돌릴 방법이 없다(파이썬도 overwrite 없이는 거부한다, 이중 방어).
+    // 이름 붙여 보관. **확인 모달이 없다** — 같은 이름이면 덮지 않고 다음 버전으로 쌓이므로
+    // 잃는 것이 없다. (예전엔 덮어쓰기라 확인이 필요했다.)
     else if (a === "saveas") {
-      var nm = String(S.saveName || "").trim();
       if (!S.author) return flash("저장자를 먼저 입력하세요");
+      var nm = String(S.saveName || "").trim();
       if (!nm) return flash("보관본 이름을 입력하세요");
-      var dup = (S.saves || []).some(function (v) { return v.name === nm; });
-      var doSaveAs = function (ow) {
-        emit({ type: "save_as", name: nm, author: S.author, overwrite: !!ow,
-               nodes: S.nodes, domains: S.domains });
-      };
-      if (dup) {
-        S.confirm = { title: "같은 이름의 보관본이 있습니다",
-                      body: "'" + nm + "' 을(를) 지금 내용으로 덮어씁니다. 이전 보관본은 되돌릴 수 없습니다.",
-                      okLabel: "덮어쓰기", danger: true, onOk: function () { doSaveAs(true); } };
-        rerender();
-      } else doSaveAs(false);
+      emit({ type: "save_as", name: nm, author: S.author, nodes: S.nodes, domains: S.domains });
     }
+    else if (a === "savesopen") { S.saveOpen = (S.saveOpen === d.name ? "" : d.name); rerender(); }
     // 불러오기 — 화면에만 반영된다(정본은 [저장]에서). 미저장 편집이 있으면 먼저 알린다.
     else if (a === "savesload") {
-      var file = d.file, nm2 = d.name || "", cnt = d.n || "";
+      var nm2 = d.name || "", ver2 = d.v || "", cnt = d.n || "";
       S.confirm = { title: "보관본을 불러옵니다",
-                    body: "'" + nm2 + "' (업무 " + cnt + "개) 을(를) 화면에 불러옵니다."
+                    body: "'" + nm2 + "' v" + ver2 + " (업무 " + cnt + "개) 을(를) 화면에 불러옵니다."
                         + (S.dirty.length ? " 저장하지 않은 변경 " + S.dirty.length + "건은 사라집니다." : "")
                         + " 정본은 상단 [저장]을 눌러야 바뀝니다.",
                     okLabel: "불러오기", danger: S.dirty.length > 0,
-                    onOk: function () { emit({ type: "saves_load", file: file }); } };
+                    onOk: function () { emit({ type: "saves_load", name: nm2, version: ver2 }); } };
       rerender();
     }
+    // 삭제 — data-v 가 있으면 그 버전만, 없으면 이름(계보) 통째로.
     else if (a === "savesdel") {
-      var f2 = d.file, nm3 = d.name || "";
-      S.confirm = { title: "보관본을 삭제합니다", body: "'" + nm3 + "' 을(를) 지웁니다. 되돌릴 수 없습니다.",
-                    okLabel: "삭제", danger: true,
-                    onOk: function () { emit({ type: "saves_delete", file: f2 }); } };
+      var nm3 = d.name || "", ver3 = d.v || "";
+      var grp = (S.saves || []).filter(function (g) { return g.name === nm3; })[0];
+      S.confirm = ver3
+        ? { title: "이 버전을 삭제합니다", body: "'" + nm3 + "' v" + ver3 + " 만 지웁니다. 되돌릴 수 없습니다.",
+            okLabel: "삭제", danger: true,
+            onOk: function () { emit({ type: "saves_delete", name: nm3, version: ver3 }); } }
+        : { title: "계보를 통째로 삭제합니다",
+            body: "'" + nm3 + "' 의 모든 버전(" + ((grp && grp.n_versions) || "?") + "개)을 지웁니다. 되돌릴 수 없습니다.",
+            okLabel: "전체 삭제", danger: true,
+            onOk: function () { emit({ type: "saves_delete", name: nm3 }); } };
       rerender();
     }
     else if (a === "restore") { if (!S.author) return flash("저장자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
@@ -3052,6 +3176,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1319";
     // 보관본 이름 — 모델만 갱신한다. rerender 하면 포커스된 input 이 파괴돼 글자가 사라진다
     // (자유 텍스트 입력 공통 규칙). [보관] 버튼이 눌릴 때 S.saveName 을 읽는다.
     if (f === "savename") { S.saveName = el.value; return; }
+    // 계층 편집 **편집 범위** — 부서를 바꾸면 과를 비운다(다른 부서의 과가 남으면 아무것도 못 고친다).
+    if (f === "egroup") { S.eGroup = el.value; S.eDept = ""; rerender(); return; }
+    if (f === "edept") { S.eDept = el.value; rerender(); return; }
+    // ★ 편집 잠금 게이트(입력 쪽). 이름·설명·숫자 등 모든 노드 필드가 data-id 를 달고 오므로
+    //   여기 한 겹이면 위젯이 늘어도 새지 않는다. 되돌리려고 rerender 를 먼저 부른다.
+    if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
     if (f === "chatq") { S.chatQ = el.value; return; }                   // 질문 — 모델만(rerender 하면 타이핑이 끊긴다)
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
     //   rerender 하면 contentEl.innerHTML 이 통째로 갈려 포커스된 input 이 파괴돼 글자가 사라진다.
