@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -100,7 +100,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
   .lv3chip { border: 1.5px solid; border-radius: 999px; padding: 3px 11px; font-size: 13.5px;
     font-weight: 800; cursor: pointer; line-height: 1.3; }
   .lv3chip:hover { filter: brightness(.96); }
-  .lv3chip.on { box-shadow: 0 0 0 2px rgba(15, 118, 110, .18); }
+  /* ★ 미선택 칩까지 색을 채우면 여러 개가 선택된 것처럼 보인다(실제 사용자 혼동).
+     미선택 = 흰 바탕 + 회색 글씨 + **색 점만** 남겨 부문 색은 유지하고, 선택 = 그 색으로 꽉 채운다. */
+  .lv3chip .cdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+    margin-right: 6px; vertical-align: middle; }
+  .lv3chip.on { box-shadow: 0 0 0 2px rgba(15, 118, 110, .3); font-weight: 800; }
+  .lv3mini { border: 1px solid #ddd6ca; background: #fff; border-radius: 999px; padding: 3px 10px;
+    font-size: 12.5px; font-weight: 700; color: #57534e; cursor: pointer; }
+  .lv3mini:hover { background: #faf8f3; }
   /* lv4 카드를 드래그하는 동안, 부문 칩이 '여기로 옮기기' 드롭 대상임을 표시 */
   body.dragL4 .lv3chip { outline: 2px dashed rgba(37, 99, 235, .45); outline-offset: 2px; }
   body.dragL4 .lv3chip:hover { outline-style: solid; outline-color: #2563eb; filter: brightness(1.02); }
@@ -984,6 +991,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     // 계층 편집 **편집 범위** 필터. 요약의 fGroup/fDept(보기 전용)와 **일부러 분리**한다 —
     // 한쪽은 "무엇을 볼까", 이쪽은 "무엇을 고칠 수 있나"라 의미가 달라 공유하면 사고가 난다.
     eGroup: "", eDept: "",
+    // 부문 칩 **다중 선택**(id 배열). 빈 배열 = 아무 부문도 안 고른 상태(컬럼이 비어 있음).
+    // S.sel[3] 은 '컬럼 드릴다운 중인 부문' 이라 역할이 다르다 — 정확히 하나 골랐을 때만 채운다.
+    lv3Sel: [],
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -1017,7 +1027,25 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     _saveTimer = setTimeout(soloSave, 400);   // 타이핑마다 쓰지 않게 debounce
   }
   function selectPath(id) { var node = byId(id); var sel = {}; if (node) { ancestors(id).concat([node]).forEach(function (a) { sel[a.level] = a.id; }); } S.sel = sel; S.selectedId = id; }
-  function actSelect(id) { selectPath(id); rerender(); }
+  function actSelect(id) {
+    selectPath(id);
+    // 카드로 들어가면 그 부문 하나로 좁힌다 — 칩 다중선택과 컬럼 드릴다운이 어긋나지 않게.
+    if (S.sel[3]) S.lv3Sel = [S.sel[3]];
+    rerender();
+  }
+  /** 부문 칩 다중 선택 토글.
+   *  ★ 정확히 하나만 남으면 그 부문으로 컬럼 드릴다운(S.sel[3])까지 맞춘다 — 컬럼 보기는
+   *    부모가 하나여야 드래그·추가가 성립하기 때문이다(columns 주석 참조). 0개·2개 이상이면
+   *    하위 컬럼 선택을 비워 낡은 화면이 남지 않게 한다. */
+  function syncLv3() {
+    if (S.lv3Sel.length === 1) { S.sel[3] = S.lv3Sel[0]; return; }
+    for (var lv = 3; lv <= LEVEL_MAX; lv++) S.sel[lv] = "";
+  }
+  function actLv3Pick(id) {
+    var a = S.lv3Sel.slice(), i = a.indexOf(id);
+    if (i >= 0) a.splice(i, 1); else a.push(id);
+    S.lv3Sel = a; syncLv3(); rerender();
+  }
   function actAdd(pid, lv) {
     if (!pid) return;
     var nn = makeNode(pid, lv, "");
@@ -1721,15 +1749,31 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
   function columns() {
     // lv3(부문)은 빵부스러기 드롭다운으로 고른다 — 컬럼은 lv4~lv7 만 (lv3 컬럼 제거).
     var html = '<div class="board scroll">';
+    // 부문을 **여럿** 고르면 lv4 컬럼은 그 부문들의 대분류를 모아 보여준다.
+    // ★ 이때는 읽기 전용 목록이다 — 컬럼은 `data-parent` 하나로 드롭 대상과 ＋ 의 부모를 정하는데,
+    //   부모가 여럿이면 그 계약이 성립하지 않는다. 카드를 누르면 그 부문 하나로 좁혀진다(actSelect).
+    var multi3 = S.lv3Sel.length > 1;
     for (var lv = 4; lv <= LEVEL_MAX; lv++) {
+      if (lv === 4 && multi3) {
+        var agg = [];
+        S.lv3Sel.forEach(function (p3) { agg = agg.concat(visibleChildren(p3)); });
+        html += '<div class="col"><div class="colhead"><span class="t">lv4 ' + esc(LABELS[4])
+          + '</span><span class="n">' + agg.length + "</span></div>"
+          + '<div class="list scroll">'
+          + '<div class="emptyhint" style="text-align:left;padding:8px 10px;line-height:1.5">'
+          + "부문 " + S.lv3Sel.length + "개를 함께 보는 중<br/>카드를 누르면 그 부문으로 좁혀집니다</div>";
+        agg.forEach(function (nn) { html += cardHTML(nn, 4); });
+        html += "</div></div>";
+        continue;
+      }
       var pid = S.sel[lv - 1];
       var enabled = !!pid;
-      html += '<div class="col' + (lv > 4 ? " wide" : "") + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + (enabled ? childrenOf(pid).length : 0) + "</span></div>"
+      var kids = enabled ? visibleChildren(pid) : [];
+      html += '<div class="col' + (lv > 4 ? " wide" : "") + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + kids.length + "</span></div>"
         + '<div class="list scroll" data-lv="' + lv + '" data-parent="' + esc(pid || "") + '">';
       if (!enabled) html += '<div class="emptyhint">' + (lv === 4 ? "위에서 부문을<br/>먼저 고르세요" : "상위 항목을<br/>먼저 선택하세요") + "</div>";
       else {
-        var cards = childrenOf(pid);
-        cards.forEach(function (nn) { html += cardHTML(nn, lv); });
+        kids.forEach(function (nn) { html += cardHTML(nn, lv); });
         html += '<button class="addbtn" data-act="add" data-pid="' + esc(pid) + '" data-lv="' + lv + '">＋ 새 ' + esc(LABELS[lv]) + "</button>";
       }
       html += "</div></div>";
@@ -1804,10 +1848,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
   }
 
   function outline() {
-    var anyOpen = S.nodes.some(function (n) { return childrenOf(n.id).length && !S.collapsed[n.id]; });
+    var anyOpen = S.nodes.some(function (n) {
+      return inEditScope(n) && visibleChildren(n.id).length && !S.collapsed[n.id];
+    });
     var body = "";
     (function walk(pid, depth) {
-      childrenOf(pid).forEach(function (nn) {
+      // 최상단(부문)은 칩으로 고른 것만, 그 아래는 편집 범위에 걸리는 가지만 그린다.
+      var kids = (pid === ROOT)
+        ? childrenOf(ROOT).filter(function (n) { return S.lv3Sel.indexOf(n.id) >= 0 && inEditScope(n); })
+        : visibleChildren(pid);
+      kids.forEach(function (nn) {
         var kids = childrenOf(nn.id), col = !!S.collapsed[nn.id], sel = S.selectedId === nn.id, detail = hasDetail(nn.level);
         var chips = "";
         if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
@@ -1836,6 +1886,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
         if (!col) walk(nn.id, depth + 1);
       });
     })(ROOT, 0);
+    if (!body) {
+      body = '<div class="emptyhint" style="padding:24px;text-align:center;line-height:1.6">'
+        + (S.lv3Sel.length
+            ? "이 부문에 편집 범위에 해당하는 업무가 없습니다.<br/>상단 <b>편집 범위</b>를 바꾸거나 부문을 더 고르세요."
+            : "위에서 <b>부문</b>을 고르세요 — <b>전체</b> 버튼으로 전부 볼 수 있습니다.") + "</div>";
+    }
     return '<div class="outwrap"><div class="outcard"><div class="outhead"><span class="h1">업무 계층 전체보기</span><span class="h2">클릭하면 오른쪽에서 상세 입력</span><div class="grow"></div>'
       + '<button class="minibtn" data-act="collapse">' + (anyOpen ? "모두 접기" : "모두 펼치기") + "</button>"
       + '<button class="minibtn p" data-act="add" data-pid="' + ROOT + '" data-lv="3">＋ 새 부문</button></div>'
@@ -1857,17 +1913,23 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     // lv3(부문)은 드롭다운으로 고른다 — 경로 전체를 늘어놓지 않고 여기서 바로 부문 전환.
     // lv4~lv6 위치는 컬럼의 조상 카드 하이라이트(.path)로 표시하므로 여기 칩으로 붙이지 않는다.
     var lv3s = childrenOf(ROOT), cur3 = S.sel[3] || "";
-    // 부문은 **컬러 칩**으로 고른다 — 색으로 구분되고 한눈에 전환된다(드롭다운 대체).
+    // 부문은 **컬러 칩 다중 선택**이다. 선택 = 그 색으로 꽉 참 + ✓, 미선택 = 흰 바탕 + 색 점.
+    // (미선택도 색을 채우던 시절엔 어느 것이 골라졌는지 구분되지 않았다.)
     var lv3sel = '<div class="lv3chips">' + lv3s.map(function (n, i) {
-      var c = lv3Color(i), on = n.id === cur3;
+      var c = lv3Color(i), on = S.lv3Sel.indexOf(n.id) >= 0;
       var style = on ? "background:" + c + ";color:#fff;border-color:" + c
-                     : "background:" + c + "14;color:" + c + ";border-color:" + c + "66";
-      return '<button class="lv3chip' + (on ? " on" : "") + '" data-act="select" data-id="' + esc(n.id)
-        + '" data-lv3chip="' + esc(n.id) + '" style="' + style + '">' + esc(n.name || "(이름 없음)") + "</button>";
-    }).join("") + "</div>";
-    // 부문 추가/삭제 — 칩 줄 옆 버튼. 삭제는 부문이 선택됐을 때만.
+                     : "background:#fff;color:#57534e;border-color:#e0dbd2";
+      return '<button class="lv3chip' + (on ? " on" : "") + '" data-act="lv3pick" data-id="' + esc(n.id)
+        + '" data-lv3chip="' + esc(n.id) + '" style="' + style + '">'
+        + (on ? "✓ " : '<i class="cdot" style="background:' + c + '"></i>')
+        + esc(n.name || "(이름 없음)") + "</button>";
+    }).join("")
+      + '<button class="lv3mini" data-act="lv3all" title="모든 부문 보기">전체</button>'
+      + (S.lv3Sel.length ? '<button class="lv3mini" data-act="lv3none" title="선택 해제">지우기</button>' : "")
+      + "</div>";
+    // 부문 추가/삭제 — 칩 줄 옆 버튼. 삭제는 **정확히 하나** 골랐을 때만(여럿이면 무엇을 지울지 모호).
     var lv3btns = '<button class="crumbbtn add" data-act="add" data-pid="' + ROOT + '" data-lv="3" title="새 부문 추가">＋ 부문</button>'
-      + (cur3 ? '<button class="crumbbtn del" data-act="del" data-id="' + esc(cur3) + '" title="이 부문 삭제">🗑</button>' : "");
+      + (S.lv3Sel.length === 1 ? '<button class="crumbbtn del" data-act="del" data-id="' + esc(S.lv3Sel[0]) + '" title="이 부문 삭제">🗑</button>' : "");
     var q = (S.query || "").trim();
     var search = '<div class="searchbox"><input data-fkey="query" value="' + esc(S.query || "") + '" placeholder="🔎 업무명 검색" />'
       + (q ? '<span class="shits">' + hitCount() + "건</span>" : "") + "</div>";
@@ -2558,10 +2620,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
       + (on ? '<button class="fclr" data-act="eclear">✕ 전체 편집</button>' : "")
       + '<span style="color:' + (on ? "#b45309" : "#a8a29e") + '">'
       + (on
-          ? "🔒 <b>" + esc(S.eDept || S.eGroup) + "</b> 업무만 수정할 수 있습니다 · 나머지는 잠깁니다"
+          ? "🔒 <b>" + esc(S.eDept || S.eGroup) + "</b> 업무만 보이고 수정됩니다 · 다른 소속 업무는 "
+              + "<b>숨겨집니다</b>(저장하면 그대로 보존)"
               + (S.eDept ? " · 새 업무는 " + esc(S.eDept) + " 소속으로 만들어집니다"
                          : " · <b>과</b>까지 골라야 새 업무를 추가할 수 있습니다")
-          : "부서·과를 고르면 그 범위만 수정할 수 있게 잠급니다 (실수로 남의 업무를 고치는 것을 막습니다)")
+          : "부서·과를 고르면 그 소속 업무만 보이고 수정됩니다 (남의 업무를 실수로 고치는 것을 막습니다)")
       + "</span></div>";
   }
 
@@ -2615,7 +2678,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     if (canEdit(n)) return "";
     var why = hasDetail(n.level)
       ? "이 업무의 소속(" + esc(deptsOf(n).join(", ")) + ")이 편집 범위 밖입니다."
-      : "여러 과가 함께 쓰는 상위 분류라 잠겼습니다 — 고치면 남의 업무 경로까지 바뀝니다.";
+      : "여러 과가 함께 쓰는 상위 분류라 잠겼습니다 — 고치면 남의 업무 경로까지 바뀝니다."
+        + " (아래에 다른 소속 업무가 있어 화면에는 안 보일 수 있습니다.)";
     return '<div class="warn" style="margin:0 0 12px">🔒 <b>읽기 전용</b> · ' + why
       + " 상단 <b>편집 범위</b>를 바꾸면 수정할 수 있습니다.</div>";
   }
@@ -2651,6 +2715,23 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     var kids = descLoadNodes(n.id);
     return !kids.length || kids.every(inScope);
   }
+  /** 편집 범위가 켜졌을 때 **화면에 보일지**. 범위 밖은 아예 숨긴다.
+   *
+   *  lv3~lv5 는 소속이 없으므로 **내 소속 lv6 에 닿는 가지만** 남긴다(excel_io._branches_with_detail
+   *  과 같은 발상). 자손 lv6 이 없는 빈 분류는 보여준다 — 방금 만든 것일 수 있고, 안 그러면
+   *  새 대분류를 만드는 순간 화면에서 사라진다.
+   *
+   *  ★ 숨기는 것은 **렌더링뿐**이다. S.nodes 는 그대로라 저장 시 숨은 노드도 전부 함께 올라간다
+   *    (프론트가 트리 전체를 보내는 v2 구조). 이 전제가 깨지면 남의 업무가 통째로 지워진다. */
+  function inEditScope(n) {
+    if (!scopeOn()) return true;
+    if (hasDetail(n.level)) return inScope(n);
+    var kids = descLoadNodes(n.id);
+    return !kids.length || kids.some(inScope);
+  }
+  /** 화면에 그릴 자식만. childrenOf 는 저장·집계도 쓰므로 **렌더 경로에서만** 이걸 쓴다. */
+  function visibleChildren(pid) { return childrenOf(pid).filter(inEditScope); }
+
   function lockMsg() {
     return "🔒 " + (S.eDept || S.eGroup) + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
   }
@@ -3034,6 +3115,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     else if (a === "viewcols") S.viewMode = "columns", rerender();
     else if (a === "viewout") S.viewMode = "outline", rerender();
     else if (a === "select") actSelect(d.id);
+    else if (a === "lv3pick") actLv3Pick(d.id);
+    else if (a === "lv3all") { S.lv3Sel = childrenOf(ROOT).map(function (n) { return n.id; }); syncLv3(); rerender(); }
+    else if (a === "lv3none") { S.lv3Sel = []; syncLv3(); rerender(); }
     else if (a === "add") actAdd(d.pid, +d.lv);
     else if (a === "toggle") actToggle(d.id);
     else if (a === "collapse") actCollapseAll();
@@ -3176,11 +3260,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     // 보관본 이름 — 모델만 갱신한다. rerender 하면 포커스된 input 이 파괴돼 글자가 사라진다
     // (자유 텍스트 입력 공통 규칙). [보관] 버튼이 눌릴 때 S.saveName 을 읽는다.
     if (f === "savename") { S.saveName = el.value; return; }
-    // 계층 편집 **편집 범위** — 부서를 바꾸면 과를 비운다(다른 부서의 과가 남으면 아무것도 못 고친다).
-    if (f === "egroup") { S.eGroup = el.value; S.eDept = ""; rerender(); return; }
-    if (f === "edept") { S.eDept = el.value; rerender(); return; }
-    // ★ 편집 잠금 게이트(입력 쪽). 이름·설명·숫자 등 모든 노드 필드가 data-id 를 달고 오므로
-    //   여기 한 겹이면 위젯이 늘어도 새지 않는다. 되돌리려고 rerender 를 먼저 부른다.
+    // ★ 편집 잠금 게이트(타이핑 쪽). 이름·설명·숫자 등 모든 노드 필드가 data-id 를 달고 오므로
+    //   여기 한 겹이면 위젯이 늘어도 새지 않는다. 화면을 원래 값으로 되돌리려고 rerender 를 먼저 부른다.
     if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
     if (f === "chatq") { S.chatQ = el.value; return; }                   // 질문 — 모델만(rerender 하면 타이핑이 끊긴다)
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
@@ -3251,6 +3332,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1343";
     // 부서를 바꾸면 과 선택을 비운다 — 다른 부서의 과가 남아 있으면 결과가 항상 0건이 된다.
     if (f === "fgroup") { S.fGroup = el.value; S.fDept = ""; rerender(); return; }
     if (f === "fdept") { S.fDept = el.value; rerender(); return; }
+    // 계층 편집 **편집 범위**(잠금 기준). 부서를 바꾸면 과를 비운다 — 다른 부서의 과가 남으면
+    // 아무 업무도 범위에 안 들어와 전부 잠긴다.
+    if (f === "egroup") { S.eGroup = el.value; S.eDept = ""; rerender(); return; }
+    if (f === "edept") { S.eDept = el.value; rerender(); return; }
+    // ★ 편집 잠금 게이트(select·체크박스 쪽). 타이핑은 applyInput 이 막고 여기는 그 밖의 위젯을 막는다.
+    if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
     if (f === "ls_system") { actLinkSet(el.dataset.id, +el.dataset.idx, "system", el.value); rerender(); return; }
     if (f === "dept" || f === "automation_level" || f === "linked_system")
