@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1311";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -437,6 +437,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
   .chipbtn:hover { background: #e7f6f4; border-color: #99f6e4; }
   .primary { font-size: 15px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
   .secondary { font-size: 15px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .saverow { display: grid; grid-template-columns: 1.6fr 1fr 1fr .7fr auto auto; gap: 8px; align-items: center;
+             padding: 10px 14px; border-bottom: 1px solid #f7f4ee; font-size: 14px; }
+  .saverow .sbtn { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 5px 11px;
+                   cursor: pointer; font-size: 13px; font-weight: 700; color: #0f766e; }
+  .saverow .sbtn.del { color: #b91c1c; }
+  .saverow .sbtn:hover { filter: brightness(.96); }
   .subrow { display: grid; grid-template-columns: 1.3fr .5fr .5fr .8fr .9fr .8fr 1.6fr; gap: 8px; align-items: center;
             padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
   .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
@@ -956,6 +962,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
+    saves: [], saveName: "",   // 이름 붙인 보관본 목록 · 입력 중인 이름 (이름은 뷰 상태라 저장 안 함)
     // 파이썬이 계산해 주는 것들 (JS 에서 만들지 말 것 — schema.diff / excel_io 가 정본)
     diffPreview: null,      // 복원 미리보기 {added, changed, removed, removed_list}
     importPreview: null,    // 엑셀 반영 미리보기 {added, changed, removed, lists, unknown}
@@ -2647,6 +2654,48 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
       + '<div class="sumlist">' + (rows || '<div class="sumrow" style="color:#a8a29e">해당 업무가 없습니다.</div>') + "</div></div>";
   }
 
+  /** 이름 붙인 보관본 — '2026-08 1차 취합' 처럼 사람이 의미를 붙여 남기는 기준점.
+   *  자동 스냅샷(이력)과 **목적이 다르다**: 이력은 덮어쓰기 직전 상태를 기계가 남기는 안전망이라
+   *  90일·최신 50개로 자동 정리되지만, 보관본은 자동 삭제되지 않는다.
+   *  ★ 불러오기는 **화면에만** 올린다(정본은 [저장]을 눌러야 바뀐다) — 실수로 눌러도 되돌릴 수 있게. */
+  function pageSaves() {
+    var list = S.saves || [];
+    var canSave = !!S.author && !!String(S.saveName || "").trim();
+    var head = '<div style="font-size:15.5px;font-weight:800;margin:24px 0 6px">🔖 이름 붙인 보관본</div>'
+      + '<div style="font-size:13.5px;color:#a8a29e;line-height:1.6;margin-bottom:10px">'
+      + '취합 회차·검토 시점처럼 <b>기준점을 이름으로 남깁니다.</b> 위의 자동 이력과 달리 '
+      + '<b>자동으로 지워지지 않습니다.</b> 불러오면 화면에만 반영되고, 상단 [저장]을 눌러야 정본이 바뀝니다.</div>'
+      + '<div class="cardbox" style="padding:14px">'
+      + '<div style="display:flex;gap:8px;align-items:center">'
+      + '<input class="fi" style="flex:1;font-size:14.5px" data-fkey="savename" value="' + esc(S.saveName || "")
+      + '" placeholder="예: 2026-08 1차 취합 / 부서검토 전" />'
+      + '<button class="' + (canSave ? "primary" : "")
+      + '" style="' + (canSave ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;cursor:not-allowed;font-weight:800;")
+      + 'flex:none;padding:9px 18px" data-act="saveas">현재 내용 보관</button></div>'
+      + (S.author ? "" : '<div class="warn" style="margin-top:10px">보관하려면 상단에 저장자를 입력하세요.</div>')
+      + "</div>";
+    if (!list.length) {
+      return head + '<div class="cardbox" style="padding:22px;margin-top:12px;text-align:center;color:#a8a29e;font-size:14.5px">'
+        + "아직 보관본이 없습니다. 이름을 적고 [현재 내용 보관] 을 누르세요.</div>";
+    }
+    var rows = list.map(function (v) {
+      return '<div class="saverow">'
+        + '<span style="font-weight:700;color:#44403c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'
+        + esc(v.name) + '">' + esc(v.name) + "</span>"
+        + '<span style="color:#78716c">' + esc(v.ts || "—") + "</span>"
+        + '<span style="color:#78716c">' + esc(maskName(v.author || "")) + "</span>"
+        + '<span style="color:#a8a29e">' + esc(v.n_nodes) + "개</span>"
+        + '<button class="sbtn" data-act="savesload" data-file="' + esc(v.file) + '" data-name="' + esc(v.name)
+        + '" data-n="' + esc(v.n_nodes) + '">불러오기</button>'
+        + '<button class="sbtn del" data-act="savesdel" data-file="' + esc(v.file) + '" data-name="' + esc(v.name)
+        + '" title="삭제">🗑</button></div>';
+    }).join("");
+    return head
+      + '<div class="cardbox" style="margin-top:12px"><div class="saverow" style="background:#faf8f3;color:#a8a29e;font-size:13px;font-weight:800;border-bottom:1px solid #f4f1ea">'
+      + "<span>이름</span><span>보관 시각</span><span>저장자</span><span>업무 수</span><span></span><span></span></div>"
+      + rows + "</div>";
+  }
+
   function pageHistory() {
     // ★ 목업(MOCK_HIST/MOCK_AUDIT)은 !IN_ST 단독 미리보기에서만 쓴다. Streamlit 안에서
     //   빈 이력을 목업으로 대체하면 가짜 기록이 진짜처럼 보인다 — seed() 와 같은 규칙.
@@ -2654,8 +2703,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
     var head = '<div class="page scroll"><div class="pw"><div class="h1">이력 · 복원</div>'
       + '<div class="sub">저장할 때마다 직전 버전이 스냅샷으로 보관됩니다 (최근 90일 + 최신 50개).</div>';
     if (!hist.length) {
+      // ★ 이력이 비어도 보관본 섹션은 보여야 한다 — 처음 쓰는 사람이 여기서 첫 기준점을 만든다.
       return head + '<div class="cardbox" style="padding:28px;margin-top:18px;text-align:center;color:#a8a29e;font-size:15px">'
-        + "아직 저장 이력이 없습니다. 저장을 하면 직전 버전이 여기에 쌓입니다.</div></div></div>";
+        + "아직 저장 이력이 없습니다. 저장을 하면 직전 버전이 여기에 쌓입니다.</div>"
+        + pageSaves() + "</div></div>";
     }
     var rows = hist.map(function (h, i) { return '<div class="histrow' + (S.histPick === i ? " sel" : "") + '" data-act="histpick" data-i="' + i + '"><span>' + esc(h.ts) + "</span><span>" + esc(maskName(h.author)) + "</span><span>rev" + esc(h.rev) + "</span><span>" + esc(h.n_nodes) + "개</span></div>"; }).join("");
     var hp = hist[S.histPick] || hist[0];
@@ -2690,7 +2741,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
       + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>" + removedList
       + '<label style="display:flex;align-items:center;gap:9px;margin:18px 0 0;cursor:pointer"><input type="checkbox" data-fkey="restoreok"' + (S.restoreOk ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;color:#44403c">위 내용을 확인했고 이 시점으로 되돌립니다</span></label>'
       + '<div style="margin-top:14px"><button class="' + (can ? "primary" : "") + '" style="' + (can ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:800;cursor:not-allowed") + 'padding:9px 18px" data-act="restore">이 시점으로 복원</button></div></div>'
-      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:13px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div></div></div>";
+      + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:13px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div>"
+      + pageSaves() + "</div></div>";
   }
 
   // 되돌릴 수 없는 조작 앞의 확인 모달 (삭제 / 디스크 다시 읽기)
@@ -2865,6 +2917,42 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
     else if (a === "gonode") { selectPath(d.id); S.activeTab = "tree"; rerender(); }
     else if (a === "down") { if (d.fmt === "json") jsonDownload(); else csvDownload(S.mask, "프로세스계층도_" + _dateStamp() + ".csv"); }
     else if (a === "histpick") actHistPick(+d.i);
+    // 이름 붙여 보관. 같은 이름이 있으면 덮어쓰기 확인을 받는다 — 보관본에는 pre-image 가 없어
+    // 조용히 덮으면 되돌릴 방법이 없다(파이썬도 overwrite 없이는 거부한다, 이중 방어).
+    else if (a === "saveas") {
+      var nm = String(S.saveName || "").trim();
+      if (!S.author) return flash("저장자를 먼저 입력하세요");
+      if (!nm) return flash("보관본 이름을 입력하세요");
+      var dup = (S.saves || []).some(function (v) { return v.name === nm; });
+      var doSaveAs = function (ow) {
+        emit({ type: "save_as", name: nm, author: S.author, overwrite: !!ow,
+               nodes: S.nodes, domains: S.domains });
+      };
+      if (dup) {
+        S.confirm = { title: "같은 이름의 보관본이 있습니다",
+                      body: "'" + nm + "' 을(를) 지금 내용으로 덮어씁니다. 이전 보관본은 되돌릴 수 없습니다.",
+                      okLabel: "덮어쓰기", danger: true, onOk: function () { doSaveAs(true); } };
+        rerender();
+      } else doSaveAs(false);
+    }
+    // 불러오기 — 화면에만 반영된다(정본은 [저장]에서). 미저장 편집이 있으면 먼저 알린다.
+    else if (a === "savesload") {
+      var file = d.file, nm2 = d.name || "", cnt = d.n || "";
+      S.confirm = { title: "보관본을 불러옵니다",
+                    body: "'" + nm2 + "' (업무 " + cnt + "개) 을(를) 화면에 불러옵니다."
+                        + (S.dirty.length ? " 저장하지 않은 변경 " + S.dirty.length + "건은 사라집니다." : "")
+                        + " 정본은 상단 [저장]을 눌러야 바뀝니다.",
+                    okLabel: "불러오기", danger: S.dirty.length > 0,
+                    onOk: function () { emit({ type: "saves_load", file: file }); } };
+      rerender();
+    }
+    else if (a === "savesdel") {
+      var f2 = d.file, nm3 = d.name || "";
+      S.confirm = { title: "보관본을 삭제합니다", body: "'" + nm3 + "' 을(를) 지웁니다. 되돌릴 수 없습니다.",
+                    okLabel: "삭제", danger: true,
+                    onOk: function () { emit({ type: "saves_delete", file: f2 }); } };
+      rerender();
+    }
     else if (a === "restore") { if (!S.author) return flash("저장자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
     else if (a === "reload") actReload();
     else if (a === "force") emit({ type: "force", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
@@ -2921,6 +3009,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
       return;
     }
     if (f === "collectfolder") { S.collectFolder = el.value; return; }   // 폴더 경로 — 모델만, 스캔 클릭 때 사용
+    // 보관본 이름 — 모델만 갱신한다. rerender 하면 포커스된 input 이 파괴돼 글자가 사라진다
+    // (자유 텍스트 입력 공통 규칙). [보관] 버튼이 눌릴 때 S.saveName 을 읽는다.
+    if (f === "savename") { S.saveName = el.value; return; }
     if (f === "chatq") { S.chatQ = el.value; return; }                   // 질문 — 모델만(rerender 하면 타이핑이 끊긴다)
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
     //   rerender 하면 contentEl.innerHTML 이 통째로 갈려 포커스된 input 이 파괴돼 글자가 사라진다.
@@ -3050,6 +3141,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1253";
       S.rev = args.tree.rev || 0;   // 저장 충돌 판정용 rev 는 항상 최신으로
     }
     if (typeof args.author === "string" && args.author) S.author = args.author;
+    if (Array.isArray(args.saves)) S.saves = args.saves;
     S.env = args.env || "";
     S.history = args.history || [];
     S.audit = args.audit || [];

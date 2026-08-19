@@ -84,6 +84,8 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "author": st.session_state.get("author", ""),
         "env": pc.get_env_label(),
         "history": store.list_history(),
+        # 이름 붙인 보관본 — history 와 달리 자동 정리되지 않는다(store.get_saves_dir 주석 참조)
+        "saves": store.list_saves(),
         "audit": store.read_audit(100),
         "flash": flash,
         "conflict": conflict,
@@ -453,6 +455,37 @@ def _handle(evt: dict) -> None:
             st.session_state["flash"] = f"복원했습니다 (rev {res.rev})."
         else:
             st.session_state["flash"] = res.error or "복원에 실패했습니다."
+
+    elif t == "save_as":                     # 현재 화면 트리를 이름 붙여 보관 (정본은 그대로)
+        data = dict(st.session_state["data"])
+        if evt.get("nodes") is not None:     # 저장 전 편집분까지 담는다 (download 와 같은 규칙)
+            data["nodes"] = evt["nodes"]
+            data["domains"] = evt.get("domains", data.get("domains", {}))
+        res = store.save_named(data, evt.get("name", ""), evt.get("author", ""),
+                               overwrite=bool(evt.get("overwrite")))
+        st.session_state["flash"] = (f"'{evt.get('name', '')}' 이름으로 보관했습니다."
+                                     if res.ok else (res.error or "보관에 실패했습니다."))
+
+    elif t == "saves_load":
+        # ★ 정본을 바로 덮지 않는다 — 화면(세션)에만 올리고 사용자가 [저장]을 눌러야 파일에 쓴다.
+        #   취합 반영(_apply_collect)과 같은 규칙이다. 스냅샷 복원(restore)이 즉시 저장하는 것과
+        #   일부러 다르게 뒀다: 보관본은 "되돌리기"가 아니라 "이 버전을 가져와 이어서 작업"이라
+        #   실수로 눌렀을 때 정본이 이미 덮여 있으면 안 된다.
+        loaded = store.load_named(evt.get("file") or "")
+        if loaded is None:
+            st.session_state["flash"] = "보관본을 읽을 수 없습니다."
+        else:
+            cur = st.session_state["data"]
+            loaded["rev"] = cur.get("rev", 0)         # 정본 rev 유지 — 저장 시 충돌검사가 정상 동작
+            _set_data(loaded)
+            st.session_state["dirty_all"] = True
+            st.session_state["flash"] = (
+                f"보관본을 화면에 불러왔습니다 (업무 {len(loaded.get('nodes', []))}개). "
+                "상단 [저장]을 눌러야 파일에 기록됩니다.")
+
+    elif t == "saves_delete":
+        ok = store.delete_named(evt.get("file") or "")
+        st.session_state["flash"] = "보관본을 삭제했습니다." if ok else "보관본을 삭제하지 못했습니다."
 
     elif t == "reload":
         _set_data(store.load_tree()[0])

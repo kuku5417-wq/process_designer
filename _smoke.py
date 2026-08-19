@@ -1013,6 +1013,54 @@ def main() -> int:
     ck(p6_29.get("submissions") == subs29,
        "개인 JSON 이어붙이기가 과별 제출값을 지우지 않는다 (취합 산출물은 base 보존)")
 
+    # 30. 이름 붙인 보관본 (saves/)
+    sv = schema.bootstrap()
+    s4 = schema.add_node(sv, "lv3_seonjang", 4, "x", "보관테스트")
+    sv = schema.normalize(sv)
+    sv["rev"] = 7
+
+    ck(pc.get_saves_dir().name == "saves", "보관본 폴더는 saves/")
+    ck(pc.get_saves_dir() != pc.get_history_dir(),
+       "보관본 폴더는 history/ 와 분리 — prune_history 의 자동 삭제 대상이 아니다")
+
+    # 저장자 없이는 거부 (save_tree 와 같은 규칙)
+    ck(not store.save_named(sv, "1차", "  ").ok, "저장자 없으면 보관 거부")
+    ck(not store.save_named(sv, "   ", "관리자").ok, "이름이 비면 보관 거부")
+
+    r30 = store.save_named(sv, "2026-08 1차 취합", "관리자")
+    ck(r30.ok, f"보관 성공 (실제 {r30.error})")
+    ck((pc.get_saves_dir() / "2026-08 1차 취합.json").exists(), "이름 그대로 파일이 생긴다")
+
+    # 같은 이름은 overwrite 없이 거부 — 보관본에는 pre-image 가 없어 조용히 덮으면 못 되돌린다
+    ck(not store.save_named(sv, "2026-08 1차 취합", "관리자").ok, "같은 이름은 덮어쓰기 없이 거부")
+    ck(store.save_named(sv, "2026-08 1차 취합", "관리자", overwrite=True).ok, "overwrite=True 면 덮어쓴다")
+
+    lst30 = store.list_saves()
+    ck(len(lst30) == 1, f"보관본 목록 1건 (실제 {len(lst30)})")
+    ck(lst30[0]["name"] == "2026-08 1차 취합" and lst30[0]["author"] == "관리자",
+       "목록에 이름·저장자가 실린다")
+    ck(lst30[0]["rev"] == 7, "보관본은 rev 를 올리지 않는다 (정본과 번호 경합 방지)")
+
+    # 파일명 정규화 — 경로 구분자는 문자로 치환된다
+    ck(store._safe_label("a/b\\c") == "a_b_c", "경로 구분자는 파일명에 못 들어간다")
+    ck(len(store._safe_label("가" * 200)) <= 60, "이름 길이 상한")
+
+    got30 = store.load_named(lst30[0]["file"])
+    ck(got30 is not None and len(got30["nodes"]) == len(sv["nodes"]), "보관본을 그대로 읽어온다")
+    ck(store.load_named("../process_tree.json") is None, "상위 경로 탈출 차단")
+    ck(store.load_named("없는파일.json") is None, "없는 보관본은 None")
+
+    # 보관은 정본을 건드리지 않는다 — save_named 는 tree_path 에 쓰지 않는다
+    _, rev_before, _ = store.disk_stat()
+    store.save_named(sv, "정본무관", "관리자")
+    _, rev_after, _ = store.disk_stat()
+    ck(rev_before == rev_after, "보관해도 정본 rev 는 그대로 (사본이지 저장이 아니다)")
+
+    ck(store.delete_named(lst30[0]["file"]), "보관본 삭제")
+    ck(not store.delete_named(lst30[0]["file"]), "이미 지운 보관본 재삭제는 False")
+    ck(not store.delete_named("../process_tree.json"), "삭제도 경로 탈출 차단")
+    ck([v["name"] for v in store.list_saves()] == ["정본무관"], "삭제 후 목록에서 빠진다")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

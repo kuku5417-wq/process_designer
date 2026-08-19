@@ -142,6 +142,16 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^\w가-힣.-]", "_", (s or "unknown").strip())[:20] or "unknown"
 
 
+def _safe_label(s: str) -> str:
+    """보관본 이름 → 파일명. `_safe_name` 과 **따로 두는 이유**: 저 함수는 스냅샷 파일명의
+    작성자 조각용이라 20자로 자르는데, 보관본은 사람이 알아볼 이름이라 그 길이로는 잘린다.
+    (`_safe_name` 을 늘리면 스냅샷 파일명 규약 `_SNAP_RE` 가 흔들린다 — 건드리지 않는다.)
+    """
+    out = re.sub(r"[^\w가-힣 .-]", "_", (s or "").strip())
+    out = re.sub(r"\s+", " ", out).strip()[:60]
+    return out
+
+
 def snapshot(author: str) -> Path | None:
     """현재 디스크본을 history/ 로 복사 (pre-image). 파일이 없으면 None."""
     src = pc.tree_path()
@@ -244,6 +254,94 @@ def prune_history(keep_days: int = 90, keep_min: int = 50) -> int:
         except Exception:
             continue
     return removed
+
+
+# ── 이름 붙인 보관본 (saves/) ───────────────────────────
+# 자동 스냅샷(history/)과 목적이 다르다: 저쪽은 "덮어쓰기 직전 상태"를 기계가 남기는 안전망이고,
+# 이쪽은 "2026-08 1차 취합" 처럼 **사람이 의미를 붙여 남기는 기준점**이다. 그래서 자동 정리 대상이
+# 아니고(prune_history 는 history/ 만 본다), 목록에 이름·설명이 뜬다.
+
+def save_named(data: dict, name: str, author: str, overwrite: bool = False) -> SaveResult:
+    """현재 트리를 `saves/<이름>.json` 으로 보관한다.
+
+    ★ **rev 를 올리지 않는다.** 보관본은 정본이 아니라 사본이라, 올리면 정본과 번호가 경합해
+      "디스크가 더 최신" 오판이 난다. 지금 rev 를 참고값으로 그대로 적어 둘 뿐이다.
+    ★ 같은 이름이 있으면 overwrite 없이는 거부한다 — 이름이 곧 식별자라 조용히 덮으면
+      되돌릴 방법이 없다(보관본에는 pre-image 스냅샷이 없다).
+    """
+    if not (author or "").strip():
+        return SaveResult(ok=False, error="저장자를 입력해 주세요.")
+    label = _safe_label(name)
+    if not label:
+        return SaveResult(ok=False, error="보관본 이름을 입력해 주세요.")
+    path = pc.get_saves_dir() / f"{label}.json"
+    if path.exists() and not overwrite:
+        return SaveResult(ok=False, error=f"'{label}' 이름의 보관본이 이미 있습니다.")
+    try:
+        out = schema.normalize(dict(data))
+        out["saved_name"] = label
+        out["saved_at"] = schema.now_iso()
+        out["saved_by"] = author
+        save_json_atomic(out, path)
+    except Exception as e:
+        return SaveResult(ok=False, error=f"보관에 실패했습니다: {e}")
+    audit({"author": author, "rev": int(out.get("rev", 0)), "n_nodes": len(out["nodes"]),
+           "action": "save_as", "name": label})
+    return SaveResult(ok=True, rev=int(out.get("rev", 0)))
+
+
+def list_saves(limit: int = 200) -> list[dict]:
+    """보관본 목록 (최근 보관 순). {file, name, ts, author, rev, n_nodes}."""
+    out: list[dict] = []
+    try:
+        files = list(pc.get_saves_dir().glob("*.json"))
+    except Exception:
+        return out
+    rows = []
+    for f in files:
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue                      # 손상 파일은 목록에서 조용히 빼되 파일은 남긴다
+        if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list):
+            continue
+        rows.append({
+            "file": f.name,
+            "name": str(raw.get("saved_name") or f.stem),
+            "ts": str(raw.get("saved_at") or "").replace("T", " ")[:19],
+            "author": str(raw.get("saved_by") or raw.get("updated_by") or ""),
+            "rev": int(raw.get("rev", 0) or 0),
+            "n_nodes": len(raw["nodes"]),
+        })
+    rows.sort(key=lambda r: r["ts"], reverse=True)
+    return rows[:limit]
+
+
+def load_named(file: str) -> dict | None:
+    """보관본 로드. 경로 조작 방지를 위해 **파일명만** 받는다 (load_snapshot 과 같은 규칙)."""
+    if not file or "/" in file or "\\" in file or ".." in file:
+        return None
+    p = pc.get_saves_dir() / file
+    try:
+        if not p.exists():
+            return None
+        return schema.normalize(json.loads(p.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+
+
+def delete_named(file: str) -> bool:
+    """보관본 삭제. 되돌릴 수 없으므로 호출 측이 확인을 받아야 한다."""
+    if not file or "/" in file or "\\" in file or ".." in file:
+        return False
+    try:
+        p = pc.get_saves_dir() / file
+        if not p.exists():
+            return False
+        p.unlink()
+        return True
+    except Exception:
+        return False
 
 
 # ── 저장 (충돌 검사 포함) ───────────────────────────────

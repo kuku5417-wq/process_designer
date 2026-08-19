@@ -118,6 +118,16 @@ def get_history_dir() -> Path:
     return _ensure(get_process_dir() / "history")
 
 
+def get_saves_dir() -> Path:
+    """이름 붙인 보관본 디렉토리.
+
+    ★ history/ 와 **일부러 분리**한다 — history 는 prune_history 가 90일·최신 50개로 자동 정리하는
+      자동 스냅샷이고, 여기는 사람이 이름을 붙여 남긴 기준점이라 **절대 자동 삭제하지 않는다**.
+      한 폴더에 섞으면 "2026-08 1차 취합" 이 어느 날 조용히 사라진다.
+    """
+    return _ensure(get_process_dir() / "saves")
+
+
 def audit_path() -> Path:
     """저장 감사로그 (append-only jsonl)."""
     return get_history_dir() / "_audit.jsonl"
