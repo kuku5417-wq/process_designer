@@ -211,6 +211,14 @@
 
   /* 아웃라인 */
   .outwrap { flex: 1; display: flex; flex-direction: column; padding: 16px; min-width: 0; }
+  /* 전체보기 전용 — 좌측 트리를 넓힌다. 들여쓰기가 lv7 까지 가면(depth×20px) 이름 칸이 남지
+     않아 lv6·lv7 이 전부 말줄임으로 뭉갰다. 컬럼 보기(.body 에 out 없음)는 컬럼이 스스로 폭을
+     갖고 가로 스크롤을 쓰므로 그대로 둔다 — .panel 규칙을 전역으로 바꾸면 그쪽이 깨진다. */
+  .body.out .panel { flex: 0 1 390px; min-width: 360px; }
+  /* 이름 칸이 남는 폭을 다 쓰게 한다 — 고정폭이면 트리를 넓혀도 이름은 그대로 뭉갠다.
+     flex:1 이라 설명·배지는 오른쪽으로 밀려 붙고, 깊은 들여쓰기에서도 이름이 먼저 산다. */
+  .body.out .rowname { flex: 1 1 auto; min-width: 260px; }
+  .body.out .rowdesc { max-width: 300px; }
   .outcard { flex: 1; background: #fff; border: 1px solid #ece6da; border-radius: 12px; display: flex;
     flex-direction: column; overflow: hidden; min-height: 0; }
   .outhead { display: flex; align-items: center; gap: 10px; padding: 11px 16px;
@@ -1699,6 +1707,26 @@
     }
     return html + "</div>";
   }
+  /** 취합 인원 배지(👥 N명)의 툴팁 — **어느 과가 얼마로 냈는지**.
+   *
+   *  ★ 제출자 **이름은 트리에 저장하지 않는다**(공통규칙 7 최소수집). collect_jsons 가 과만 남기고
+   *    이름은 인원수를 세는 데만 쓰고 버린다. 그래서 여기 뜨는 것은 사람 이름이 아니라 과별 내역이다.
+   *    이름을 보려면 취합 미리보기의 '파일별 상태' 를 봐야 한다(스캔 시점에만 존재).
+   *  ★ 옛 트리·엑셀 왕복본에는 submissions 가 없어 예전의 한 덩어리 요약(submit_detail)으로 폴백한다. */
+  function submitTip(nn) {
+    var recs = (nn.submissions || []).filter(function (r) { return r && r.dept; });
+    if (!recs.length) return nn.submit_detail || "";
+    var lines = recs.map(function (r) {
+      var bits = [r.dept + " " + (r.count || 1) + "명"];
+      if (r.work_hours) bits.push(r.work_hours + "h/회");
+      if (r.freq_unit) bits.push(r.freq_unit + " " + (r.freq_count || "") + "회");
+      if (r.automation_level) bits.push(r.automation_level);
+      if ((r.tech || []).length) bits.push(r.tech.join(", "));
+      return "· " + bits.join(" · ");
+    });
+    return "제출한 과 " + recs.length + "곳 (이름은 저장하지 않습니다)\n" + lines.join("\n");
+  }
+
   function cardHTML(nn, lv) {
     var detail = hasDetail(lv), chips = "";
     if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
@@ -1707,7 +1735,11 @@
     if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
     // 취합 인원수 배지 — lv4~6 어디서나(메인앱 취합 산출물). SOLO 노드는 값이 없어 안 뜬다.
     var _sc = parseInt(nn.submit_count, 10);
-    if (_sc >= 2) chips += '<span class="mc submit">👥 ' + _sc + "명</span>";
+    if (_sc >= 2) {
+      var _tip = submitTip(nn);
+      chips += '<span class="mc submit"' + (_tip ? ' title="' + esc(_tip) + '"' : "")
+             + ">👥 " + _sc + "명</span>";
+    }
     // 개인 배포판 lv6 — 발생패턴·부하·자동화·선종을 카드에 요약해 세부 패널을 짧게 유지한다
     if (SOLO && detail) {
       var _p = occurOf(nn), _pl = { "상시루틴": "상시", "호선루틴": "호선R", "호선이벤트": "이벤트" }[_p] || _p;
@@ -1748,6 +1780,13 @@
         var chips = "";
         if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
         if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
+        // 취합 인원 배지 — 컬럼 보기(cardHTML)에만 있으면 전체보기에서 겹친 업무를 찾을 수 없다.
+        var _osc = parseInt(nn.submit_count, 10);
+        if (_osc >= 2) {
+          var _otip = submitTip(nn);
+          chips += '<span class="mc submit"' + (_otip ? ' title="' + esc(_otip) + '"' : "")
+                 + ">👥 " + _osc + "명</span>";
+        }
         if (kids.length) chips += '<span class="mc kids">▸' + kids.length + "</span>";
         body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + '" style="padding-left:' + (depth * 20) + 'px">'
           + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
@@ -2758,7 +2797,8 @@
     else if (S.activeTab === "manual" && SOLO) body = pageManual();
     else if (S.activeTab === "hist" && !SOLO) body = pageHistory();
     else if (S.activeTab === "chat" && !SOLO && S.chatReady) body = pageChat();
-    else body = '<div class="treewrap">' + crumbBar() + '<div class="body">' + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
+    else body = '<div class="treewrap">' + crumbBar() + '<div class="body' + (S.viewMode === "outline" ? " out" : "") + '">'
+        + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
   }
   function rerender(focusSel) {
