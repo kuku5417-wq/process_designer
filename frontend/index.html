@@ -463,6 +463,12 @@
   .subrow { display: grid; grid-template-columns: 1.15fr .75fr .45fr .45fr .75fr .85fr .75fr 1.4fr; gap: 8px; align-items: center;
             padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
   .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
+  .subrow.editable { cursor: pointer; }
+  .subrow.editable:hover { background: #f7fdfc; }
+  .subrow.picked { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; }
+  .subrow.ro { color: #a8a29e; }            /* 편집 범위 밖 — 위젯을 아예 그리지 않는다 */
+  .subedit { background: #f7fdfc; border-top: 1px solid #cceae4; padding: 12px 14px; }
+  .subedit .segrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
   .fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; }
   .scopebar { margin: 0 16px; padding: 8px 0 0; }
   /* 잠긴 노드 — 보이되 못 만진다. opacity 만으로는 클릭이 통과하므로 pointer-events 도 끈다.
@@ -1019,6 +1025,9 @@
     // 부문 칩 **다중 선택**(id 배열). 빈 배열 = 아무 부문도 안 고른 상태(컬럼이 비어 있음).
     // S.sel[3] 은 '컬럼 드릴다운 중인 부문' 이라 역할이 다르다 — 정확히 하나 골랐을 때만 채운다.
     lv3Sel: [],
+    // 지금 펼쳐 편집 중인 과별 제출값 행 {id, idx}. 순수 뷰 상태라 **emit·저장하지 않는다**
+    // (S.sumPick/S.fDept 와 같은 성격 — 파이썬으로 내리면 tree_epoch 이 올라 미저장 편집이 사라진다).
+    subEdit: null,
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -1138,6 +1147,35 @@
     actUpdate(id, key, a);
   }
   /** 연계시스템 다건 — 줄 추가/삭제/수정. system=onChange, detail=applyInput(model-only). */
+  /** 과별 제출값 1건의 필드 수정. actLinkSet 과 같은 규칙 —
+   *  **모델만 갱신하고 rerender 하지 않는다**(키 입력마다 그리면 포커스된 input 이 파괴돼 글자가 사라진다).
+   *  칸을 벗어날 때 BLUR_SYNC 가 한 번 다시 그려 부하 열·합계 문구·배지를 동기화한다. */
+  function actSubSet(id, idx, key, val) {
+    var n = byId(id), r = n && (n.submissions || [])[idx];
+    if (!r) return;
+    r[key] = val;
+    if (key === "tech") r.has_ai_agent = aiOf(val);
+    if (key === "future_tech") r.has_ai_future = aiOf(val);
+    markDirty(id);
+  }
+  /** 레코드 토글(칩) — 배열 필드용. 즉시 다시 그린다(칩 상태가 바로 보여야 한다). */
+  function actSubToggle(id, idx, key, v) {
+    var n = byId(id), r = n && (n.submissions || [])[idx];
+    if (!r) return;
+    var a = (r[key] || []).slice(), i = a.indexOf(v);
+    if (i >= 0) a.splice(i, 1); else a.push(v);
+    actSubSet(id, idx, key, a);
+    rerender();
+  }
+  /** 레코드 삭제. **즉시 rerender** — 안 그러면 idx 가 밀려 다음 조작이 옆 행을 건드린다. */
+  function actSubDel(id, idx) {
+    var n = byId(id);
+    if (!n || !(n.submissions || [])[idx]) return;
+    n.submissions.splice(idx, 1);
+    S.subEdit = null;
+    markDirty(id);
+    rerender();
+  }
   function actLinkAdd(id) { var n = byId(id); if (!n) return; if (!Array.isArray(n.linked_systems)) n.linked_systems = []; n.linked_systems.push({ system: "", detail: "" }); markDirty(id); rerender(); }
   function actLinkDel(id, idx) { var n = byId(id); if (!n || !n.linked_systems) return; n.linked_systems.splice(idx, 1); markDirty(id); rerender(); }
   function actLinkSet(id, idx, key, val) { var n = byId(id); if (!n || !n.linked_systems || !n.linked_systems[idx]) return; n.linked_systems[idx][key] = val; markDirty(id); }
@@ -2813,8 +2851,71 @@
                      : all.filter(function (n) { return S.lv3Sel.indexOf(n.id) >= 0; });
   }
 
+  /** 이 **제출값 레코드**를 고칠 수 있는가.
+   *  노드 게이트(canEdit)를 먼저 통과해야 하고, 편집 범위가 걸려 있으면 **그 과의 행만** 허용한다.
+   *  ★ 게이트 '장소' 를 늘리지 않는다 — 판정만 여기 두고, 실제 차단은 기존 세 지점(onClick/
+   *    applyInput/onChange)에 절 하나씩 얹는다(CLAUDE.md 계약). */
+  function canEditSub(n, rec) {
+    if (!n || !rec || !canEdit(n)) return false;
+    if (!scopeOn()) return true;
+    return S.eDept ? rec.dept === S.eDept : deptParent(rec.dept) === S.eGroup;
+  }
+  function canEditSubIdx(id, idx) {
+    var n = byId(id), r = n && (n.submissions || [])[idx];
+    return !!r && canEditSub(n, r);
+  }
+  function subLockMsg() {
+    return "🔒 " + (S.eDept || S.eGroup) + " 의 제출값만 고칠 수 있습니다";
+  }
   function lockMsg() {
     return "🔒 " + (S.eDept || S.eGroup) + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
+  }
+
+  /** 과별 제출값 1건 편집 블록(아코디언). 표 7열 안에 칩을 넣으면 폭이 무너져 아래로 펼친다.
+   *
+   *  ★ 편집 대상에서 **일부러 뺀 것**: `count`(인원 수정 = 통계 위조이고 sum(count)==submit_count
+   *    불변식이 깨진다), `occur_pattern`/`events`/`apply_phases`(개인 배포판 입력 전용이고
+   *    events 는 줄 수가 곧 호선당 횟수라 편집 표면이 크다), 행 추가(취합 산출물이다).
+   *  ★ 두 가지 비대칭을 여기서 말해준다 — 없으면 문의가 반드시 온다. */
+  function subEditBlock(n, r, idx) {
+    var id = esc(n.id), ix = String(idx);
+    var seg = function (label, inner) { return '<div><div class="fl">' + label + "</div>" + inner + "</div>"; };
+    var autoOpts = ['<option value="">— 선택 —</option>'].concat(
+      (S.domains.automation_level || []).map(function (v) {
+        return '<option value="' + esc(v) + '"' + (r.automation_level === v ? " selected" : "") + ">" + esc(v) + "</option>";
+      })).join("");
+    var freqChips = FREQ_UNIT_KEYS.map(function (u) {
+      return '<button class="tchip' + (r.freq_unit === u ? " on" : "") + '" data-act="subfreq" data-id="' + id
+        + '" data-idx="' + ix + '" data-v="' + esc(u) + '">' + esc(u) + "</button>";
+    }).join("");
+    var techChips = function (key, sel) {
+      return (S.domains.tech || []).map(function (t) {
+        var on = (sel || []).indexOf(t) >= 0;
+        return '<button class="tchip' + (on ? " on" : "") + '" data-act="subtech" data-id="' + id
+          + '" data-idx="' + ix + '" data-k="' + esc(key) + '" data-v="' + esc(t) + '">' + esc(t) + "</button>";
+      }).join("");
+    };
+    return '<div class="subedit"><div style="font-size:13.5px;font-weight:800;color:#0f766e;margin-bottom:10px">'
+      + "✎ " + esc(r.dept) + (r.author ? " · " + esc(maskName(r.author)) : "") + " 의 제출값을 고칩니다</div>"
+      + '<div class="segrid">'
+      + seg("1회 소요시간(h)", '<input class="fi" data-fkey="sub_work_hours" data-id="' + id + '" data-idx="' + ix
+            + '" value="' + esc(r.work_hours || "") + '" placeholder="예: 0.5" />')
+      + seg("단위당 횟수", '<input class="fi" data-fkey="sub_freq_count" data-id="' + id + '" data-idx="' + ix
+            + '" value="' + esc(r.freq_count || "") + '" placeholder="예: 3" />')
+      + seg("자동화 수준", '<select class="fs" data-fkey="sub_automation_level" data-id="' + id + '" data-idx="' + ix + '">' + autoOpts + "</select>")
+      + "</div>"
+      + '<div style="margin-top:12px">' + seg("기간 단위 <span style=\'color:#a8a29e;font-weight:600\'>· 택1</span>",
+            '<div class="techrow">' + freqChips + "</div>") + "</div>"
+      + '<div style="margin-top:12px">' + seg("활용기술 — 현재", '<div class="techrow">' + techChips("tech", r.tech) + "</div>") + "</div>"
+      + '<div style="margin-top:12px">' + seg("활용기술 — 향후", '<div class="techrow">' + techChips("future_tech", r.future_tech) + "</div>") + "</div>"
+      + '<div class="warn" style="margin-top:12px;font-size:13px">'
+      + "· 이 값은 <b>과별 비교</b>에만 반영됩니다. 상단 KPI·AI 적용률은 <b>대표값</b> 기준이라 바뀌지 않습니다.<br/>"
+      + "· <b>다음 취합 스캔에서 제출본 값으로 다시 덮어씁니다</b>(한 회차 = 그 시점의 진실). "
+      + "영구히 바꾸려면 제출본을 고쳐 다시 받으세요.</div>"
+      + '<div style="display:flex;gap:8px;margin-top:12px">'
+      + '<button class="minibtn" data-act="subclose">닫기</button>'
+      + '<button class="minibtn" style="color:#b91c1c" data-act="subdel" data-id="' + id + '" data-idx="' + ix + '">🗑 이 제출값 삭제</button>'
+      + "</div></div>";
   }
 
   /** 부하 표시 문자열 — loadOf 의 kind 를 그대로 살린다.
@@ -2835,11 +2936,16 @@
     if (!recs.length) return "";
     var head = '<div class="subrow subhead"><span>과</span><span>제출자</span><span>인원</span><span>1회</span>'
              + "<span>주기</span><span>부하</span><span>자동화</span><span>활용기술</span></div>";
-    var rows = recs.map(function (r) {
+    var pick = (S.subEdit && S.subEdit.id === n.id) ? S.subEdit.idx : -1;
+    if (pick >= 0 && !recs[pick]) pick = -1;                 // 삭제·재취합으로 밀린 stale 방어
+    var rows = recs.map(function (r, i) {
+      var ok = canEditSub(n, r);
       var freq = r.freq_unit ? (r.freq_unit + " " + (r.freq_count || "") + "회")
                : (occurOf(r) === OCCUR.SHIP_EVENT ? ((r.events || []).length + "개 시점") : "—");
       var techs = (r.tech || []).concat((r.future_tech || []).map(function (t) { return t + "(향후)"; }));
-      return '<div class="subrow">'
+      var row = '<div class="subrow' + (ok ? " editable" : " ro") + (i === pick ? " picked" : "") + '"'
+        + (ok ? ' data-act="subpick" data-id="' + esc(n.id) + '" data-idx="' + i + '" title="클릭하면 이 행을 고칩니다"' : ' title="편집 범위 밖입니다"')
+        + ">"
         + "<span><b>" + esc(r.dept) + '</b><br><span style="color:#a8a29e;font-size:12px">'
         + esc(deptParent(r.dept)) + "</span></span>"
         // 제출자 — **출력은 마스킹**한다(pii 원칙: 저장 원본·출력 마스킹). 편집 대상이 아니라 행 라벨이다.
@@ -2849,7 +2955,8 @@
         + "<span>" + esc(freq) + "</span>"
         + "<span>" + esc(loadLabel(r)) + "</span>"
         + "<span>" + esc(r.automation_level || "—") + "</span>"
-        + "<span>" + (techs.length ? esc(techs.join(", ")) : "—") + "</span></div>";
+        + "<span>" + (techs.length ? esc(techs.join(", ")) : "—") + (ok ? ' <span style="color:#0f766e">✎</span>' : "") + "</span></div>";
+      return row + (i === pick ? subEditBlock(n, r, i) : "");
     }).join("");
     // 대표값 vs 과별 합계 — **다른 게 정상**임을 여기 적어둔다. 요약 탭 UNIT_NOTE 와 같은 이유로,
     // 이 문구가 없으면 "숫자가 안 맞는다"는 문의가 반드시 나온다.
@@ -2866,7 +2973,7 @@
         + "합계는 <b>수행 과 전부의 합</b>이라 다른 것이 정상입니다.</div>";
     return '<div style="margin-top:12px"><div class="fl">🏢 과별 제출값 '
       + '<span style="color:#a8a29e;font-weight:600">· ' + recs.length
-      + "개 과 제출 (취합 원본 · 읽기전용 · 소속은 스캔 폴더 기준)</span></div>"
+      + "건 제출 (소속은 스캔 폴더 기준 · <b>행을 클릭하면 고칠 수 있습니다</b>)</span></div>"
       + '<div class="cardbox">' + head + rows + "</div>" + note + "</div>";
   }
 
@@ -3189,8 +3296,14 @@
     //   액션마다 조건을 흩뿌리면 새 액션이 생길 때 조용히 새어 나간다. 새 편집 액션을 추가하면
     //   이 목록에도 반드시 넣을 것. (select 는 허용 — 내용은 읽을 수 있어야 한다. add 는 아래 별도 처리.)
     var EDIT_ACTS = { del: 1, copy: 1, tech: 1, ftech: 1, mchip: 1, freqchip: 1, occur: 1,
-                      evadd: 1, evdel: 1, lsadd: 1, lsdel: 1 };
+                      evadd: 1, evdel: 1, lsadd: 1, lsdel: 1,
+                      // 과별 제출값 편집도 **노드 게이트를 먼저** 통과해야 한다
+                      subdel: 1, subtech: 1, subfreq: 1 };
     if (EDIT_ACTS[a] && d.id && !canEdit(byId(d.id))) return flash(lockMsg());
+    // 레코드 단위 게이트 — 편집 범위가 걸리면 **그 과의 행만**. 판정은 canEditSub 하나가 정본이고
+    // 여기는 절 하나만 얹는다(게이트 '장소' 를 늘리지 않는다는 계약).
+    var SUB_ACTS = { subdel: 1, subtech: 1, subfreq: 1, subpick: 1 };
+    if (SUB_ACTS[a] && !canEditSubIdx(d.id, +d.idx)) return flash(subLockMsg());
     // 추가는 허용하되, 과를 안 고르면 새 업무에 소속을 줄 수 없어 만들자마자 잠긴다 — 미리 막는다.
     if (a === "add" && scopeOn() && !S.eDept && hasDetail(+d.lv))
       return flash("새 업무를 추가하려면 편집 범위에서 **과**까지 고르세요");
@@ -3211,6 +3324,20 @@
     else if (a === "mchip") actToggleMulti(d.id, d.k, d.v);      // 선종·특이사항·구간 복수 선택
     else if (a === "lsadd") actLinkAdd(d.id);                    // 연계시스템 줄 추가
     else if (a === "lsdel") actLinkDel(d.id, +d.idx);
+    // 과별 제출값 — 행 펼치기 / 칩 토글 / 기간단위 / 삭제 (게이트는 위에서 이미 통과)
+    else if (a === "subpick") {
+      var same = S.subEdit && S.subEdit.id === d.id && S.subEdit.idx === +d.idx;
+      S.subEdit = same ? null : { id: d.id, idx: +d.idx };
+      rerender();
+    }
+    else if (a === "subclose") { S.subEdit = null; rerender(); }
+    else if (a === "subtech") actSubToggle(d.id, +d.idx, d.k, d.v);
+    else if (a === "subfreq") {
+      var _n = byId(d.id), _r = _n && (_n.submissions || [])[+d.idx];
+      actSubSet(d.id, +d.idx, "freq_unit", (_r && _r.freq_unit === d.v) ? "" : d.v);   // 재클릭 = 해제
+      rerender();
+    }
+    else if (a === "subdel") actSubDel(d.id, +d.idx);
     else if (a === "freqchip") actSetFreqUnit(d.id, d.v);        // 기간 단위 택1
     else if (a === "occur") actSetOccur(d.id, d.v);
     else if (a === "evadd") actEvAdd(d.id);                      // 호선이벤트 시점 추가
@@ -3346,6 +3473,14 @@
     // ★ 편집 잠금 게이트(타이핑 쪽). 이름·설명·숫자 등 모든 노드 필드가 data-id 를 달고 오므로
     //   여기 한 겹이면 위젯이 늘어도 새지 않는다. 화면을 원래 값으로 되돌리려고 rerender 를 먼저 부른다.
     if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
+    // ★ 과별 제출값 입력도 여기서 막는다. onChange 만 막으면 **타이핑으로 새어 나간다**
+    //   (BLUR_SYNC 분기가 canEdit 게이트보다 위에 있는 것과 같은 이유).
+    if (f.indexOf("sub_") === 0) {
+      if (!canEditSubIdx(el.dataset.id, +el.dataset.idx)) { rerender(); return flash(subLockMsg()); }
+      // 숫자를 parseFloat 로 스냅하지 않는다 — "0." 이 "0" 이 돼 소수점을 못 친다(공통 규칙).
+      actSubSet(el.dataset.id, +el.dataset.idx, f.slice(4), el.value);
+      return;
+    }
     if (f === "chatq") { S.chatQ = el.value; return; }                   // 질문 — 모델만(rerender 하면 타이핑이 끊긴다)
     // ★ 모든 자유 텍스트/숫자 입력은 **모델만 갱신하고 rerender 하지 않는다**. 키 입력마다
     //   rerender 하면 contentEl.innerHTML 이 통째로 갈려 포커스된 input 이 파괴돼 글자가 사라진다.
@@ -3397,7 +3532,9 @@
   }
   // 타이핑 중엔 모델만 갱신하고, 블러(change) 때 rerender 로 동기화하는 자유 텍스트/숫자 필드들.
   var BLUR_SYNC = { name: 1, desc: 1, outputs: 1, linked_system_detail: 1, ls_detail: 1,
-                    work_hours: 1, annual_count: 1, freq_count: 1, ev_offset_start: 1, ev_offset_days: 1 };
+                    work_hours: 1, annual_count: 1, freq_count: 1, ev_offset_start: 1, ev_offset_days: 1,
+                    // 과별 제출값 숫자 — 벗어날 때 한 번 그려야 부하 열·합계 문구·👥 배지가 맞는다
+                    sub_work_hours: 1, sub_freq_count: 1 };
   // change = 값이 확정된 시점(칸을 벗어나거나 Enter). select/checkbox 와 도메인 값 입력이 여기 온다.
   function onChange(e) {
     var el = e.target.closest("[data-fkey]"); if (!el) return;
@@ -3433,6 +3570,12 @@
     if (f === "edept") { S.eDept = el.value; rerender(); return; }
     // ★ 편집 잠금 게이트(select·체크박스 쪽). 타이핑은 applyInput 이 막고 여기는 그 밖의 위젯을 막는다.
     if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
+    if (f.indexOf("sub_") === 0) {          // 과별 제출값 select (자동화 수준 등)
+      if (!canEditSubIdx(el.dataset.id, +el.dataset.idx)) { rerender(); return flash(subLockMsg()); }
+      actSubSet(el.dataset.id, +el.dataset.idx, f.slice(4), el.value);
+      rerender();
+      return;
+    }
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
     if (f === "ls_system") { actLinkSet(el.dataset.id, +el.dataset.idx, "system", el.value); rerender(); return; }
     if (f === "dept" || f === "automation_level" || f === "linked_system")
