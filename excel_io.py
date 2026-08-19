@@ -179,12 +179,12 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-SUBMIT_COLS: list[str] = (["lv3", "lv4", "lv5", "lv6", "lv7", "과", "상위부서", "인원"]
+SUBMIT_COLS: list[str] = (["lv3", "lv4", "lv5", "lv6", "lv7", "과", "제출자", "상위부서", "인원"]
                           + ["발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
                              "자동화수준", "현재기술", "향후기술", "산출물", "적용선종", "특이사항"])
 
 
-def _submission_df(data: dict) -> pd.DataFrame:
+def _submission_df(data: dict, mask: bool = True) -> pd.DataFrame:
     """제출상세 시트 — **1행 = (업무 × 제출한 과)**.
 
     계층도 시트에 행을 늘려 담을 수 없다: 그 시트는 parse_excel 의 입력이고, 같은 이름 경로가
@@ -206,6 +206,10 @@ def _submission_df(data: dict) -> pd.DataFrame:
                 if i < len(names):
                     row[f"lv{i}"] = names[i]
             row["과"] = r.get("dept", "")
+            # 제출자는 **출력에서 마스킹**한다(계층도 시트의 저장자 열과 같은 규칙).
+            # ★ mask 를 안 받고 원본을 내면 build_xlsx(mask=True) 인데 이 시트만 실명이 나간다.
+            _au = r.get("author", "")
+            row["제출자"] = (mask_name(_au) if mask else _au)
             row["상위부서"] = schema.dept_parent(r.get("dept"))
             row["인원"] = r.get("count", 1)
             row["발생패턴"] = r.get("occur_pattern", "")
@@ -235,7 +239,7 @@ def build_xlsx(data: dict, mask: bool = True) -> bytes:
             dom.to_excel(xw, sheet_name=SHEET_DOMAIN, index=False, freeze_panes=(1, 0))
         _summary_df(data, mask=mask).to_excel(xw, sheet_name=SHEET_SUMMARY, index=False, freeze_panes=(1, 0))
         # 과별 제출값이 하나도 없으면(취합 전 트리) 시트를 만들지 않는다 — _domain_df 와 같은 규칙.
-        sub = _submission_df(data)
+        sub = _submission_df(data, mask=mask)
         if not sub.empty:
             sub.to_excel(xw, sheet_name=SHEET_SUBMIT, index=False, freeze_panes=(1, 0))
 
@@ -524,44 +528,26 @@ def _submitter_of(payload: dict, filename: str) -> tuple[str, str]:
     return dept or "미상", author or "미상"
 
 
-_FREQ_LABEL = {"일": "일", "주": "주", "월": "월", "분기": "분기", "년": "년"}
+# `_detail_summary`·`_FREQ_LABEL` 은 **schema 로 옮겼다** — normalize 가 submit_detail 을
+# 재생성해야 하는데(레코드를 고치면 취합 시점 요약이 즉시 낡는다) schema 는 excel_io 를 import 할 수
+# 없기 때문이다(방향은 excel_io → schema 단방향).
+_detail_summary = schema.detail_summary
 
 
-def _detail_summary(n: dict) -> str:
-    """lv6 세부업무의 핵심 상세값 한 줄 요약 — **이름은 넣지 않는다**(부서 기준 취합).
-
-    예: '소요 0.5h · 주 3회 · 부분자동 · AI'. 값이 없으면 해당 조각을 생략한다.
-    """
-    parts: list[str] = []
-    wh = str(n.get("work_hours") or "").strip()
-    if wh:
-        parts.append(f"소요 {wh}h")
-    unit, cnt = str(n.get("freq_unit") or "").strip(), str(n.get("freq_count") or "").strip()
-    if unit and cnt:
-        parts.append(f"{_FREQ_LABEL.get(unit, unit)} {cnt}회")
-    elif unit:
-        parts.append(_FREQ_LABEL.get(unit, unit))
-    auto = str(n.get("automation_level") or "").strip()
-    if auto:
-        parts.append(auto)
-    if n.get("has_ai_agent"):
-        parts.append("AI")
-    tech = [t for t in (n.get("tech") or []) if t]
-    if tech:
-        parts.append("기술: " + ", ".join(tech))
-    return " · ".join(parts)
-
-
-def _submission_record(n: dict, dept: str) -> dict:
+def _submission_record(n: dict, dept: str, author: str = "") -> dict:
     """lv6 노드 + 제출 과 → **부서별 제출값 레코드 1건**.
 
     ★ 필드를 손으로 나열하지 않고 `schema.SUBMISSION_FIELDS` 를 돈다 — 상세 필드가 늘 때
       레코드 쪽만 조용히 빠지는 사고를 구조적으로 막는다(occur_pattern/events 전례).
-    ★ 제출자 이름·파일명은 담지 않는다(개인정보 최소수집). 연간공수 같은 곱한 값도 담지 않는다.
+    ★ **제출자 이름은 담는다**(원본 저장 · 출력만 마스킹 — pii.py 원칙, `updated_by` 와 동급).
+      같은 과에서 두 사람이 다른 값을 내면 표에 두 줄이 뜨는데, 이름이 없으면 어느 줄이 누구 것인지
+      알 수 없어 고칠 수가 없다. **파일명은 담지 않는다.** 연간공수 같은 곱한 값도 담지 않는다.
     최종 형태(빈 값 키 제거·같은 값 합산)는 `schema._norm_submissions` 가 확정하므로
     여기서는 **count=1 짜리 원본 1건**만 만든다.
     """
     rec: dict = {"dept": dept, "count": 1}
+    if (author or "").strip():
+        rec["author"] = author.strip()
     for k in schema.SUBMISSION_FIELDS:
         v = n.get(k)
         if isinstance(v, list):
@@ -725,7 +711,7 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                 # 과별 제출값 원본 — 대표값(첫 제출자 승리)이 덮어버리는 나머지 과의
                 # 소요시간·주기·자동화·기술을 여기 보존한다. submit_detail 은 이것의 요약이라
                 # 둘 다 남긴다(옛 트리·엑셀 왕복본은 submit_detail 만 갖고 있다).
-                subs_recs.setdefault(path, []).append((dept, author, _submission_record(n, dept)))
+                subs_recs.setdefault(path, []).append((dept, author, _submission_record(n, dept, author)))
                 summ = _detail_summary(n)
                 if summ:
                     details.setdefault(path, []).append(f"{dept} · {summ}")

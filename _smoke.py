@@ -22,6 +22,7 @@ import path_config as pc      # noqa: E402
 import schema                 # noqa: E402
 import store                  # noqa: E402
 import excel_io               # noqa: E402
+import pii                    # noqa: E402
 
 _fails: list[str] = []
 _n = 0
@@ -931,8 +932,14 @@ def main() -> int:
        "과별 활용기술도 분리 보존")
     ck(sum(r["count"] for r in subs29) == int(l6_29["submit_count"]),
        "sum(rec.count) == submit_count 불변식")
-    ck("홍길동" not in json.dumps(subs29, ensure_ascii=False),
-       "제출자 이름은 레코드에 저장되지 않는다 (개인정보 최소수집)")
+    # 이름 정책이 뒤집혔다: 같은 과에서 값이 갈릴 때 누가 낸 건지 알아야 고칠 수 있어서,
+    # **레코드에는 원본을 저장하고 출력에서만 마스킹**한다(pii.py 원칙 · updated_by 와 동급).
+    ck(subs29[0].get("author") == "홍길동", "제출자 이름을 레코드에 저장한다 (출력은 마스킹)")
+    _re29 = schema.normalize({"nodes": [dict(n) for n in m29["nodes"]], "domains": dict(m29["domains"])})
+    _re6 = [n for n in _re29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck([r.get("author") for r in _re6["submissions"]] == [r.get("author") for r in subs29],
+       "★ normalize 를 다시 통과해도 author 가 살아남는다 (rec 재구성에서 증발하기 쉬운 지점)")
+    ck(pii.mask_name("홍길동") == "홍*동", "mask_name 은 가운데를 가린다")
     ck(not any("annual_hours" in r for r in subs29), "곱한 값(annual_hours)은 저장하지 않는다")
     ck(schema.annual_hours(subs29[0]) > 0, "레코드에도 annual_hours 계산이 그대로 동작한다")
     ck(schema.submission_of(l6_29, "선장운전1과")["work_hours"] == "2", "submission_of 로 과별 값 조회")
@@ -967,8 +974,19 @@ def main() -> int:
          ("시운전1부/기장운전1과/프로세스_B_20260819.json", _mkf29("김철수", "0.5", ["RPA"]))],
         schema.bootstrap())
     l6S29 = [n for n in mS29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
-    ck(len(l6S29["submissions"]) == 1 and l6S29["submissions"][0]["count"] == 2,
-       "같은 과가 **같은 값**을 내면 레코드 1건 + 인원 2 (이름 없이 인원 보존)")
+    # 서명에 author 가 들어가므로 **같은 과·같은 값이라도 사람이 다르면 레코드가 갈린다.**
+    # 이게 편집의 전제다 — 한 행을 고쳐 다른 행과 값이 같아져도 합쳐져 사라지지 않는다.
+    ck(len(l6S29["submissions"]) == 2 and all(r["count"] == 1 for r in l6S29["submissions"]),
+       f"같은 과·같은 값이라도 사람이 다르면 레코드 2건·각 1명 (실제 {len(l6S29['submissions'])}건)")
+    ck({r["dept"] for r in l6S29["submissions"]} == {"기장운전1과"}, "두 레코드의 과는 같다")
+    ck(sorted(r.get("author") for r in l6S29["submissions"]) == ["김철수", "홍길동"],
+       "두 레코드의 제출자는 다르다")
+    ck(sum(r["count"] for r in l6S29["submissions"]) == int(l6S29["submit_count"]),
+       "사람별로 갈려도 sum(count) == submit_count 는 유지된다")
+    # 병합 코드는 죽지 않았다 — 재정규화 멱등 가드로 남는다(같은 리스트를 두 번 돌려도 안 늘어남)
+    _twice = schema.normalize({"nodes": [dict(n) for n in mS29["nodes"]], "domains": dict(mS29["domains"])})
+    _t6 = [n for n in _twice["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(len(_t6["submissions"]) == 2, "재정규화해도 레코드가 늘지 않는다 (멱등 가드 생존)")
     m29b, _, _ = excel_io.collect_jsons([fA29, fB29], m29)
     l6b29 = [n for n in m29b["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
     ck(l6b29["submissions"] == subs29, "재취합 멱등 — submissions 불변")
@@ -993,6 +1011,48 @@ def main() -> int:
     ck(len(excel_io._submission_df(m29)) == sum(len(schema.submissions_of(n)) for n in m29["nodes"]),
        "제출상세 시트 행수 == Σ len(submissions)")
     ck(excel_io._submission_df(schema.bootstrap()).empty, "취합 전 트리는 제출상세 시트를 만들지 않는다")
+    ck("제출자" in excel_io.SUBMIT_COLS, "제출상세 시트에 제출자 열이 있다")
+    _don = excel_io._submission_df(m29, mask=True)
+    _doff = excel_io._submission_df(m29, mask=False)
+    ck("홍길동" not in list(_don["제출자"]) and "홍*동" in list(_don["제출자"]),
+       "★ mask=True 면 제출자가 마스킹된다")
+    ck("홍길동" in list(_doff["제출자"]), "mask=False 면 원본 (편집·대조용)")
+    ck("홍길동".encode("utf-8") not in excel_io.build_xlsx(m29, mask=True),
+       "★ build_xlsx(mask=True) 산출물 어디에도 원본 이름이 없다 (시트 간 마스킹 정합)")
+    # 옛 레코드(author 없음)도 통과해야 한다
+    _old29 = schema.normalize({"nodes": [{"id": "o9", "parent_id": "__root__", "level": 6, "name": "옛",
+                                          "submissions": [{"dept": "기장운전1과", "work_hours": "1"}]}]})
+    ck(_old29["nodes"][0]["submissions"][0].get("author") is None,
+       "author 없는 옛 레코드도 그대로 통과한다 (키를 억지로 만들지 않는다)")
+    # submit_detail 은 취합 요약이라 **이름이 없어야 한다** — chat_context 를 타고 LLM 으로 나간다
+    ck("홍길동" not in (l6_29.get("submit_detail") or ""),
+       "★ submit_detail(LLM 컨텍스트 경유)에는 이름을 넣지 않는다")
+    ck(schema.detail_summary is not None and "_detail_summary" in dir(excel_io),
+       "detail_summary 는 schema 가 갖고 excel_io 는 위임한다")
+    # 취합 산출물 2종은 이제 **레코드로부터 파생**된다 — 레코드를 고치면 요약이 따라와야 한다.
+    _ed29 = copy.deepcopy(m29)
+    _e6 = [n for n in _ed29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    _e6["submissions"][0]["work_hours"] = "9.5"
+    _ed29 = schema.normalize(_ed29)
+    _e6 = [n for n in _ed29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck("소요 9.5h" in _e6["submit_detail"], "레코드를 고치면 submit_detail 이 따라온다")
+    ck("홍길동" not in _e6["submit_detail"], "재생성된 요약에도 이름이 없다")
+    ck(schema.stats(_ed29) == schema.stats(m29),
+       "★ 레코드를 고쳐도 KPI 는 불변 — stats 는 submissions 를 읽지 않는다")
+    ck("9.5" in list(excel_io._submission_df(_ed29)["1회소요시간(h)"].astype(str)),
+       "제출상세 시트에도 편집값이 반영된다")
+    # 1건만 남기면 N≥2 규칙에 걸려 배지가 사라져야 한다
+    _dl29 = copy.deepcopy(m29)
+    _d6 = [n for n in _dl29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    _d6["submissions"] = _d6["submissions"][:1]
+    _d6 = [n for n in schema.normalize(_dl29)["nodes"]
+           if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(_d6["submit_count"] == "", "레코드가 1건이면 submit_count 는 비운다 (N≥2 규칙)")
+    # submissions 가 없는 옛 트리는 두 필드를 그대로 보존한다
+    _old4 = schema.normalize({"nodes": [{"id": "o4", "parent_id": "__root__", "level": 6, "name": "옛",
+                                         "submit_count": "5", "submit_detail": "옛 요약"}]})
+    ck(_old4["nodes"][0]["submit_count"] == "5" and _old4["nodes"][0]["submit_detail"] == "옛 요약",
+       "submissions 없는 옛 트리는 취합 산출물을 건드리지 않는다")
     m29_nosub = copy.deepcopy(m29)
     for _n29 in m29_nosub["nodes"]:
         _n29["submissions"] = []

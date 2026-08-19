@@ -460,7 +460,7 @@
   .verrow { display: grid; grid-template-columns: .5fr 1.4fr 1fr .7fr auto auto; gap: 8px; align-items: center;
             padding: 6px 14px; font-size: 13.5px; }
   .saverow .sbtn:hover { filter: brightness(.96); }
-  .subrow { display: grid; grid-template-columns: 1.3fr .5fr .5fr .8fr .9fr .8fr 1.6fr; gap: 8px; align-items: center;
+  .subrow { display: grid; grid-template-columns: 1.15fr .75fr .45fr .45fr .75fr .85fr .75fr 1.4fr; gap: 8px; align-items: center;
             padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
   .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
   .fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; }
@@ -1835,14 +1835,16 @@
     var recs = (nn.submissions || []).filter(function (r) { return r && r.dept; });
     if (!recs.length) return nn.submit_detail || "";
     var lines = recs.map(function (r) {
-      var bits = [r.dept + " " + (r.count || 1) + "명"];
+      var bits = [r.dept + (r.author ? " " + maskName(r.author) : "") + " " + (r.count || 1) + "명"];
       if (r.work_hours) bits.push(r.work_hours + "h/회");
       if (r.freq_unit) bits.push(r.freq_unit + " " + (r.freq_count || "") + "회");
       if (r.automation_level) bits.push(r.automation_level);
       if ((r.tech || []).length) bits.push(r.tech.join(", "));
       return "· " + bits.join(" · ");
     });
-    return "제출한 과 " + recs.length + "곳 (이름은 저장하지 않습니다)\n" + lines.join("\n");
+    var dl = [];
+    recs.forEach(function (r) { if (dl.indexOf(r.dept) < 0) dl.push(r.dept); });
+    return "제출 " + recs.length + "건 · " + dl.length + "개 과 (이름은 마스킹해 표시합니다)\n" + lines.join("\n");
   }
 
   function cardHTML(nn, lv) {
@@ -1854,7 +1856,13 @@
     if (detail && (nn.tech || []).length > 2) chips += '<span class="mc n">+' + ((nn.tech.length) - 2) + "</span>";
     if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
     // 취합 인원수 배지 — lv4~6 어디서나(메인앱 취합 산출물). SOLO 노드는 값이 없어 안 뜬다.
-    var _sc = parseInt(nn.submit_count, 10);
+    // ★ submissions 가 있으면 **그쪽 인원 합**이 정본이다 — 레코드를 고치거나 지워도 배지가 즉시
+    //   따라온다(파이썬 normalize 도 같은 규칙으로 submit_count 를 재생성한다).
+    //   submissions 가 없는 옛 트리·엑셀 왕복본은 저장된 submit_count 로 폴백한다.
+    var _recs = (nn.submissions || []).filter(function (r) { return r && r.dept; });
+    var _sc = _recs.length
+      ? _recs.reduce(function (a, r) { return a + (parseInt(r.count, 10) || 1); }, 0)
+      : parseInt(nn.submit_count, 10);
     if (_sc >= 2) {
       var _tip = submitTip(nn);
       chips += '<span class="mc submit"' + (_tip ? ' title="' + esc(_tip) + '"' : "")
@@ -1906,7 +1914,10 @@
         if (detail && nn.has_ai_agent) chips += '<span class="mc ai">AI</span>';
         if (detail && nn.dept) chips += '<span class="mc dept">' + esc(nn.dept) + "</span>";
         // 취합 인원 배지 — 컬럼 보기(cardHTML)에만 있으면 전체보기에서 겹친 업무를 찾을 수 없다.
-        var _osc = parseInt(nn.submit_count, 10);
+        var _orecs = (nn.submissions || []).filter(function (r) { return r && r.dept; });
+        var _osc = _orecs.length
+          ? _orecs.reduce(function (a, r) { return a + (parseInt(r.count, 10) || 1); }, 0)
+          : parseInt(nn.submit_count, 10);
         if (_osc >= 2) {
           var _otip = submitTip(nn);
           chips += '<span class="mc submit"' + (_otip ? ' title="' + esc(_otip) + '"' : "")
@@ -2822,7 +2833,7 @@
   function submissionsTable(n) {
     var recs = (n.submissions || []).filter(function (r) { return r && r.dept; });
     if (!recs.length) return "";
-    var head = '<div class="subrow subhead"><span>과</span><span>인원</span><span>1회</span>'
+    var head = '<div class="subrow subhead"><span>과</span><span>제출자</span><span>인원</span><span>1회</span>'
              + "<span>주기</span><span>부하</span><span>자동화</span><span>활용기술</span></div>";
     var rows = recs.map(function (r) {
       var freq = r.freq_unit ? (r.freq_unit + " " + (r.freq_count || "") + "회")
@@ -2831,6 +2842,8 @@
       return '<div class="subrow">'
         + "<span><b>" + esc(r.dept) + '</b><br><span style="color:#a8a29e;font-size:12px">'
         + esc(deptParent(r.dept)) + "</span></span>"
+        // 제출자 — **출력은 마스킹**한다(pii 원칙: 저장 원본·출력 마스킹). 편집 대상이 아니라 행 라벨이다.
+        + "<span>" + (r.author ? esc(maskName(r.author)) : '<span style="color:#d6d3d1">—</span>') + "</span>"
         + "<span>" + esc(String(r.count || 1)) + "명</span>"
         + "<span>" + (r.work_hours ? esc(r.work_hours) + "h" : "—") + "</span>"
         + "<span>" + esc(freq) + "</span>"

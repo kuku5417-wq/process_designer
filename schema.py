@@ -538,7 +538,13 @@ def _is_empty(v: Any) -> bool:
 
 
 def _submission_sig(rec: dict) -> str:
-    """레코드 값 서명 — dept/count 를 뺀 나머지의 정렬 직렬화. 같은 값 제출을 합치는 키다."""
+    """레코드 값 서명 — dept/count 를 뺀 나머지의 정렬 직렬화. 같은 값 제출을 합치는 키다.
+
+    ★ `author` 를 제외 목록에 **넣지 않는다** — 서명에 포함돼야 같은 과라도 사람이 다르면 레코드가
+      갈린다. 그래야 ① 표에서 누가 낸 값인지 구분되고 ② 한 행을 편집해 다른 행과 값이 같아져도
+      합쳐져 사라지지 않는다. 결과적으로 count 는 사실상 1 이 되고, 아래 병합 코드는 죽은 코드가
+      아니라 **재정규화 멱등 가드**로 남는다(같은 리스트를 두 번 normalize 해도 안 늘어난다).
+    """
     return json.dumps({k: v for k, v in rec.items() if k not in ("dept", "count")},
                       ensure_ascii=False, sort_keys=True, default=str)
 
@@ -571,6 +577,15 @@ def _norm_submissions(raw: Any, no_ai: frozenset[str] = frozenset()) -> list[dic
         _norm_detail_fields(rec, no_ai)      # 레코드도 노드와 **같은 AI 규칙** — 안 그러면 표·엑셀이 갈린다
         rec = {k: v for k, v in rec.items() if not _is_empty(v)}
         rec["dept"] = dept
+        # ★ author 는 **명시 보존**해야 한다. 위에서 rec 를 SUBMISSION_FIELDS 로 새로 만들기 때문에
+        #   그 목록에 없는 키는 정규화 1회에 증발한다 — dept/count 와 같은 취급이다.
+        #   SUBMISSION_FIELDS 에 넣어 해결하면 안 된다: 그건 DETAIL_FIELDS 파생이라
+        #   _submission_record 가 노드에 없는 필드를 읽게 되고 _norm_detail_fields 도 타게 된다.
+        # ★ 그리고 _submission_sig 의 제외 목록에는 **넣지 않는다**(아래 주석 참조).
+        #   즉 "보존할 키"와 "서명에서 뺄 키"는 서로 다른 두 목록이다.
+        au = str(e.get("author") or "").strip()
+        if au:
+            rec["author"] = au
         try:
             cnt = max(1, int(e.get("count") or 1))
         except (TypeError, ValueError):
@@ -643,6 +658,24 @@ def normalize(data: dict) -> dict:
         n["depts"] = ds
         # 과별 제출값 원본 — 취합 산출물이라 형태만 확정하고 값은 건드리지 않는다.
         n["submissions"] = _norm_submissions(n.get("submissions"), no_ai)
+        # 취합 산출물 2종을 **레코드로부터 재생성**한다. 취합 시점 값을 그대로 두면 레코드를 고치는
+        # 순간 낡은 요약이 화면·엑셀 `취합상세` 열·LLM 컨텍스트로 그대로 새어 나간다.
+        # ★ submissions 가 비어 있으면 손대지 않는다 — 옛 트리와 엑셀 왕복본은 이 두 필드만 갖고 있다.
+        if n["submissions"]:
+            _tot = sum(int(r.get("count", 1) or 1) for r in n["submissions"])
+            # N≥2 규칙 유지: 혼자 한 업무에 👥 배지가 뜨면 노이즈다(collect_jsons 와 같은 기준).
+            n["submit_count"] = str(_tot) if _tot >= 2 else ""
+            _seen_ln: set[str] = set()
+            _lines: list[str] = []
+            for r in n["submissions"]:
+                _sm = detail_summary(r)
+                if not _sm:
+                    continue
+                _ln = f"{r.get('dept', '')} · {_sm}"      # 이름은 넣지 않는다(detail_summary 주석)
+                if _ln not in _seen_ln:
+                    _seen_ln.add(_ln)
+                    _lines.append(_ln)
+            n["submit_detail"] = "\n".join(_lines)
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())
@@ -941,6 +974,37 @@ def dept_groups_of(node: dict) -> list[str]:
         if g not in out:
             out.append(g)
     return out
+
+
+_FREQ_LABEL: Final[dict[str, str]] = {"일": "일", "주": "주", "월": "월", "분기": "분기", "년": "년"}
+
+
+def detail_summary(n: dict) -> str:
+    """상세값 한 줄 요약 — 예 `소요 0.5h · 주 3회 · 부분자동 · AI`.
+
+    ★ **이름을 넣지 않는다.** 이 문자열은 `submit_detail` 로 저장돼 `chat_context` 를 타고 LLM 으로
+      나간다("컨텍스트에 updated_by 를 넣지 않는다" 와 같은 사고). 제출자 이름은 `submissions[].author`
+      에만 두고 화면·엑셀에서 마스킹해 보여준다.
+    (excel_io 에 있던 것을 옮겨왔다 — normalize 가 써야 하는데 schema 는 excel_io 를 못 부른다.)
+    """
+    parts: list[str] = []
+    wh = str(n.get("work_hours") or "").strip()
+    if wh:
+        parts.append(f"소요 {wh}h")
+    unit, cnt = str(n.get("freq_unit") or "").strip(), str(n.get("freq_count") or "").strip()
+    if unit and cnt:
+        parts.append(f"{_FREQ_LABEL.get(unit, unit)} {cnt}회")
+    elif unit:
+        parts.append(_FREQ_LABEL.get(unit, unit))
+    auto = str(n.get("automation_level") or "").strip()
+    if auto:
+        parts.append(auto)
+    if n.get("has_ai_agent"):
+        parts.append("AI")
+    tech = [t for t in (n.get("tech") or []) if t]
+    if tech:
+        parts.append("기술: " + ", ".join(tech))
+    return " · ".join(parts)
 
 
 def submissions_of(node: dict) -> list[dict]:
