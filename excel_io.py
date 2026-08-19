@@ -24,6 +24,7 @@ from pii import mask_name
 SHEET_TREE = "계층도"
 SHEET_DOMAIN = "도메인"
 SHEET_SUMMARY = "요약"
+SHEET_SUBMIT = "제출상세"   # 과별 제출값 원본 (long format, 표시 전용 — parse_excel 은 읽지 않는다)
 
 LV_COLS = [f"lv{i}" for i in range(0, schema.LEVEL_MAX + 1)]      # lv0..lv7
 
@@ -51,10 +52,14 @@ FIELD_COLS: dict[str, str] = {
 
 # 파생 컬럼은 읽지 않고 쓰기만 한다 (역수입 금지). 연간공수=work_hours×annual_count, 상위부서=dept_parent(과)
 # 연계시스템(전체)=linked_systems 다건 조인(객체배열이라 엑셀 한 칸에 못 담아 표시용 문자열; 정본은 JSON)
-DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서", "연계시스템(전체)"]
+# 제출과수·제출합계공수(h) 는 submissions[] 파생이다. **DERIVED_COLS 에만** 둘 것 —
+# FIELD_COLS 에 넣으면 parse_excel 이 파생값을 저장 필드로 역수입한다(위 규칙).
+DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서", "연계시스템(전체)", "제출과수", "제출합계공수(h)"]
 
+# '저장자' = 이 노드를 마지막으로 저장한 사람(updated_by). 작성자가 아니다 — 메인앱은 취합본을
+# 다듬는 관리 도구라 상단에서도 '저장자'만 받는다. parse_excel 은 이 열을 읽지 않는다(base 보존).
 TREE_COLS: list[str] = (LV_COLS + ["레벨", "이름"] + list(FIELD_COLS) + DERIVED_COLS
-                        + ["작성자", "수정일시", "id"])
+                        + ["저장자", "수정일시", "id"])
 
 
 def _dfs_order(data: dict) -> list[dict]:
@@ -106,7 +111,13 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["업무설명"] = n.get("desc", "")
         row["제출인원"] = n.get("submit_count", "")            # 취합 산출물 (없으면 빈값)
         row["취합상세"] = n.get("submit_detail", "")           # 부서 기준, 이름 없음
-        row["작성자"] = mask_name(n.get("updated_by", "")) if mask else n.get("updated_by", "")
+        subs = schema.submissions_of(n)
+        row["제출과수"] = len({r.get("dept") for r in subs}) if subs else ""
+        # 제출 합계 부하 — 과별 제출값을 각각 연간화해 더한 값. **대표값 연간공수와 다른 게 정상**이다
+        # (대표값은 첫 제출자 1명분, 이쪽은 수행 과 전부의 합). 저장하지 않고 여기서만 계산한다.
+        sh = sum(schema.annual_hours(r) for r in subs)
+        row["제출합계공수(h)"] = round(sh, 2) if sh else ""
+        row["저장자"] = mask_name(n.get("updated_by", "")) if mask else n.get("updated_by", "")
         row["수정일시"] = n.get("updated_at", "")
         row["id"] = n["id"]
         rows.append(row)
@@ -161,8 +172,53 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+SUBMIT_COLS: list[str] = (["lv3", "lv4", "lv5", "lv6", "lv7", "과", "상위부서", "인원"]
+                          + ["발생패턴", "기간단위", "횟수", "1회소요시간(h)", "연간공수(h)",
+                             "자동화수준", "현재기술", "향후기술", "산출물", "적용선종", "특이사항"])
+
+
+def _submission_df(data: dict) -> pd.DataFrame:
+    """제출상세 시트 — **1행 = (업무 × 제출한 과)**.
+
+    계층도 시트에 행을 늘려 담을 수 없다: 그 시트는 parse_excel 의 입력이고, 같은 이름 경로가
+    두 행이면 "경로가 중복됩니다" 오류로 **업로드가 통째로 막힌다**. 그래서 별도 시트로 뺐고,
+    이 시트는 **역수입하지 않는다**(정본은 트리 JSON 의 submissions).
+
+    대표값(계층도 시트)은 첫 제출자 1명분이라, 과별 비교는 반드시 이 시트를 봐야 한다.
+    """
+    nmap = schema.node_map(data.get("nodes", []))
+    rows: list[dict] = []
+    for n in _dfs_order(data):
+        subs = schema.submissions_of(n)
+        if not subs:
+            continue
+        names = schema.path_names(nmap, n["id"])          # lv0..자기자신
+        for r in subs:
+            row: dict[str, object] = {c: "" for c in SUBMIT_COLS}
+            for i in range(3, schema.LEVEL_MAX + 1):
+                if i < len(names):
+                    row[f"lv{i}"] = names[i]
+            row["과"] = r.get("dept", "")
+            row["상위부서"] = schema.dept_parent(r.get("dept"))
+            row["인원"] = r.get("count", 1)
+            row["발생패턴"] = r.get("occur_pattern", "")
+            row["기간단위"] = r.get("freq_unit", "")
+            row["횟수"] = r.get("freq_count", "")
+            row["1회소요시간(h)"] = r.get("work_hours", "")
+            ah = schema.annual_hours(r)                    # 파생 — 저장하지 않는다
+            row["연간공수(h)"] = ah if ah else ""
+            row["자동화수준"] = r.get("automation_level", "")
+            row["현재기술"] = ", ".join(r.get("tech") or [])
+            row["향후기술"] = ", ".join(r.get("future_tech") or [])
+            row["산출물"] = r.get("outputs", "")
+            row["적용선종"] = ", ".join(r.get("ship_types") or [])
+            row["특이사항"] = ", ".join(r.get("special_note") or [])
+            rows.append(row)
+    return pd.DataFrame(rows, columns=SUBMIT_COLS) if rows else pd.DataFrame()
+
+
 def build_xlsx(data: dict, mask: bool = True) -> bytes:
-    """3시트 엑셀 bytes (계층도 / 도메인 / 요약)."""
+    """엑셀 bytes — 계층도 / 도메인 / 요약 (+ 취합본이면 제출상세)."""
     buf = io.BytesIO()
     tree = flatten(data, mask=mask)
     with pd.ExcelWriter(buf, engine="openpyxl") as xw:
@@ -171,11 +227,15 @@ def build_xlsx(data: dict, mask: bool = True) -> bytes:
         if not dom.empty:
             dom.to_excel(xw, sheet_name=SHEET_DOMAIN, index=False, freeze_panes=(1, 0))
         _summary_df(data, mask=mask).to_excel(xw, sheet_name=SHEET_SUMMARY, index=False, freeze_panes=(1, 0))
+        # 과별 제출값이 하나도 없으면(취합 전 트리) 시트를 만들지 않는다 — _domain_df 와 같은 규칙.
+        sub = _submission_df(data)
+        if not sub.empty:
+            sub.to_excel(xw, sheet_name=SHEET_SUBMIT, index=False, freeze_panes=(1, 0))
 
         widths = {"lv0": 8, "lv1": 8, "lv2": 10, "lv3": 16, "lv4": 20, "lv5": 20, "lv6": 22, "lv7": 22,
                   "레벨": 6, "이름": 22, "AI에이전트": 11, "활용기술": 20, "부서/과": 12,
                   "자동화수준": 11, "수행주기": 10,
-                  "산출물/연계시스템": 26, "업무설명": 40, "작성자": 10, "수정일시": 20, "id": 12}
+                  "산출물/연계시스템": 26, "업무설명": 40, "저장자": 10, "수정일시": 20, "id": 12}
         ws = xw.sheets[SHEET_TREE]
         for i, c in enumerate(tree.columns, start=1):
             ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = widths.get(c, 14)
@@ -318,6 +378,10 @@ def parse_excel(xlsx: bytes, current: dict) -> tuple[dict, list[str]]:
             "linked_systems": (base or {}).get("linked_systems", []),
             "submit_count": _cell(r.get("제출인원")),          # 취합 산출물 왕복 보존
             "submit_detail": _cell(r.get("취합상세")),
+            # 과별 제출값(submissions)은 객체배열이라 엑셀 셀 한 칸에 못 담는다(linked_systems 와 같은 이유).
+            # ★ base 에서 **반드시** 보존할 것 — 빠뜨리면 관리자가 엑셀을 한 번 내려받아 올리는
+            #   순간 부서별 값이 통째로 사라진다. '제출상세' 시트는 표시용이라 역수입하지 않는다.
+            "submissions": (base or {}).get("submissions", []),
             "created_at": (base or {}).get("created_at", schema.now_iso()),
             "updated_at": (base or {}).get("updated_at", schema.now_iso()),
             "updated_by": (base or {}).get("updated_by", ""),
@@ -393,6 +457,12 @@ def parse_json(raw: bytes, current: dict) -> tuple[dict, list[str]]:
         m["parent_id"] = (schema.ROOT_ID if n["parent_id"] == schema.ROOT_ID
                           else idmap.get(n["parent_id"], n["parent_id"]))
         m["created_at"] = base.get("created_at", n.get("created_at") or schema.now_iso())
+        # 취합 산출물은 **개인 파일이 들고 있지 않다**(soloExport 가 비운다). 그대로 덮으면
+        # 개인 JSON 하나를 이어붙이는 것만으로 그 노드의 과별 제출값·제출인원이 날아간다.
+        # 이 셋은 취합만이 쓰는 필드이므로 기존 노드 값을 그대로 살린다.
+        for _k in ("submissions", "submit_count", "submit_detail"):
+            if base.get(_k):
+                m[_k] = base[_k]
         nodes.append(m)
 
     # 3) 도메인 마스터는 **현재 것을 그대로 쓴다** — 파일이 들고 온 목록은 버린다.
@@ -409,6 +479,22 @@ def parse_json(raw: bytes, current: dict) -> tuple[dict, list[str]]:
         "domains": {k: list(v) for k, v in current.get("domains", {}).items()},
     }
     return schema.normalize(out), errs
+
+
+def _dept_from_path(relpath: str) -> tuple[str, str]:
+    """스캔 폴더 기준 상대경로에서 (부서, 과) — **첫 하위폴더=부서, 두 번째 하위폴더=과**.
+
+    운영 공유폴더가 `<스캔폴더>/시운전1부/기장운전1과/프로세스_홍길동_20260819.json` 구조라
+    폴더 계층이 곧 소속이다. 봉투(exported_dept)는 개인이 상단에서 고른 값이라 폴더와 어긋날 수
+    있고 정정하려면 파일을 다시 받아야 하지만, 폴더는 관리자가 파일을 옮기기만 하면 고쳐진다.
+
+    깊이가 모자라면 있는 만큼만 돌려준다 — 루트 직하 파일과 브라우저 다중업로드는 ("", "") 라
+    호출 측이 봉투·파일명 폴백으로 넘어간다. 3단 이하 하위폴더는 무시한다.
+    """
+    parts = [x for x in str(relpath or "").replace("\\", "/").split("/") if x.strip()]
+    dirs = parts[:-1]                                  # 마지막 조각은 파일명
+    return (dirs[0].strip() if len(dirs) >= 1 else "",
+            dirs[1].strip() if len(dirs) >= 2 else "")
 
 
 def _submitter_of(payload: dict, filename: str) -> tuple[str, str]:
@@ -457,6 +543,25 @@ def _detail_summary(n: dict) -> str:
     if tech:
         parts.append("기술: " + ", ".join(tech))
     return " · ".join(parts)
+
+
+def _submission_record(n: dict, dept: str) -> dict:
+    """lv6 노드 + 제출 과 → **부서별 제출값 레코드 1건**.
+
+    ★ 필드를 손으로 나열하지 않고 `schema.SUBMISSION_FIELDS` 를 돈다 — 상세 필드가 늘 때
+      레코드 쪽만 조용히 빠지는 사고를 구조적으로 막는다(occur_pattern/events 전례).
+    ★ 제출자 이름·파일명은 담지 않는다(개인정보 최소수집). 연간공수 같은 곱한 값도 담지 않는다.
+    최종 형태(빈 값 키 제거·같은 값 합산)는 `schema._norm_submissions` 가 확정하므로
+    여기서는 **count=1 짜리 원본 1건**만 만든다.
+    """
+    rec: dict = {"dept": dept, "count": 1}
+    for k in schema.SUBMISSION_FIELDS:
+        v = n.get(k)
+        if isinstance(v, list):
+            rec[k] = [dict(x) if isinstance(x, dict) else x for x in v]
+        elif v not in (None, ""):
+            rec[k] = v
+    return rec
 
 
 def _branches_with_detail(nodes: list[dict], nmap: dict[str, dict]) -> set[str]:
@@ -520,6 +625,7 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
     submitters: dict[tuple, set] = {}                  # 경로 → {(부서,이름)}
     dept_sets: dict[tuple, list[str]] = {}             # 경로 → [수행 과, ...] (순서 유지, 뒤에서 dedup)
     details: dict[tuple, list[str]] = {}               # 경로 → [부서 · 요약, ...]
+    subs_recs: dict[tuple, list[tuple]] = {}           # 경로 → [(과, 이름, 제출값 레코드), ...]
     reports: list[dict] = []
 
     # 파일명 정렬 = 결정론적 '첫 제출자' (재실행 시 동일 결과)
@@ -535,7 +641,22 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                             "nodes": 0, "new": 0, "skipped": 0, "errors": "이 앱의 제출 JSON 이 아닙니다 (nodes 없음)"})
             continue
 
-        dept, author = _submitter_of(payload, filename)
+        # ★ 소속의 정본은 **스캔 폴더 경로**다 (첫 하위폴더=부서, 두 번째=과).
+        #   봉투(exported_dept)는 개인이 상단에서 고른 값이라 틀리면 파일을 다시 받아야 하지만,
+        #   폴더는 관리자가 파일을 옮기기만 하면 고쳐진다. 폴더가 없을 때만(루트 직하 파일·
+        #   브라우저 다중업로드) 봉투 → 파일명 순으로 폴백한다 — 이 폴백을 지우지 말 것.
+        #   _submitter_of 자체는 손대지 않는다(봉투 우선이라는 그 함수의 계약은 그대로 유효하다).
+        b_dir, g_dir = _dept_from_path(filename)
+        env_dept, author = _submitter_of(payload, filename)
+        folder_dept = schema.canon_dept(g_dir or b_dir)
+        dept = folder_dept or env_dept
+        warn = ""
+        if folder_dept and b_dir and g_dir:
+            gp = schema.dept_parent(folder_dept)
+            if gp != "미분류" and gp != schema.canon_dept(b_dir):
+                # 폴더를 잘못 놓았을 수 있다 — 조용히 넘기지 않고 미리보기에 띄운다.
+                # ★ errors 가 아니라 warn 이다. errors 에 넣으면 파일이 통째로 제외된다.
+                warn = f"폴더 부서({b_dir})와 과의 소속 부서({gp})가 다릅니다 — 과 기준으로 집계합니다."
         try:
             incoming = schema.normalize({
                 "nodes": [dict(n) for n in payload["nodes"] if isinstance(n, dict)],
@@ -594,12 +715,17 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                 # (submit_count 는 3명이라는데 by_dept 는 한 과에만 1을 주는 모순).
                 if dept:
                     dept_sets.setdefault(path, []).append(dept)
+                # 과별 제출값 원본 — 대표값(첫 제출자 승리)이 덮어버리는 나머지 과의
+                # 소요시간·주기·자동화·기술을 여기 보존한다. submit_detail 은 이것의 요약이라
+                # 둘 다 남긴다(옛 트리·엑셀 왕복본은 submit_detail 만 갖고 있다).
+                subs_recs.setdefault(path, []).append((dept, author, _submission_record(n, dept)))
                 summ = _detail_summary(n)
                 if summ:
                     details.setdefault(path, []).append(f"{dept} · {summ}")
 
         reports.append({"filename": filename, "dept": dept, "author": author,
-                        "nodes": len(incoming["nodes"]), "new": new_cnt, "skipped": skipped, "errors": ""})
+                        "nodes": len(incoming["nodes"]), "new": new_cnt, "skipped": skipped,
+                        "errors": "", "warn": warn})
 
     # 수행 과 기록 — **이번 스캔에 나온 경로는 이번 제출자 소속으로 교체한다(누적 아님).**
     #
@@ -620,6 +746,26 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
         node["depts"] = new_ds
         if new_ds:
             node["dept"] = new_ds[0]              # 대표 과 (카드·엑셀 단일 표시용)
+
+    # 과별 제출값 기록 — **depts 와 정확히 같은 원칙**이다(위 블록의 근거를 그대로 따른다):
+    #   ① 이번 스캔에 등장한 경로만 **교체**하고 ② 이번 스캔에 없는 경로는 건드리지 않는다.
+    # 누적(합집합)으로 두면 줄어들 길이 없어, 제출본을 고쳐 재취합해도 옛 값이 영원히 남는다.
+    # ★ 여기서는 (과,이름) 1명 = 레코드 1건(count=1)만 만든다. 같은 과가 **같은 값**을 낸 건
+    #   맨 아래 schema.normalize 가 한 건으로 합치며 count 를 누적한다 — 합산 규칙을 두 곳에
+    #   두지 않으려는 것이고, 그래서 sum(rec.count) == submit_count 가 자동으로 성립한다.
+    for path, items in subs_recs.items():
+        mid = idx.get(path)
+        node = mmap.get(mid) if mid else None
+        if not node:
+            continue
+        seen_sub: set = set()
+        recs: list[dict] = []
+        for d, a, rec in items:                   # 파일명 정렬 순 = 결정론적(재취합 멱등)
+            if (d, a) in seen_sub:
+                continue                          # 한 사람이 파일을 둘 낸 경우 1회만
+            seen_sub.add((d, a))
+            recs.append(rec)
+        node["submissions"] = recs
 
     # 집계 결과를 노드에 기록 — N≥2 인 경로만 (혼자 한 업무는 배지 노이즈)
     for path, subs in submitters.items():
@@ -647,6 +793,12 @@ def unknown_domain_values(data: dict) -> dict[str, list[str]]:
     list_field_dom = {"tech": "tech", "future_tech": "tech",
                       "ship_types": "ship_type", "special_note": "special_note"}
     for n in data.get("nodes", []):
+        # 과별 제출값의 소속도 검사한다 — 폴더명에서 온 미등록 과가 여기에만 있을 수 있고,
+        # 안 보면 "도메인에 추가할까요?" 승인 흐름을 조용히 빠져나간다.
+        for r in n.get("submissions") or []:
+            v = schema.canon_dept(isinstance(r, dict) and r.get("dept"))
+            if v and v not in doms.get("dept", []):
+                found["dept"].add(v)
         for k in ("dept", "automation_level", "frequency", "linked_system"):
             v = n.get(k)
             if k == "dept":

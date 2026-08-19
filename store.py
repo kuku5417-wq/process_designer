@@ -254,7 +254,7 @@ def save_tree(data: dict, author: str, force: bool = False, action: str = "save"
     덮어쓰기 직전 디스크본을 스냅샷으로 남기므로, 강제 저장을 해도 상대 작업은 복구 가능하다.
     """
     if not (author or "").strip():
-        return SaveResult(ok=False, error="작성자를 입력해 주세요.")
+        return SaveResult(ok=False, error="저장자를 입력해 주세요.")
 
     disk_mtime, disk_rev, disk_author = disk_stat()
     my_rev = int(data.get("rev", 0))

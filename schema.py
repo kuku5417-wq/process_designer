@@ -11,6 +11,7 @@ parent_id 는 ROOT_ID 이며, 엑셀 내보내기 시점에만 lv0~lv2 컬럼으
 """
 from __future__ import annotations
 
+import json
 import re
 import uuid
 from datetime import datetime
@@ -49,6 +50,15 @@ DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "work_hours", "freq_unit", "freq_count", "annual_count",
     "occur_pattern", "apply_phases", "events",
 )
+
+# 부서별 제출값 레코드(node.submissions[]) 에 담는 필드.
+# ★ DETAIL_FIELDS 에서 **파생**시킨다 — 손으로 나열하면 필드가 늘 때 레코드 쪽만 조용히 유실된다.
+#   (occur_pattern/apply_phases/events 가 DETAIL_FIELDS 에 없어 취합이 통째로 날린 전례가 있다.)
+#   dept 는 레코드의 키라서 빼고, depts 는 집계 산출물이라 뺀다.
+#   desc 는 DETAIL_FIELDS 밖이지만 "왜 이 과의 숫자가 다른가"를 설명하는 유일한 텍스트라 명시 추가한다.
+SUBMISSION_FIELDS: Final[tuple[str, ...]] = tuple(
+    f for f in DETAIL_FIELDS if f not in ("dept", "depts")
+) + ("desc",)
 
 # ── 작업시간 ────────────────────────────────────────────
 # 연간 공수 = work_hours(1회 소요시간) × annual_count(연간 횟수).
@@ -313,6 +323,11 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     # ── 취합 산출물 (메인앱 collect_jsons 가 채움; 개인 배포판은 항상 빈값) ──
     "submit_count": "",     # 이 업무(경로)를 제출한 인원수 N — (부서,이름) distinct. 이름은 저장 안 함
     "submit_detail": "",    # 제출자별 상세 요약(여러 줄, 부서 기준). 이름 미기록 (개인정보 최소수집)
+    # 과별 제출값 원본 — [{dept, count, ...SUBMISSION_FIELDS}]. 대표값(첫 제출자 승리)이 덮어버린
+    # 나머지 과의 소요시간·주기·자동화·기술을 여기 보존한다. submit_detail 은 이것의 텍스트 요약이다.
+    # ★ DETAIL_FIELDS 에 넣지 말 것 — 취합이 자기 submissions 를 복사하는 자기참조가 생기고,
+    #   has_hidden_detail() 이 취합 산출물만 가진 강등 노드를 "숨은 상세값 있음"으로 오탐한다.
+    "submissions": [],
 }
 
 SCHEMA_VERSION: Final[int] = 1
@@ -455,6 +470,102 @@ def renumber(data: dict, parent_id: str) -> None:
         n["order"] = i
 
 
+def _norm_detail_fields(d: dict) -> dict:
+    """상세 필드(events·다중값 리스트·연계시스템·파생 AI)를 제자리 정규화한다.
+
+    ★ 노드 본체와 **부서별 제출 레코드**(submissions[])가 같은 규칙을 쓰게 하려고 뽑아냈다.
+      두 벌로 두면 한쪽만 고쳐져 화면·엑셀·취합이 조용히 어긋난다.
+    """
+    # 호선이벤트 events[] — [{event, offset_start, offset_days}]. 줄 수가 곧 호선당 횟수라
+    # 빈 줄은 버린다. 형태가 깨진 값(문자열 등)은 통째로 비운다(조용히 반쪽으로 두지 않는다).
+    evs = d.get("events")
+    d["events"] = [
+        {"event": str((e or {}).get("event") or "").strip(),
+         "offset_start": str((e or {}).get("offset_start") or "").strip(),
+         "offset_days": str((e or {}).get("offset_days") or "").strip()}
+        for e in (evs if isinstance(evs, list) else [])
+        if isinstance(e, dict) and str(e.get("event") or "").strip()
+    ]
+    # 다중값 리스트 필드(활용기술·향후기술·특이사항·선종·반복구간) — 쉼표문자열도 관용하고 공백 정리
+    for lk in ("tech", "future_tech", "special_note", "ship_types", "apply_phases"):
+        if not isinstance(d.get(lk), list):
+            d[lk] = [s for s in str(d.get(lk) or "").split(",") if s.strip()]
+        d[lk] = [str(t).strip() for t in d[lk] if str(t).strip()]
+    # 연계시스템 다건 [{system, detail}] — 구 단일 필드(linked_system/detail)에서 1회 이관
+    ls = d.get("linked_systems")
+    if not isinstance(ls, list):
+        ls = []
+    ls = [{"system": str((e or {}).get("system") or "").strip(),
+           "detail": str((e or {}).get("detail") or "").strip()}
+          for e in ls if isinstance(e, dict) and ((e.get("system") or e.get("detail")))]
+    if not ls and (d.get("linked_system") or d.get("linked_system_detail")):
+        ls = [{"system": str(d.get("linked_system") or "").strip(),
+               "detail": str(d.get("linked_system_detail") or "").strip()}]
+    d["linked_systems"] = ls
+    # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
+    d["has_ai_agent"] = len(d["tech"]) > 0
+    d["has_ai_future"] = len(d["future_tech"]) > 0
+    return d
+
+
+def _is_empty(v: Any) -> bool:
+    """희소 저장 판정 — 빈 문자열·빈 리스트·None·False 만 '없음'으로 본다.
+
+    `not v` 를 쓰면 **숫자 0 이 함께 지워진다**. 지금 상세필드는 전부 문자열이지만,
+    나중에 숫자로 바뀌어도 조용히 값이 사라지지 않게 명시로 판정한다.
+    """
+    return v is None or v is False or v == "" or v == []
+
+
+def _submission_sig(rec: dict) -> str:
+    """레코드 값 서명 — dept/count 를 뺀 나머지의 정렬 직렬화. 같은 값 제출을 합치는 키다."""
+    return json.dumps({k: v for k, v in rec.items() if k not in ("dept", "count")},
+                      ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _norm_submissions(raw: Any) -> list[dict]:
+    """부서별 제출값 레코드 목록 정규화 — collect_jsons 가 채우고 여기서 형태를 확정한다.
+
+    · dict 아닌 원소·소속 없는 레코드는 버린다 (events 와 같은 규칙 — 반쪽으로 두지 않는다).
+    · 상세 필드는 노드 본체와 **같은 헬퍼**(_norm_detail_fields)를 통과시킨다.
+    · **빈 값 키는 지운다**(희소 저장) — lv6 수천 개 × 과 여러 개면 트리 JSON 과
+      스냅샷 50벌(prune_history keep_min)이 통째로 부푼다.
+    · 같은 (과, 값서명) 레코드는 합쳐 count 를 누적한다 → 로드 시점 멱등.
+    · annual_hours 같은 **곱한 값·파생값은 담지 않는다**(공통규칙). 표시할 때 계산한다.
+    """
+    out: list[dict] = []
+    idx: dict[tuple[str, str], dict] = {}
+    for e in (raw if isinstance(raw, list) else []):
+        if not isinstance(e, dict):
+            continue
+        dept = canon_dept(e.get("dept"))
+        if not dept:
+            continue
+        rec: dict = {}
+        for k in SUBMISSION_FIELDS:                       # 헬퍼가 기대하는 키를 기본값으로 채운다
+            v = e.get(k)
+            if v is None:
+                dv = NODE_DEFAULTS.get(k, "")
+                v = list(dv) if isinstance(dv, list) else dv
+            rec[k] = v
+        _norm_detail_fields(rec)
+        rec = {k: v for k, v in rec.items() if not _is_empty(v)}
+        rec["dept"] = dept
+        try:
+            cnt = max(1, int(e.get("count") or 1))
+        except (TypeError, ValueError):
+            cnt = 1
+        key = (dept, _submission_sig(rec))
+        hit = idx.get(key)
+        if hit is not None:
+            hit["count"] = hit.get("count", 1) + cnt      # 같은 과·같은 값 → 인원만 누적
+            continue
+        rec["count"] = cnt
+        idx[key] = rec
+        out.append(rec)
+    return out
+
+
 def normalize(data: dict) -> dict:
     """결측 필드 보정 + level 재계산 + order 재번호 + 고아 노드 구제.
 
@@ -485,35 +596,7 @@ def normalize(data: dict) -> dict:
         for k, dv in NODE_DEFAULTS.items():
             if k not in n or n[k] is None:
                 n[k] = list(dv) if isinstance(dv, list) else dv
-        # 호선이벤트 events[] — [{event, offset_start, offset_days}]. 줄 수가 곧 호선당 횟수라
-        # 빈 줄은 버린다. 형태가 깨진 값(문자열 등)은 통째로 비운다(조용히 반쪽으로 두지 않는다).
-        evs = n.get("events")
-        n["events"] = [
-            {"event": str((e or {}).get("event") or "").strip(),
-             "offset_start": str((e or {}).get("offset_start") or "").strip(),
-             "offset_days": str((e or {}).get("offset_days") or "").strip()}
-            for e in (evs if isinstance(evs, list) else [])
-            if isinstance(e, dict) and str(e.get("event") or "").strip()
-        ]
-        # 다중값 리스트 필드(활용기술·향후기술·특이사항·선종·반복구간) — 쉼표문자열도 관용하고 공백 정리
-        for lk in ("tech", "future_tech", "special_note", "ship_types", "apply_phases"):
-            if not isinstance(n.get(lk), list):
-                n[lk] = [s for s in str(n.get(lk) or "").split(",") if s.strip()]
-            n[lk] = [str(t).strip() for t in n[lk] if str(t).strip()]
-        # 연계시스템 다건 [{system, detail}] — 구 단일 필드(linked_system/detail)에서 1회 이관
-        ls = n.get("linked_systems")
-        if not isinstance(ls, list):
-            ls = []
-        ls = [{"system": str((e or {}).get("system") or "").strip(),
-               "detail": str((e or {}).get("detail") or "").strip()}
-              for e in ls if isinstance(e, dict) and ((e.get("system") or e.get("detail")))]
-        if not ls and (n.get("linked_system") or n.get("linked_system_detail")):
-            ls = [{"system": str(n.get("linked_system") or "").strip(),
-                   "detail": str(n.get("linked_system_detail") or "").strip()}]
-        n["linked_systems"] = ls
-        # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
-        n["has_ai_agent"] = len(n["tech"]) > 0
-        n["has_ai_future"] = len(n["future_tech"]) > 0
+        _norm_detail_fields(n)
         # 담당자 제거 — 옛 저장본에 남은 이름을 **로드 시점에** 지운다(개인정보 최소수집).
         # 저장을 누르면 파일에서도 사라진다. updated_by(저장한 사람)는 별개라 건드리지 않는다.
         n.pop("owner", None)
@@ -534,6 +617,8 @@ def normalize(data: dict) -> dict:
         if ds and not n["dept"]:
             n["dept"] = ds[0]          # 대표 과 (카드·엑셀 단일 표시용)
         n["depts"] = ds
+        # 과별 제출값 원본 — 취합 산출물이라 형태만 확정하고 값은 건드리지 않는다.
+        n["submissions"] = _norm_submissions(n.get("submissions"))
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())
@@ -832,6 +917,24 @@ def dept_groups_of(node: dict) -> list[str]:
         if g not in out:
             out.append(g)
     return out
+
+
+def submissions_of(node: dict) -> list[dict]:
+    """이 업무의 **과별 제출값 원본**. 대표값(노드 본체)이 덮어버린 나머지 과의 값이 여기 있다.
+
+    대표값은 '첫 제출자 승리'라 3개 과가 같은 업무를 해도 소요시간이 하나만 남는다.
+    과별 비교·과별 부하는 반드시 이 목록을 봐야 한다(submit_detail 은 이것의 텍스트 요약).
+    """
+    return [r for r in (node.get("submissions") or []) if isinstance(r, dict) and r.get("dept")]
+
+
+def submission_of(node: dict, dept: str) -> dict | None:
+    """특정 과가 낸 제출값 1건. 한 과가 서로 다른 값을 냈으면 **첫 레코드**(파일명 정렬 순)."""
+    d = canon_dept(dept)
+    for r in submissions_of(node):
+        if r.get("dept") == d:
+            return r
+    return None
 
 
 # 발생 패턴 — 값은 프론트(OCCUR)와 같은 문자열이어야 한다(twin).

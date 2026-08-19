@@ -235,6 +235,13 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
     old_depts = {n["id"]: list(n.get("depts") or []) for n in data.get("nodes", [])}
     dept_reset = sum(1 for n in merged.get("nodes", [])
                      if n["id"] in old_depts and old_depts[n["id"]] != list(n.get("depts") or []))
+    # 과별 제출값도 같은 규칙으로 **교체**된다 — 바뀐 건수를 함께 띄운다(조용히 바꾸지 않는다).
+    old_subs = {n["id"]: n.get("submissions") or [] for n in data.get("nodes", [])}
+    submission_reset = sum(1 for n in merged.get("nodes", [])
+                           if n["id"] in old_subs and old_subs[n["id"]] != (n.get("submissions") or []))
+    # 폴더 부서 ≠ 과의 소속 부서 — 파일을 잘못 놓았을 수 있다. 제외는 하지 않고 알리기만 한다.
+    folder_mismatch = [{"filename": r.get("filename", ""), "warn": r.get("warn", "")}
+                       for r in reports if r.get("warn")]
     # 빈 가지(lv6 미도달) 삭제 후보 — **미리보기 계산만** 한다.
     # pending_collect 에는 병합만 된 트리를 두고, 실제 제거는 _apply_collect 에서 옵트인일 때만.
     _, empties = excel_io.prune_empty_branches(merged)
@@ -247,6 +254,8 @@ def _preview_collect(files: list[tuple[str, bytes]], base_errs: list[str]) -> No
         "removed": len(empties),
         "removed_list": _node_brief(empties, merged),
         "dept_reset": dept_reset,
+        "submission_reset": submission_reset,
+        "folder_mismatch": folder_mismatch,
         "added": len(d["added"]), "changed": len(d["changed"]),
         "added_list": _node_brief(d["added"], merged),
         "top_submits": top,

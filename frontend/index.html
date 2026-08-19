@@ -429,6 +429,12 @@
   .chipbtn:hover { background: #e7f6f4; border-color: #99f6e4; }
   .primary { font-size: 15px; font-weight: 800; color: #fff; background: #0f766e; border: none; border-radius: 9px; padding: 12px; cursor: pointer; }
   .secondary { font-size: 15px; font-weight: 700; color: #0f766e; background: #f0fdfa; border: 1px solid #5eead4; border-radius: 9px; padding: 12px; cursor: pointer; }
+  .subrow { display: grid; grid-template-columns: 1.3fr .5fr .5fr .8fr .9fr .8fr 1.6fr; gap: 8px; align-items: center;
+            padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
+  .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
+  .fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; }
+  .fbar select { font-size: 13.5px; padding: 6px 8px; border: 1px solid #ddd6ca; border-radius: 8px; background: #fff; }
+  .fbar .fclr { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
   .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
   .histrow.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; font-weight: 700; }
   .diffgrid { display: flex; gap: 12px; }
@@ -551,6 +557,13 @@
       if (!ds.length && n.dept) ds = [n.dept];
       if (ds.length && !n.dept) n.dept = ds[0];
       n.depts = ds;
+      // 과별 제출값의 소속도 같은 규칙으로 정규화한다 — 안 하면 화면이 보여주는 과와
+      // 파이썬이 저장·집계하는 과가 갈린다(schema._norm_submissions 트윈).
+      n.submissions = (Array.isArray(n.submissions) ? n.submissions : []).filter(function (r) {
+        if (!r || typeof r !== "object") return false;
+        r.dept = canonDept(r.dept);
+        return !!r.dept;
+      });
       if (n.level === LEVEL_MIN) n.name = canonLv3Name(n.name);
     });
     return nodes;
@@ -799,7 +812,7 @@
              frequency: "", outputs: "", linked_system: "", linked_system_detail: "",
              linked_systems: [], special_note: [],   // 연계시스템 다건 / 특이사항(다중)
              work_hours: "", annual_count: "",
-             submit_count: "", submit_detail: "",   // 취합 산출물(메인앱 전용) — SOLO 는 항상 빈값
+             submit_count: "", submit_detail: "", submissions: [],   // 취합 산출물(메인앱 전용) — SOLO 는 항상 빈값
              // lv6 발생 패턴 — 부하의 원자값. ship_types(선종)는 호선 패턴일 때 적용 필터
              occur_pattern: "", freq_unit: "", freq_count: "", ship_types: [],
              apply_phases: [],                        // 호선루틴: 반복 구간(복수)
@@ -928,6 +941,10 @@
     // 엉뚱한 화면이 그려진다.
     activeTab: "tree", domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
     sumPick: null,          // 요약 드릴다운 선택 {axis, key} — null 이면 전체 목록
+    // 요약 탭 부서/과 필터. **순수 뷰 상태**라 emit 하지도, 저장하지도 않는다(S.sumPick·S.query 와 같다).
+    // 파이썬으로 내리면 tree_epoch 이 올라 미저장 편집이 사라진다(app.py _set_data 주석).
+    // 계층 편집에는 걸지 않는다 — 안 보이는 노드를 저장하는 상태가 생겨 삭제 오조작을 부른다.
+    fGroup: "", fDept: "",
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -964,9 +981,10 @@
   function actAdd(pid, lv) {
     if (!pid) return;
     var nn = makeNode(pid, lv, "");
-    // 메인앱: 상단 기본 부서를 새 세부업무(lv6)에 채운다 — '지정 이후 만든 내용에만' 반영(소급 없음).
-    //   개인 배포판은 내보낼 때 소속이 일괄 주입되므로 여기선 넣지 않는다.
-    if (!SOLO && hasDetail(lv) && S.dept) { nn.dept = S.dept; nn.depts = [S.dept]; }   // lv6·lv7 에 기본 소속 주입
+    // ★ 새 노드에 소속을 주입하지 않는다. 소속의 정본은 **취합 시 스캔 폴더 경로**
+    //   (첫 하위폴더=부서, 두 번째=과)다. 메인앱은 취합본을 다듬는 관리 도구라, 여기서 관리자
+    //   소속을 채우면 아무도 그 일을 한다고 낸 적 없는 과가 집계에 잡힌다(오염원). 되살리지 말 것.
+    //   개인 배포판은 내보낼 때 소속이 일괄 주입된다(soloExport).
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
     S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
@@ -983,7 +1001,7 @@
     var copies = subtree.map(function (n) {
       var c = JSON.parse(JSON.stringify(n));                    // 배열·객체 필드까지 깊은 복사
       c.id = newId(); idmap[n.id] = c.id;
-      c.submit_count = ""; c.submit_detail = "";                // 취합 산출물은 물려주지 않는다
+      c.submit_count = ""; c.submit_detail = ""; c.submissions = [];   // 취합 산출물은 물려주지 않는다
       return c;
     });
     copies.forEach(function (c, i) {                            // parent_id 재연결
@@ -1369,7 +1387,13 @@
         else if (key === "linked_system") { if (n.linked_system === old) n.linked_system = val; (n.linked_systems || []).forEach(function (ls) { if (ls.system === old) ls.system = val; }); }
         // 부서/과는 **depts[] 가 집계의 정본**이다 — 대표값(dept)만 바꾸면 이름을 고쳐도
         // 과별·부서별 집계가 그대로여서 "바꿨는데 안 바뀐다"가 된다.
-        else if (key === "dept") { if (n.dept === old) n.dept = val; n.depts = remap(n.depts); }
+        // submissions[].dept 도 함께 바꾼다 — 과별 제출값 표·부서 필터가 이 값을 보므로
+        // 빠뜨리면 "이름을 고쳤는데 과별 표에는 옛 이름이 남는" 같은 종류의 버그가 재발한다.
+        else if (key === "dept") {
+          if (n.dept === old) n.dept = val;
+          n.depts = remap(n.depts);
+          (n.submissions || []).forEach(function (r) { if (r && r.dept === old) r.dept = val; });
+        }
         else if (n[key] === old) n[key] = val;
       });
     }
@@ -1387,7 +1411,7 @@
     // 개인 모드에는 서버가 없다 — [저장] 은 "제출 파일 내보내기"다.
     // 편집 자체는 markDirty 마다 localStorage 에 자동 저장되므로 눌러야 안 날아가는 게 아니다.
     if (SOLO) return soloExport();
-    if (!S.author) { flash("작성자를 먼저 입력하세요"); return; }
+    if (!S.author) { flash("저장자를 먼저 입력하세요"); return; }
     if (!S.dirty.length) { flash("변경 사항이 없습니다"); return; }
     emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
   }
@@ -1398,11 +1422,14 @@
     // 같은 PC 를 여러 명이 써도 섞이지 않게 신원을 키에 넣는다
     return LS_PREFIX + ((S.dept || "-") + "|" + (S.author || "-"));
   }
-  // 부서·이름을 먼저 지정했는가 — 일괄 반영(붙여넣기·가져오기·취합) 전에 요구한다(두 앱 공통).
-  function identReady() { return !!S.dept && !!S.author; }
+  // 일괄 반영(붙여넣기·가져오기·취합) 전에 신원을 요구한다. **두 앱이 요구하는 것이 다르다**:
+  //   · 개인 배포판 — 소속+이름. 둘 다 제출 파일명 구분자이고 소속은 봉투에 실린다.
+  //   · 메인앱     — 저장자만. 소속은 취합 시 폴더 경로에서 오므로 상단에서 받을 이유가 없고,
+  //                  받으면 새 노드에 관리자 소속이 섞인다(actAdd 주석 참조).
+  function identReady() { return SOLO ? (!!S.dept && !!S.author) : !!S.author; }
   function needIdent() {
     if (identReady()) return true;
-    flash(SOLO ? "먼저 상단에 소속과 이름을 지정하세요" : "먼저 상단에 부서와 작성자를 지정하세요");
+    flash(SOLO ? "먼저 상단에 소속과 이름을 지정하세요" : "먼저 상단에 저장자를 입력하세요");
     return false;
   }
   function soloSave() {
@@ -1444,6 +1471,9 @@
     var mine = S.nodes.map(function (n) {
       var c = Object.assign({}, n);
       if (hasDetail(c.level)) { c.dept = S.dept; c.depts = [S.dept]; }
+      // 취합 산출물은 메인앱이 만드는 것이라 개인 파일에 실어 보내지 않는다. 실으면 다음 취합에서
+      // 남의 과 값이 내 제출본을 타고 되돌아온다(파이썬 parse_json 은 base 값을 살리므로 안전).
+      c.submissions = []; c.submit_count = ""; c.submit_detail = "";
       c.updated_by = "";        // markDirty 가 찍어둔 이름 제거 — 업무 데이터에 이름을 남기지 않는다
       return c;
     });
@@ -1577,16 +1607,18 @@
       : (n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>');
     // 개인: 소속·이름 필수(파일명 구분자) + 같은 이름 형제 중복이 없어야 내보낼 수 있다(취합 오염 방지).
     var canSave = SOLO ? (!!S.dept && !!S.author && !dupSiblings().length) : (!!S.author && n > 0);
-    // 부서/이름을 상단에서 먼저 받는다. 개인 모드는 카드마다 부서를 묻지 않고, 메인앱은
-    // 이 부서를 '기본 부서'로 삼아 이후 만든/고친 노드에 채운다(기존 노드는 소급하지 않음).
+    // 신원 칸. **개인 배포판만 소속을 받는다** — 개인은 자기 업무를 '작성'하지만, 메인앱은
+    // 취합본을 '다듬는' 관리 도구라 소속이라는 개념이 없다(소속은 취합 폴더 경로가 정본).
+    // 그래서 메인앱은 감사기록·스냅샷 파일명에 쓰는 **저장자**만 받는다.
     // 부서 → 과 2단: optgroup 으로 부서 헤더 아래 과를 고른다(값=과, 저장은 과만).
-    var deptSel = '<select class="authinput" data-fkey="mydept" style="width:132px">' + deptOptions(S.dept) + '</select>';
+    var deptSel = SOLO
+      ? '<select class="authinput" data-fkey="mydept" style="width:132px">' + deptOptions(S.dept) + '</select>'
+      : "";
     var reqStar = ' <span style="color:#dc2626;font-weight:700">*</span>';
     var ident = SOLO
       ? '<div class="authwrap"><label>소속' + reqStar + '</label>' + deptSel + "</div>"
         + '<div class="authwrap"><label>이름' + reqStar + '</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" /></div>'
-      : '<div class="authwrap"><label>부서' + reqStar + '</label>' + deptSel + "</div>"
-        + '<div class="authwrap"><label>작성자' + reqStar + '</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" /></div>';
+      : '<div class="authwrap"><label>저장자' + reqStar + '</label><input class="authinput" data-fkey="author" value="' + esc(S.author) + '" placeholder="이름(필수)" title="저장 기록·스냅샷 파일명에 남습니다" /></div>';
     return '<div class="top">'
       + '<div class="brand"><div class="logo">🗂</div><div><div class="btitle">프로세스 설계' + (SOLO ? " · 개인 작성용" : "") + '</div><div class="bsub">조선소 시운전팀' + (S.env ? " · " + esc(S.env) : "") + '</div></div></div>'
       + '<div class="tabs">' + tabs + "</div>" + toggle
@@ -1942,12 +1974,18 @@
         + '<div class="pcol">' + nonSolo + occ + automationBlock + descBlock + "</div>"
         + '<div class="pcol">' + techBlock + outputsBlock + linkedBlock + futureTechBlock + specialNoteBlock + shipBlock + "</div>"
         + "</div>";
-      // 취합 상세 — 여러 제출을 합칠 때 채워지는 읽기전용 요약(부서 기준, 이름 없음). 메인앱 전용.
-      if (!SOLO && n.submit_detail) {
-        fields += '<div style="margin-top:12px"><div class="fl">🧩 취합 상세 <span style="color:#a8a29e;font-weight:600">· 제출 '
-          + esc(n.submit_count || "") + '명 (부서별)</span></div>'
-          + '<div class="cardbox" style="padding:10px 12px;font-size:13.5px;color:#57534e;line-height:1.7;white-space:pre-wrap">'
-          + esc(n.submit_detail) + "</div></div>";
+      // 취합 산출물 — 과별 제출값 표가 정본이다. 옛 트리·엑셀 왕복본에는 submissions 가 없어
+      // 예전의 한 덩어리 요약 텍스트(submit_detail)로 폴백한다. 둘 다 메인앱 전용·읽기전용.
+      if (!SOLO) {
+        var subTbl = submissionsTable(n);
+        if (subTbl) {
+          fields += subTbl;
+        } else if (n.submit_detail) {
+          fields += '<div style="margin-top:12px"><div class="fl">🧩 취합 상세 <span style="color:#a8a29e;font-weight:600">· 제출 '
+            + esc(n.submit_count || "") + '명 (부서별)</span></div>'
+            + '<div class="cardbox" style="padding:10px 12px;font-size:13.5px;color:#57534e;line-height:1.7;white-space:pre-wrap">'
+            + esc(n.submit_detail) + "</div></div>";
+        }
       }
     }
 
@@ -2081,7 +2119,7 @@
     var p = S.importPreview;
     if (!p) {
       return '<div class="cardbox" style="padding:22px">'
-        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 일괄 반영이 되지 않습니다.</div>')
+        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>저장자</b>를 입력하세요. 입력 전에는 일괄 반영이 되지 않습니다.</div>')
         + '<label class="drop" for="xlsxup"><div style="font-size:26px">⬆</div><div style="font-size:15px;font-weight:700;color:#57534e;margin-top:6px">엑셀(.xlsx) 또는 개인 제출 파일(.json)을 올리세요</div><div style="font-size:13.5px;color:#a8a29e;margin-top:3px">내보내기 탭에서 받은 엑셀, 또는 개인 배포판이 내보낸 JSON</div></label>'
         + '<input id="xlsxup" type="file" accept=".xlsx,.json" style="display:none" data-fkey="xlsxfile" />'
         + '<div style="margin-top:18px;font-size:14px;font-weight:800;color:#57534e">엑셀 작성 규칙</div><ul style="margin:8px 0 0;padding-left:18px;font-size:14px;color:#78716c;line-height:1.9">'
@@ -2140,7 +2178,7 @@
       return '<div class="cardbox" style="padding:22px">'
         + '<div style="font-size:15px;font-weight:800;color:#0f766e;margin-bottom:4px">여러 제출을 한 번에 취합</div>'
         + '<div style="font-size:14px;color:#78716c;line-height:1.6;margin-bottom:16px">개인 배포판이 내보낸 <b>프로세스_이름_부서_날짜.json</b> 들을 모아, 같은 업무는 한 노드로 합치고 <b>제출 인원수</b>를 셉니다. 업무 데이터에는 소속만 들어갑니다(이름 미저장).</div>'
-        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>부서</b>와 <b>작성자</b>를 지정하세요. 지정 전에는 취합이 되지 않습니다.</div>')
+        + (identReady() ? "" : '<div class="warn" style="margin-bottom:14px">⚠ 먼저 상단에 <b>저장자</b>를 입력하세요. 입력 전에는 취합이 되지 않습니다.</div>')
         + '<div class="fl">폴더 경로 스캔 <span style="color:#a8a29e;font-weight:600">· 관리자 PC 기준 경로 · 하위 폴더 포함 · 기본값이 채워져 있으면 [스캔] 만 누르면 됩니다</span></div>'
         + '<div style="display:flex;gap:8px;margin-top:4px"><input class="fi" style="flex:1;font-size:14.5px" data-fkey="collectfolder" value="' + esc(S.collectFolder || "") + '" placeholder="예: C:\\제출취합\\2026-07 (하위 폴더 전부 스캔)" />'
         + '<button class="primary" style="flex:none;padding:9px 18px" data-act="collectscan">스캔</button></div>'
@@ -2361,6 +2399,47 @@
       + ' <b>과 이름</b>/<b>색 구간</b>을 누르면 우측 목록이 달라집니다</div></div>';
   }
 
+  /** 요약 탭 부서/과 필터바. 막대(deptChart)·KPI 는 **항상 전체**를 보여주고 이 필터는
+   *  우측 목록만 좁힌다 — S.sumPick 과 정확히 같은 관계다. stats() 를 건드리지 않는 이유이기도
+   *  하다(schema.stats 와 트윈이라 한쪽만 고치면 화면과 엑셀이 갈린다). */
+  function deptFilterBar() {
+    var groups = Object.keys(DEPT_TREE);
+    // 데이터에만 있는 소속(폴더에서 온 미등록 과 등)도 고를 수 있어야 한다 — 유실 금지 원칙.
+    var extra = [];
+    S.nodes.forEach(function (n) {
+      if (!isLoadLevel(n.level)) return;
+      deptGroupsOf(n).forEach(function (g) {
+        if (g !== "(미지정)" && groups.indexOf(g) < 0 && extra.indexOf(g) < 0) extra.push(g);
+      });
+    });
+    var gOpts = ['<option value="">전체 부서</option>'].concat(
+      groups.concat(extra).map(function (g) {
+        return '<option value="' + esc(g) + '"' + (S.fGroup === g ? " selected" : "") + ">" + esc(g) + "</option>";
+      })).join("");
+    // 과 목록은 선택한 부서의 것만. 부서 미선택이면 데이터에 실재하는 과 전부.
+    var gwa = [];
+    S.nodes.forEach(function (n) {
+      if (!isLoadLevel(n.level)) return;
+      deptsOf(n).forEach(function (d) {
+        if (d === "(미지정)" || gwa.indexOf(d) >= 0) return;
+        if (S.fGroup && deptParent(d) !== S.fGroup) return;
+        gwa.push(d);
+      });
+    });
+    gwa.sort();
+    var dOpts = ['<option value="">전체 과</option>'].concat(gwa.map(function (d) {
+      return '<option value="' + esc(d) + '"' + (S.fDept === d ? " selected" : "") + ">" + esc(d) + "</option>";
+    })).join("");
+    var on = !!(S.fGroup || S.fDept);
+    return '<div class="fbar"><b>부서/과로 보기</b>'
+      + '<select data-fkey="fgroup">' + gOpts + "</select>"
+      + '<select data-fkey="fdept">' + dOpts + "</select>"
+      + (on ? '<button class="fclr" data-act="fclear">✕ 필터 해제</button>' : "")
+      + '<span style="color:#a8a29e">' + (on
+          ? "선택한 소속이 제출한 업무만 · 부하·자동화는 그 과의 제출값으로 표시합니다"
+          : "선택하면 오른쪽 목록이 그 소속의 업무로 좁혀집니다") + "</span></div>";
+  }
+
   function pageSummary() {
     var st = stats();
     // KPI — 클릭하면 우측 목록이 그 부분집합이 된다
@@ -2392,7 +2471,59 @@
       + '<div class="sub">세부업무(lv6) 기준 현황입니다. lv7 단위작업 값은 부모 lv6 으로 롤업됩니다. '
       + '<b>KPI·막대를 클릭하면</b> 오른쪽 목록이 그 업무들로 좁혀집니다.</div>'
       + '<div class="metricgrid five" style="margin-top:16px">' + kpis + "</div>"
+      + deptFilterBar()
       + '<div class="sumgrid"><div>' + UNIT_NOTE + charts + "</div>" + sumSide() + "</div></div></div>";
+  }
+
+  /** 부하 표시 문자열 — loadOf 의 kind 를 그대로 살린다.
+   *  ★ 연간(상시)과 호선당(이벤트)을 한 숫자로 뭉치면 거짓이다. 호선루틴은 '보류'로 적는다. */
+  function loadLabel(r) {
+    var ld = loadOf(r);
+    if (ld.kind === "unresolved") return "호선루틴 보류";
+    if (!ld.hours) return "—";
+    return ld.hours + (ld.kind === "per_ship" ? "h/호선" : "h/년");
+  }
+  /** 과별 제출값 표 (메인앱 전용, **읽기전용**).
+   *
+   *  대표값(노드 본체)은 '첫 제출자 승리'라 여러 과가 같은 업무를 해도 소요시간·주기가 하나만
+   *  남는다. 이 표는 취합이 보존한 **과마다 다른 원본**(node.submissions)을 그대로 보여준다.
+   *  옛 트리·엑셀 왕복본에는 submissions 가 없고 submit_detail 텍스트만 있어, 호출 측이 폴백한다. */
+  function submissionsTable(n) {
+    var recs = (n.submissions || []).filter(function (r) { return r && r.dept; });
+    if (!recs.length) return "";
+    var head = '<div class="subrow subhead"><span>과</span><span>인원</span><span>1회</span>'
+             + "<span>주기</span><span>부하</span><span>자동화</span><span>활용기술</span></div>";
+    var rows = recs.map(function (r) {
+      var freq = r.freq_unit ? (r.freq_unit + " " + (r.freq_count || "") + "회")
+               : (occurOf(r) === OCCUR.SHIP_EVENT ? ((r.events || []).length + "개 시점") : "—");
+      var techs = (r.tech || []).concat((r.future_tech || []).map(function (t) { return t + "(향후)"; }));
+      return '<div class="subrow">'
+        + "<span><b>" + esc(r.dept) + '</b><br><span style="color:#a8a29e;font-size:12px">'
+        + esc(deptParent(r.dept)) + "</span></span>"
+        + "<span>" + esc(String(r.count || 1)) + "명</span>"
+        + "<span>" + (r.work_hours ? esc(r.work_hours) + "h" : "—") + "</span>"
+        + "<span>" + esc(freq) + "</span>"
+        + "<span>" + esc(loadLabel(r)) + "</span>"
+        + "<span>" + esc(r.automation_level || "—") + "</span>"
+        + "<span>" + (techs.length ? esc(techs.join(", ")) : "—") + "</span></div>";
+    }).join("");
+    // 대표값 vs 과별 합계 — **다른 게 정상**임을 여기 적어둔다. 요약 탭 UNIT_NOTE 와 같은 이유로,
+    // 이 문구가 없으면 "숫자가 안 맞는다"는 문의가 반드시 나온다.
+    var rep = loadOf(n), sum = 0, any = false;
+    recs.forEach(function (r) {
+      var l = loadOf(r);
+      if (l.kind === rep.kind && l.hours) { sum += l.hours; any = true; }
+    });
+    sum = Math.round(sum * 10) / 10;
+    var unit = rep.kind === "per_ship" ? "h/호선" : "h/년";
+    var note = (rep.kind === "unresolved" || !any) ? ""
+      : '<div class="warn" style="margin-top:8px">대표값 <b>' + rep.hours + unit
+        + "</b> · 과별 제출 합계 <b>" + sum + unit + "</b> — 대표값은 <b>첫 제출자 1명분</b>이고 "
+        + "합계는 <b>수행 과 전부의 합</b>이라 다른 것이 정상입니다.</div>";
+    return '<div style="margin-top:12px"><div class="fl">🏢 과별 제출값 '
+      + '<span style="color:#a8a29e;font-weight:600">· ' + recs.length
+      + "개 과 제출 (취합 원본 · 읽기전용 · 소속은 스캔 폴더 기준)</span></div>"
+      + '<div class="cardbox">' + head + rows + "</div>" + note + "</div>";
   }
 
   /** 요약 드릴다운 — 선택한 집계 칸에 속한 lv6 목록.
@@ -2401,6 +2532,10 @@
   function sumNodes(axis, key) {
     var out = S.nodes.filter(function (n) {
       if (!isLoadLevel(n.level)) return false;
+      // 부서/과 필터를 **먼저** 건다. 기존 axis 분기는 한 줄도 건드리지 않는다 —
+      // stats() 와 게이트를 공유해야 표의 숫자와 목록 개수가 어긋나지 않기 때문이다.
+      if (S.fDept && deptsOf(n).indexOf(S.fDept) < 0) return false;
+      if (S.fGroup && deptGroupsOf(n).indexOf(S.fGroup) < 0) return false;
       if (axis === "all") return true;
       if (axis === "hours") return true;                     // 전체 — 정렬만 다르다
       if (axis === "missing") return rollupHours(n) <= 0 && !isShipRoutine(n);
@@ -2450,8 +2585,13 @@
       var chips = (aiNow ? '<span class="aichip now" title="' + esc(techs.join(", ")) + '">🤖 현재</span>' : "")
                 + (aiFut ? '<span class="aichip fut" title="' + esc(ftechs.join(", ")) + '">🤖 향후</span>' : "")
                 + (!aiNow && !aiFut ? '<span class="aichip off">미적용</span>' : "");
-      var meta = [ds.join(", "),
-                  h ? h + "h/년" : (isShipRoutine(n) ? "호선루틴 보류" : "부하 미입력")].filter(Boolean).join(" · ");
+      // 과 필터가 걸려 있고 그 과의 제출값이 있으면 **그 과 값**으로 보여준다 —
+      // 대표값(첫 제출자)을 그대로 두면 "우리 과는 0.5h 로 냈는데 왜 2h 로 보이지"가 된다.
+      var rec = S.fDept ? (n.submissions || []).filter(function (r) { return r && r.dept === S.fDept; })[0] : null;
+      var meta = rec
+        ? [S.fDept, loadLabel(rec), rec.automation_level || ""].filter(Boolean).join(" · ") + " · 제출값"
+        : [ds.join(", "),
+           h ? h + "h/년" : (isShipRoutine(n) ? "호선루틴 보류" : "부하 미입력")].filter(Boolean).join(" · ");
       var techLine = [techs.length ? "현재 " + techs.join(", ") : "",
                       ftechs.length ? "향후 " + ftechs.join(", ") : ""].filter(Boolean).join(" · ");
       return '<div class="sumrow" data-act="gonode" data-id="' + esc(n.id) + '" title="클릭하면 계층 편집에서 이 업무를 엽니다">'
@@ -2460,7 +2600,11 @@
         + (techLine ? '<div class="sm">' + esc(techLine) + "</div>" : "") + "</div>"
         + '<div class="sright">' + chips + '<span class="sm">' + esc(meta) + "</span></div></div>";
     }).join("");
-    return '<div class="sumside"><div class="sumhead"><b>' + esc(title) + '</b><span>' + list.length + '개</span>'
+    var fTag = (S.fGroup || S.fDept)
+      ? '<span style="color:#0f766e;font-weight:700">🏢 ' + esc([S.fGroup, S.fDept].filter(Boolean).join(" › ")) + "</span>"
+      : "";
+    return '<div class="sumside"><div class="sumhead"><b>' + esc(title) + "</b>" + fTag
+      + '<span>' + list.length + '개</span>'
       + (S.sumPick ? '<button class="sumx" data-act="sumclose" title="전체 보기로">✕</button>' : "") + "</div>"
       + '<div class="sumlist">' + (rows || '<div class="sumrow" style="color:#a8a29e">해당 업무가 없습니다.</div>') + "</div></div>";
   }
@@ -2495,7 +2639,7 @@
     }
     var dirtyWarn = S.dirty.length
       ? '<div class="warn" style="margin-bottom:14px">⚠ 저장하지 않은 변경 ' + S.dirty.length + "건이 있습니다. 복원하면 사라집니다.</div>" : "";
-    var authWarn = !S.author ? '<div class="warn" style="margin-bottom:14px">복원하려면 상단에 작성자를 입력하세요.</div>' : "";
+    var authWarn = !S.author ? '<div class="warn" style="margin-bottom:14px">복원하려면 상단에 저장자를 입력하세요.</div>' : "";
     var can = S.restoreOk && !!S.author;
     var ACT = { save: "저장", force: "강제 덮어쓰기", restore: "복원" };
     var auditRows = aud.length
@@ -2662,6 +2806,7 @@
       rerender();
     }
     else if (a === "sumclose") S.sumPick = null, rerender();
+    else if (a === "fclear") { S.fGroup = ""; S.fDept = ""; rerender(); }   // 요약 부서/과 필터 해제(뷰 상태)
     // 과별 막대의 현재/향후 전환 — 그래프만 바뀐다. 선택 중이던 축이 반대편이면 함께 옮겨준다.
     else if (a === "aitab") {
       S.aiTab = d.k;
@@ -2682,7 +2827,7 @@
     else if (a === "gonode") { selectPath(d.id); S.activeTab = "tree"; rerender(); }
     else if (a === "down") { if (d.fmt === "json") jsonDownload(); else csvDownload(S.mask, "프로세스계층도_" + _dateStamp() + ".csv"); }
     else if (a === "histpick") actHistPick(+d.i);
-    else if (a === "restore") { if (!S.author) return flash("작성자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
+    else if (a === "restore") { if (!S.author) return flash("저장자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
     else if (a === "reload") actReload();
     else if (a === "force") emit({ type: "force", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
     else if (a === "dismiss") { S.conflict = null; rerender(); }
@@ -2803,6 +2948,10 @@
     if (BLUR_SYNC[f]) { rerender(); return; }
     if (f === "ai") return actUpdate(el.dataset.id, "has_ai_agent", el.checked);
     if (f === "mydept") { S.dept = el.value; soloSave(); rerender(); return; }
+    // 요약 탭 부서/과 필터 — 순수 뷰 상태라 markDirty 도 emit 도 하지 않는다(저장 대상 아님).
+    // 부서를 바꾸면 과 선택을 비운다 — 다른 부서의 과가 남아 있으면 결과가 항상 0건이 된다.
+    if (f === "fgroup") { S.fGroup = el.value; S.fDept = ""; rerender(); return; }
+    if (f === "fdept") { S.fDept = el.value; rerender(); return; }
     if (f === "ev_event") return actEvSet(el.dataset.id, +el.dataset.idx, "event", el.value);
     if (f === "ls_system") { actLinkSet(el.dataset.id, +el.dataset.idx, "system", el.value); rerender(); return; }
     if (f === "dept" || f === "automation_level" || f === "linked_system")

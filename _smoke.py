@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -171,7 +172,7 @@ def main() -> int:
     ck(loaded["updated_by"] == "김철수", "작성자 기록")
 
     r_noauthor = store.save_tree(loaded, "  ")
-    ck(not r_noauthor.ok and "작성자" in r_noauthor.error, "작성자 미입력 저장 거부")
+    ck(not r_noauthor.ok and "저장자" in r_noauthor.error, "저장자 미입력 저장 거부")
 
     # 9. 충돌 검사
     stale = json.loads(json.dumps(loaded))
@@ -512,7 +513,7 @@ def main() -> int:
     ck("owner" not in old_own["nodes"][0], "normalize 가 옛 owner 값을 지운다")
     ck(old_own["nodes"][0]["dept"] == "선장운전1과", "소속은 그대로 남는다")
     ck("담당자" not in excel_io.TREE_COLS, "엑셀 계층도 시트에 담당자 열이 없다")
-    ck("작성자" in excel_io.TREE_COLS, "작성자(updated_by)는 별개라 남는다")
+    ck("저장자" in excel_io.TREE_COLS, "저장자(updated_by)는 별개라 남는다 — 취합본을 다듬는 사람")
 
     # 23-g. 소속 다중 귀속 — 한 업무를 여러 과가 수행
     nd_md = schema.bootstrap()
@@ -824,14 +825,18 @@ def main() -> int:
                            "nodes": schema.normalize(nd)["nodes"], "domains": {}},
                           ensure_ascii=False).encode("utf-8")
 
-    rfiles = [("과A/프로세스_A_시운전1부_20260721.json", _mkfile7r("시운전1부", "A")),
-              ("과B/sub/프로세스_B_시운전2부_20260721.json", _mkfile7r("시운전2부", "B"))]
+    # 운영 공유폴더와 같은 <부서>/<과>/ 구조. 봉투에는 **부서명**이 들어 있지만 소속의
+    # 정본은 폴더이므로, 집계에 잡히는 것은 두 번째 폴더(과)여야 한다.
+    rfiles = [("시운전1부/기장운전1과/프로세스_A_시운전1부_20260721.json", _mkfile7r("시운전1부", "A")),
+              ("시운전2부/기장운전2과/sub/프로세스_B_시운전2부_20260721.json", _mkfile7r("시운전2부", "B"))]
     rmerged, rreports, rerr = excel_io.collect_jsons(rfiles, schema.bootstrap())
     ck(rerr == [], f"상대경로 파일 취합 전역오류 없음: {rerr}")
     rl6 = [n for n in rmerged["nodes"] if n["level"] == 6]
     ck(len(rl6) == 1 and rl6[0].get("submit_count") == "2", "하위 폴더 2건 인원수 = 2 (경로 병합)")
-    ck(sorted(r["filename"] for r in rreports) == ["과A/프로세스_A_시운전1부_20260721.json",
-                                                   "과B/sub/프로세스_B_시운전2부_20260721.json"],
+    ck(rl6[0].get("depts") == ["기장운전1과", "기장운전2과"],
+       "소속은 봉투(부서)가 아니라 **폴더의 과** 기준")
+    ck(sorted(r["filename"] for r in rreports) == ["시운전1부/기장운전1과/프로세스_A_시운전1부_20260721.json",
+                                                   "시운전2부/기장운전2과/sub/프로세스_B_시운전2부_20260721.json"],
        "리포트 filename 이 상대경로(하위 폴더) 그대로 보존")
 
     # 28. 같은 이름 형제 중복 감지 (복사 기능 가드 — JS dupSiblings 트윈)
@@ -870,6 +875,143 @@ def main() -> int:
         [dict(n) for n in dt["nodes"]] +
         [{"id": "dupx", "parent_id": p5, "level": 6, "name": "정밀시험"}]})) == [],
        "validate 는 동명 형제를 오류로 취급하지 않음")
+
+    # 29. 폴더 기반 소속 + 부서별 제출값(submissions)
+    # ── (a) 스키마 계약 ──
+    ck("submissions" in schema.NODE_DEFAULTS, "submissions 가 NODE_DEFAULTS 에 있다")
+    ck("submissions" not in schema.DETAIL_FIELDS,
+       "submissions 는 DETAIL_FIELDS 에 없다 (자기참조·has_hidden_detail 오탐 방지)")
+    ck("submissions" not in excel_io.FIELD_COLS.values(), "submissions 는 FIELD_COLS 에 없다 (역수입 금지)")
+    _need = {"occur_pattern", "apply_phases", "events", "work_hours", "freq_unit", "freq_count",
+             "tech", "future_tech", "automation_level", "ship_types", "special_note",
+             "linked_systems", "outputs"}
+    ck(_need <= set(schema.SUBMISSION_FIELDS),
+       f"SUBMISSION_FIELDS 가 상세필드를 전부 담는다 (빠진 것: {sorted(_need - set(schema.SUBMISSION_FIELDS))})")
+    ck(not ({"dept", "depts"} & set(schema.SUBMISSION_FIELDS)),
+       "SUBMISSION_FIELDS 에 dept/depts 는 없다 (dept 는 레코드 키, depts 는 집계 산출물)")
+    ck("제출과수" in excel_io.DERIVED_COLS and "제출합계공수(h)" in excel_io.DERIVED_COLS
+       and "제출과수" not in excel_io.FIELD_COLS, "제출과수·제출합계공수는 DERIVED_COLS(쓰기 전용)")
+
+    # ── (b) 폴더 → (부서, 과) ──
+    _bs = chr(92)
+    ck(excel_io._dept_from_path("시운전1부/기장운전1과/프로세스_A_20260819.json")
+       == ("시운전1부", "기장운전1과"), "폴더 2단 → (부서, 과)")
+    ck(excel_io._dept_from_path("시운전1부/프로세스_A.json") == ("시운전1부", ""), "폴더 1단 → 부서만")
+    ck(excel_io._dept_from_path("프로세스_A.json") == ("", ""), "루트 직하 → 폴더 정보 없음(폴백 대상)")
+    ck(excel_io._dept_from_path("부서/과/서브/f.json") == ("부서", "과"), "3단 이하 하위폴더는 무시")
+    ck(excel_io._dept_from_path("시운전1부" + _bs + "기장운전1과" + _bs + "f.json")
+       == ("시운전1부", "기장운전1과"), "역슬래시 경로도 동일 파싱")
+
+    # ── (c) 폴더가 봉투를 이긴다 + 과별 값 보존 ──
+    def _mkf29(author, wh, tech, dept_env="시운전3부", name="레이더시험"):
+        nd = schema.bootstrap()
+        q4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "항해장비")
+        q5 = schema.add_node(nd, q4, 5, "x", "레이더")
+        q6 = schema.add_node(nd, q5, 6, "x", name)
+        schema.update_node(nd, q6, {"work_hours": wh, "freq_unit": "주", "freq_count": "3",
+                                    "automation_level": "부분자동", "tech": list(tech),
+                                    "occur_pattern": "상시루틴"}, "x")
+        return json.dumps({"exported_by": author, "exported_dept": dept_env,
+                           "nodes": schema.normalize(nd)["nodes"], "domains": {}},
+                          ensure_ascii=False).encode("utf-8")
+
+    fA29 = ("시운전1부/기장운전1과/프로세스_A_20260819.json", _mkf29("홍길동", "0.5", ["RPA"]))
+    fB29 = ("시운전1부/선장운전1과/프로세스_B_20260819.json", _mkf29("김철수", "2", ["LLM", "OCR"]))
+    m29, rep29, err29 = excel_io.collect_jsons([fA29, fB29], schema.bootstrap())
+    ck(err29 == [], f"폴더 취합 전역오류 없음: {err29}")
+    ck(sorted(r["dept"] for r in rep29) == ["기장운전1과", "선장운전1과"],
+       "봉투가 시운전3부여도 **폴더의 과가 이긴다**")
+    l6_29 = [n for n in m29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(l6_29["depts"] == ["기장운전1과", "선장운전1과"], "depts 가 폴더 기준 두 과")
+    subs29 = l6_29["submissions"]
+    ck(sorted((r["dept"], r["work_hours"]) for r in subs29)
+       == [("기장운전1과", "0.5"), ("선장운전1과", "2")],
+       "★ 과마다 다른 소요시간이 그대로 보존된다 (이 작업의 핵심 요구사항)")
+    ck([r["dept"] for r in subs29 if "LLM" in (r.get("tech") or [])] == ["선장운전1과"],
+       "과별 활용기술도 분리 보존")
+    ck(sum(r["count"] for r in subs29) == int(l6_29["submit_count"]),
+       "sum(rec.count) == submit_count 불변식")
+    ck("홍길동" not in json.dumps(subs29, ensure_ascii=False),
+       "제출자 이름은 레코드에 저장되지 않는다 (개인정보 최소수집)")
+    ck(not any("annual_hours" in r for r in subs29), "곱한 값(annual_hours)은 저장하지 않는다")
+    ck(schema.annual_hours(subs29[0]) > 0, "레코드에도 annual_hours 계산이 그대로 동작한다")
+    ck(schema.submission_of(l6_29, "선장운전1과")["work_hours"] == "2", "submission_of 로 과별 값 조회")
+
+    # 폴더 없음 → 봉투 폴백 / 봉투도 없음 → 파일명 폴백 (브라우저 다중업로드 방어)
+    _, repf29, _ = excel_io.collect_jsons(
+        [("프로세스_A_20260819.json", _mkf29("홍길동", "1", []))], schema.bootstrap())
+    ck(repf29[0]["dept"] == "시운전3부", "폴더가 없으면 봉투로 폴백")
+    _nb29 = json.dumps({"nodes": json.loads(_mkf29("x", "1", []).decode("utf-8"))["nodes"],
+                        "domains": {}}, ensure_ascii=False).encode("utf-8")
+    _, repn29, _ = excel_io.collect_jsons(
+        [("프로세스_홍길동_시운전2부_20260819.json", _nb29)], schema.bootstrap())
+    ck(repn29[0]["dept"] == "시운전2부", "봉투도 없으면 파일명으로 폴백")
+
+    # ── (d) 미매핑 폴더명 = 원문 보존 / 부서 불일치 경고 ──
+    m29u, _, _ = excel_io.collect_jsons(
+        [("신설부/신설과/프로세스_A_20260819.json", _mkf29("홍길동", "1", []))], schema.bootstrap())
+    l6u29 = [n for n in m29u["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(l6u29["depts"] == ["신설과"], "매핑에 없는 폴더명은 원문 그대로 (값 유실 금지)")
+    ck(schema.dept_parent("신설과") == "미분류", "미매핑 과는 미분류로 롤업")
+    ck("신설과" in (excel_io.unknown_domain_values(m29u).get("dept") or []),
+       "미등록 과를 unknown_domain_values 가 잡는다 (도메인 승인 흐름 재사용)")
+    _, repw29, _ = excel_io.collect_jsons(
+        [("시운전2부/기장운전1과/프로세스_A_20260819.json", _mkf29("홍길동", "1", []))],
+        schema.bootstrap())
+    ck(bool(repw29[0]["warn"]) and not repw29[0]["errors"],
+       "폴더 부서 불일치는 warn 이지 errors 가 아니다 (파일이 통째로 제외되면 안 된다)")
+
+    # ── (e) 같은 과 합산 / 재취합 멱등 · 교체 · 미스캔 경로 보존 ──
+    mS29, _, _ = excel_io.collect_jsons(
+        [("시운전1부/기장운전1과/프로세스_A_20260819.json", _mkf29("홍길동", "0.5", ["RPA"])),
+         ("시운전1부/기장운전1과/프로세스_B_20260819.json", _mkf29("김철수", "0.5", ["RPA"]))],
+        schema.bootstrap())
+    l6S29 = [n for n in mS29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(len(l6S29["submissions"]) == 1 and l6S29["submissions"][0]["count"] == 2,
+       "같은 과가 **같은 값**을 내면 레코드 1건 + 인원 2 (이름 없이 인원 보존)")
+    m29b, _, _ = excel_io.collect_jsons([fA29, fB29], m29)
+    l6b29 = [n for n in m29b["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(l6b29["submissions"] == subs29, "재취합 멱등 — submissions 불변")
+    m29c, _, _ = excel_io.collect_jsons(
+        [("시운전2부/기장운전2과/프로세스_A_20260819.json", _mkf29("홍길동", "0.5", ["RPA"]))], m29)
+    l6c29 = [n for n in m29c["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck([r["dept"] for r in l6c29["submissions"]] == ["기장운전2과"],
+       "재취합은 submissions 를 **교체**한다 (누적하면 정정이 원천 불가 — depts 와 같은 원칙)")
+    fD29 = ("시운전1부/전장운전1과/프로세스_D_20260819.json",
+            _mkf29("이영희", "3", [], name="자이로시험"))
+    mD29, _, _ = excel_io.collect_jsons([fA29, fD29], schema.bootstrap())
+    mD29b, _, _ = excel_io.collect_jsons([fA29], mD29)          # 레이더시험만 재스캔
+    gy29 = [n for n in mD29b["nodes"] if n["name"] == "자이로시험"][0]
+    ck([r["dept"] for r in gy29["submissions"]] == ["전장운전1과"],
+       "이번 스캔에 **없는** 경로의 submissions 는 건드리지 않는다")
+
+    # ── (f) 엑셀 왕복 · 제출상세 시트 · KPI 불변 ──
+    rt29, _ = excel_io.parse_excel(excel_io.build_xlsx(m29, mask=False), m29)
+    r6_29 = [n for n in rt29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(r6_29.get("submissions") == subs29,
+       "★ 엑셀 왕복 후에도 submissions 생존 (parse_excel 이 base 에서 보존)")
+    ck(len(excel_io._submission_df(m29)) == sum(len(schema.submissions_of(n)) for n in m29["nodes"]),
+       "제출상세 시트 행수 == Σ len(submissions)")
+    ck(excel_io._submission_df(schema.bootstrap()).empty, "취합 전 트리는 제출상세 시트를 만들지 않는다")
+    m29_nosub = copy.deepcopy(m29)
+    for _n29 in m29_nosub["nodes"]:
+        _n29["submissions"] = []
+    ck(schema.stats(m29) == schema.stats(m29_nosub), "stats(KPI)는 submissions 도입 전후 동일")
+
+    # ── (g) normalize 방어 · 개인 JSON 이어붙이기 ──
+    bad29 = schema.normalize({"nodes": [{"id": "b1", "parent_id": "__root__", "level": 6, "name": "b",
+                                         "submissions": ["문자열", {"work_hours": "1"}, 3,
+                                                         {"dept": "기장운전1과", "work_hours": "1"}]}]})
+    ck([r["dept"] for r in bad29["nodes"][0]["submissions"]] == ["기장운전1과"],
+       "깨진 레코드(문자열·숫자·소속 없음)는 버린다")
+    ck("has_ai_agent" not in bad29["nodes"][0]["submissions"][0], "빈 값 키는 저장하지 않는다(희소 저장)")
+    _solo29 = json.dumps({"nodes": [dict(n, submissions=[], submit_count="", submit_detail="")
+                                    for n in m29["nodes"]], "domains": {}},
+                         ensure_ascii=False).encode("utf-8")
+    pj29, _ = excel_io.parse_json(_solo29, m29)
+    p6_29 = [n for n in pj29["nodes"] if n["level"] == 6 and n["name"] == "레이더시험"][0]
+    ck(p6_29.get("submissions") == subs29,
+       "개인 JSON 이어붙이기가 과별 제출값을 지우지 않는다 (취합 산출물은 base 보존)")
 
     print()
     if _fails:
