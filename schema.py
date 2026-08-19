@@ -275,6 +275,14 @@ DEFAULT_DOMAINS: Final[dict[str, list[str]]] = {
     "linked_system": ["SAP", "NONSAP"],
     "ship_type": ["CNT", "COT", "LNG", "SHTL", "VLAC", "VLCC", "FLNG"],   # 적용 선종(다중)
     "special_note": ["SG", "DF(LNG)", "메탄올", "LPG"],                    # 특이사항(다중)
+    # AI 적용으로 **세지 않을** 활용기술. 화면·엑셀 라벨은 긍정형("AI로 카운트")이지만 저장은 부정형이다.
+    # ★ 포함목록(=AI로 셀 기술)이 아니라 **제외목록**인 이유:
+    #   · 기본값이 [] 라 기존 저장본이 그대로 통과한다 — 마이그레이션이 무손실이고 자명하다.
+    #     포함목록이면 "지금까지 전부 AI로 셌다"를 지키려고 백필 예외를 파이썬·JS 양쪽에 둬야 한다.
+    #   · 새 기술이 들어오는 경로가 4개(도메인 추가·패널에서 직접 추가·취합 승인·엑셀 승인)인데,
+    #     포함목록이면 그때마다 명단에 넣어줘야 하고 빠뜨리면 **AI율이 조용히 과소** 계상된다.
+    #     제외목록은 명단에 없으면 AI라 현행 의미가 그대로 보존된다(동기화 지점 0).
+    "tech_no_ai": [],
 }
 
 DOMAIN_LABELS: Final[dict[str, str]] = {
@@ -285,6 +293,7 @@ DOMAIN_LABELS: Final[dict[str, str]] = {
     "linked_system": "연계시스템",
     "ship_type": "적용 선종",
     "special_note": "특이사항",
+    "tech_no_ai": "AI 카운트 제외 기술",
 }
 
 # 노드 필드 기본값 (누락 필드 보정용)
@@ -470,7 +479,16 @@ def renumber(data: dict, parent_id: str) -> None:
         n["order"] = i
 
 
-def _norm_detail_fields(d: dict) -> dict:
+def _has_ai(vals: Any, no_ai: frozenset[str]) -> bool:
+    """이 기술 목록이 **AI 적용**인가 — 제외목록에 없는 기술이 하나라도 있으면 참.
+
+    예전엔 `bool(tech)` 였다. 활용기술에 SAP·엑셀매크로 같은 **현행 시스템**을 적는 일이 생기면서,
+    그것만 가진 업무까지 AI 적용으로 세어 적용률이 부풀었다. 제외 여부는 도메인에서 정한다.
+    """
+    return any(t for t in (vals or []) if t not in no_ai)
+
+
+def _norm_detail_fields(d: dict, no_ai: frozenset[str] = frozenset()) -> dict:
     """상세 필드(events·다중값 리스트·연계시스템·파생 AI)를 제자리 정규화한다.
 
     ★ 노드 본체와 **부서별 제출 레코드**(submissions[])가 같은 규칙을 쓰게 하려고 뽑아냈다.
@@ -502,9 +520,11 @@ def _norm_detail_fields(d: dict) -> dict:
         ls = [{"system": str(d.get("linked_system") or "").strip(),
                "detail": str(d.get("linked_system_detail") or "").strip()}]
     d["linked_systems"] = ls
-    # AI 적용여부는 파생: 현재=활용기술 있으면, 향후=향후기술 있으면
-    d["has_ai_agent"] = len(d["tech"]) > 0
-    d["has_ai_future"] = len(d["future_tech"]) > 0
+    # AI 적용여부는 파생 — **제외목록에 없는 기술이 하나라도 있으면** 적용(_has_ai 주석 참조).
+    # 저장형 파생을 유지하는 이유: 소비자(rollup_has_ai→stats→KPI·막대·엑셀 요약·드릴다운)가 10곳인데
+    # 이 두 줄만 고치면 전원 자동으로 따라온다. 읽기 시점 계산으로 바꾸면 그 10곳 + JS 트윈을 다 손대야 한다.
+    d["has_ai_agent"] = _has_ai(d["tech"], no_ai)
+    d["has_ai_future"] = _has_ai(d["future_tech"], no_ai)
     return d
 
 
@@ -523,7 +543,7 @@ def _submission_sig(rec: dict) -> str:
                       ensure_ascii=False, sort_keys=True, default=str)
 
 
-def _norm_submissions(raw: Any) -> list[dict]:
+def _norm_submissions(raw: Any, no_ai: frozenset[str] = frozenset()) -> list[dict]:
     """부서별 제출값 레코드 목록 정규화 — collect_jsons 가 채우고 여기서 형태를 확정한다.
 
     · dict 아닌 원소·소속 없는 레코드는 버린다 (events 와 같은 규칙 — 반쪽으로 두지 않는다).
@@ -548,7 +568,7 @@ def _norm_submissions(raw: Any) -> list[dict]:
                 dv = NODE_DEFAULTS.get(k, "")
                 v = list(dv) if isinstance(dv, list) else dv
             rec[k] = v
-        _norm_detail_fields(rec)
+        _norm_detail_fields(rec, no_ai)      # 레코드도 노드와 **같은 AI 규칙** — 안 그러면 표·엑셀이 갈린다
         rec = {k: v for k, v in rec.items() if not _is_empty(v)}
         rec["dept"] = dept
         try:
@@ -590,13 +610,17 @@ def normalize(data: dict) -> dict:
             doms[k] = list(v)
         else:
             doms[k] = [str(x).strip() for x in cur if str(x).strip()]
+    # ★ 도메인 백필 **뒤에** 만든다 — 앞에서 만들면 키가 없는 옛 트리에서 빈 집합이 되어
+    #   제외 설정이 로드 한 번에 무시된다. 빈 리스트([])는 "전부 AI"가 아니라 "제외 없음"이고,
+    #   전부 체크 해제한 상태도 []가 아니라 tech 전체가 들어간 상태다(둘을 혼동하지 말 것).
+    no_ai = frozenset(doms.get("tech_no_ai") or ())
 
     nodes = [n for n in data["nodes"] if isinstance(n, dict) and n.get("id")]
     for n in nodes:
         for k, dv in NODE_DEFAULTS.items():
             if k not in n or n[k] is None:
                 n[k] = list(dv) if isinstance(dv, list) else dv
-        _norm_detail_fields(n)
+        _norm_detail_fields(n, no_ai)
         # 담당자 제거 — 옛 저장본에 남은 이름을 **로드 시점에** 지운다(개인정보 최소수집).
         # 저장을 누르면 파일에서도 사라진다. updated_by(저장한 사람)는 별개라 건드리지 않는다.
         n.pop("owner", None)
@@ -618,7 +642,7 @@ def normalize(data: dict) -> dict:
             n["dept"] = ds[0]          # 대표 과 (카드·엑셀 단일 표시용)
         n["depts"] = ds
         # 과별 제출값 원본 — 취합 산출물이라 형태만 확정하고 값은 건드리지 않는다.
-        n["submissions"] = _norm_submissions(n.get("submissions"))
+        n["submissions"] = _norm_submissions(n.get("submissions"), no_ai)
         n["name"] = str(n.get("name") or "").strip()
         n.setdefault("parent_id", ROOT_ID)
         n.setdefault("created_at", now_iso())

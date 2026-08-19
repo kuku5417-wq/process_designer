@@ -142,6 +142,9 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     s = schema.stats(data)
     lv6 = f"lv{schema.FULL_DETAIL_LEVEL} {schema.LEVEL_LABELS[schema.FULL_DETAIL_LEVEL]}"
     multi = "※ 다중선택 — 한 업무가 여러 값을 가지면 각 값에 1회씩(합계 ≠ 업무 수)"
+    # 활용기술 집계는 **사용량 축**이라 AI 여부와 무관하다 — 제외 기술도 여기엔 그대로 잡힌다.
+    # 이 문구가 없으면 "SAP 7건인데 AI는 0건" 이 버그로 읽힌다.
+    tech_note = "※ 사용량 기준 — AI 카운트 제외 기술도 포함됩니다(AI 적용률과 축이 다름)"
     # 과·부서 축은 **수행 주체 기준**이라 한 업무가 여러 과에 잡힌다. lv6 수와 단위가 다르다.
     multi_dept = "※ 한 업무를 여러 과가 수행하면 각 과에 1회씩 — 합계는 세부업무 수와 다릅니다"
     rows: list[dict] = [
@@ -166,9 +169,13 @@ def _summary_df(data: dict, mask: bool = True) -> pd.DataFrame:
     for a, c in s["by_automation"].items():
         rows.append({"구분": f"자동화수준별 ({lv6} 기준)", "항목": a, "값": c})
     for t, c in s["by_tech_now"].items():
-        rows.append({"구분": f"활용기술 — 현재 ({lv6} 기준)", "항목": t, "값": c, "비고": multi})
+        rows.append({"구분": f"활용기술 — 현재 ({lv6} 기준)", "항목": t, "값": c, "비고": multi + " " + tech_note})
     for t, c in s["by_tech_future"].items():
-        rows.append({"구분": f"활용기술 — 향후 ({lv6} 기준)", "항목": t, "값": c, "비고": multi})
+        rows.append({"구분": f"활용기술 — 향후 ({lv6} 기준)", "항목": t, "값": c, "비고": multi + " " + tech_note})
+    # AI 적용률이 왜 그 숫자인지의 근거를 엑셀 안에 남긴다 — 화면을 안 보는 사람이 받는 파일이다.
+    for t in (data.get("domains", {}).get("tech_no_ai") or []):
+        rows.append({"구분": "AI 카운트 제외 기술", "항목": t, "값": "",
+                     "비고": "이 기술만 가진 업무는 AI 적용에서 제외됩니다"})
     return pd.DataFrame(rows)
 
 

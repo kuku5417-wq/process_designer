@@ -1070,6 +1070,78 @@ def main() -> int:
     ck([g["name"] for g in store.list_saves()] == ["정본무관"], "삭제 후 목록에서 계보가 빠진다")
     ck(not (pc.get_saves_dir() / "2026 상반기안").exists(), "폴더까지 지워진다")
 
+    # 31. AI 카운트 제외 기술 (domains["tech_no_ai"])
+    ck(schema.DEFAULT_DOMAINS["tech_no_ai"] == [],
+       "기본값은 빈 목록 — 제외 없음 = 기존과 동일(마이그레이션 무손실)")
+    ck(schema.DOMAIN_LABELS.get("tech_no_ai") == "AI 카운트 제외 기술", "도메인 라벨 등록")
+    ck("tech_no_ai" not in (excel_io.unknown_domain_values(schema.bootstrap()) or {}),
+       "노드에서 값을 수집하는 축이 아니다 (unknown_domain_values 에 넣지 않는다)")
+
+    def _mk31(no_ai=None):
+        nd = schema.bootstrap()
+        b4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "AI테스트")
+        b5 = schema.add_node(nd, b4, 5, "x", "중")
+        a1 = schema.add_node(nd, b5, 6, "x", "SAP만")
+        a2 = schema.add_node(nd, b5, 6, "x", "SAP와LLM")
+        a3 = schema.add_node(nd, b5, 6, "x", "기술없음")
+        schema.update_node(nd, a1, {"tech": ["SAP"]}, "x")
+        schema.update_node(nd, a2, {"tech": ["SAP", "LLM"]}, "x")
+        nd.setdefault("domains", {})["tech"] = ["SAP", "LLM"]
+        if no_ai is not None:
+            nd["domains"]["tech_no_ai"] = list(no_ai)
+        return schema.normalize(nd), a1, a2, a3
+
+    base31, _, _, _ = _mk31()
+    off31, id_sap, id_both, _ = _mk31(["SAP"])   # id 는 **이 트리 것**을 써야 한다(트리마다 새 uuid)
+    s_base, s_off = schema.stats(base31), schema.stats(off31)
+    ck(s_base["ai_yes"] == 2, f"제외 없으면 SAP·LLM 둘 다 AI (실제 {s_base['ai_yes']})")
+    ck(s_off["ai_yes"] == 1, f"SAP 를 제외하면 'SAP만' 이 빠진다 (실제 {s_off['ai_yes']})")
+    nmap31 = schema.node_map(off31["nodes"])
+    ck(nmap31[id_sap]["has_ai_agent"] is False, "제외 기술만 가진 lv6 은 AI 미적용")
+    ck(nmap31[id_both]["has_ai_agent"] is True, "제외 기술 + AI 기술을 함께 가지면 AI 적용")
+    ck(s_base["by_tech_now"] == s_off["by_tech_now"],
+       "★ 활용기술 사용량 집계는 **불변** — AI 여부와 축이 다르다(SAP 가 계속 잡히는 게 정상)")
+
+    # 옛 트리(도메인에 키 자체가 없음) → 무손실. 상수로 박지 말고 '제외 비운 사본' 과 비교한다.
+    legacy31 = schema.normalize({"nodes": [dict(n) for n in base31["nodes"]],
+                                 "domains": {k: list(v) for k, v in base31["domains"].items()
+                                             if k != "tech_no_ai"}})
+    ck(schema.stats(legacy31)["ai_yes"] == s_base["ai_yes"],
+       "tech_no_ai 키가 없는 옛 저장본도 AI 지표가 그대로 (무손실 마이그레이션)")
+    ck(legacy31["domains"]["tech_no_ai"] == [], "normalize 가 빈 목록으로 백필한다")
+
+    # 전부 체크 해제(= tech 전체가 제외목록) 상태가 로드마다 되살아나지 않아야 한다
+    allof31, _, _, _ = _mk31(["SAP", "LLM"])
+    ck(schema.stats(allof31)["ai_yes"] == 0, "전부 제외하면 AI 0건")
+    ck(schema.normalize(allof31)["domains"]["tech_no_ai"] == ["SAP", "LLM"],
+       "'전부 제외' 는 빈 목록과 다르다 — 재정규화에도 유지된다")
+
+    # lv7 자식만 제외기술을 가져도 부모 lv6 롤업에 반영
+    r31 = schema.bootstrap()
+    c4 = schema.add_node(r31, "lv3_seonjang", 4, "x", "롤업")
+    c5 = schema.add_node(r31, c4, 5, "x", "중")
+    c6 = schema.add_node(r31, c5, 6, "x", "부모")
+    c7 = schema.add_node(r31, c6, 7, "x", "자식")
+    schema.update_node(r31, c7, {"tech": ["SAP"]}, "x")
+    r31.setdefault("domains", {})["tech"] = ["SAP"]
+    ck(schema.stats(schema.normalize(r31))["ai_yes"] == 1, "제외 전: lv7 기술이 부모 lv6 으로 롤업")
+    r31["domains"]["tech_no_ai"] = ["SAP"]
+    ck(schema.stats(schema.normalize(r31))["ai_yes"] == 0, "제외 후: 롤업에서도 빠진다")
+
+    # 과별 제출값 레코드도 같은 규칙을 타야 한다 (안 그러면 표·엑셀이 노드와 갈린다)
+    rec31 = schema.normalize({
+        "nodes": [{"id": "s1", "parent_id": "__root__", "level": 6, "name": "s",
+                   "submissions": [{"dept": "기장운전1과", "tech": ["SAP"]},
+                                   {"dept": "선장운전1과", "tech": ["SAP", "LLM"]}]}],
+        "domains": {"tech": ["SAP", "LLM"], "tech_no_ai": ["SAP"]}})
+    subs31 = rec31["nodes"][0]["submissions"]
+    ck([bool(r.get("has_ai_agent")) for r in subs31] == [False, True],
+       "레코드의 AI 파생도 제외목록을 따른다")
+
+    # 엑셀 왕복에서 도메인 키가 살아남는다
+    rt31, _ = excel_io.parse_excel(excel_io.build_xlsx(off31, mask=False), off31)
+    ck(rt31["domains"].get("tech_no_ai") == ["SAP"], "엑셀 왕복 후에도 tech_no_ai 생존")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

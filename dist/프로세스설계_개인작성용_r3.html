@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1648";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -335,6 +335,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
   .dhead, .drow { display: grid; grid-template-columns: 1fr auto auto; gap: 14px; align-items: center; padding: 10px 16px; }
   .dhead { background: #faf8f3; border-bottom: 1px solid #f4f1ea; font-size: 13px; font-weight: 800; color: #a8a29e; }
   .drow { border-bottom: 1px solid #f7f4ee; }
+  /* 활용기술 탭만 'AI로 카운트' 열이 하나 더 붙는다 */
+  .dhead.aicol, .drow.aicol { grid-template-columns: 1fr auto auto auto; }
+  .aichk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #57534e;
+    white-space: nowrap; cursor: pointer; }
+  .aichk input { width: 15px; height: 15px; accent-color: #0f766e; cursor: pointer; }
+  .aichk.off { color: #a8a29e; }
   .dinput { font-size: 15px; font-weight: 600; padding: 8px 11px; border: 1px solid #e7e1d6; border-radius: 8px; outline: none; color: #1c1917; }
   .dinput:focus { border-color: #0f766e; }
   .usewrap { display: inline-flex; gap: 5px; }
@@ -630,8 +636,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     linked_system: ["SAP", "NONSAP"],
     ship_type: ["CNT", "COT", "LNG", "SHTL", "VLAC", "VLCC", "FLNG"],   // 적용 선종(다중)
     special_note: ["SG", "DF(LNG)", "메탄올", "LPG"],                    // 특이사항(다중)
+    // AI 적용으로 **세지 않을** 활용기술 (schema.DEFAULT_DOMAINS.tech_no_ai 트윈).
+    // 화면 라벨은 긍정형("AI로 카운트")이고 저장만 부정형이다 — 기본값 [] 라 기존 트리가 무손실로 통과한다.
+    tech_no_ai: [],
   };
-  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템", ship_type: "적용 선종", special_note: "특이사항" };
+  var DL = { dept: "부서/과", tech: "활용기술", automation_level: "자동화 수준", frequency: "수행 주기", linked_system: "연계시스템", ship_type: "적용 선종", special_note: "특이사항", tech_no_ai: "AI 카운트 제외 기술" };
   /** 불러온 도메인에 **빠진 기본 도메인 키를 기본값으로 채운다**(신규 도메인: 적용선종·특이사항 등).
    *  예전 초안·제출 파일·시드에는 새 도메인이 없어 칩이 비어 보인다 — 이 병합으로 항상 기본값이 뜬다.
    *  (schema.normalize 의 도메인 백필과 같은 규칙: 리스트가 아니면 기본값으로.) */
@@ -746,6 +755,30 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     return out;
   }
   /** lv6 AI 적용 = 자신 또는 lv7 자식 중 하나라도 기술 보유 (schema.rollup_has_ai 트윈). */
+  /** 이 기술 목록이 **AI 적용**인가 — 제외목록에 없는 기술이 하나라도 있으면 참 (schema._has_ai 트윈).
+   *  예전엔 `bool(tech)` 였는데, 활용기술에 SAP 같은 **현행 시스템**을 적으면서 그것만 가진 업무까지
+   *  AI 로 세어 적용률이 부풀었다. 제외 여부는 도메인 관리에서 정한다. */
+  function aiOf(vals) {
+    var no = (S.domains && S.domains.tech_no_ai) || [];
+    return (vals || []).some(function (t) { return t && no.indexOf(t) < 0; });
+  }
+  /** 전 노드(+과별 제출값)의 AI 파생을 다시 계산한다.
+   *  ★ `S.domains` 가 정해진 **뒤에** 불러야 한다 — 그래서 canonNodes 안이 아니라 채택 지점마다
+   *    `S.domains = withDefaultDomains(...)` 다음 줄에 둔다(canonNodes 시그니처를 바꾸면 채택 5곳의
+   *    순서를 전부 뒤집어야 한다).
+   *  ★ markDirty 를 부르지 않는다 — 로드 직후 전 노드가 '미저장' 으로 떠 버린다. */
+  function recalcAi() {
+    (S.nodes || []).forEach(function (n) {
+      if (!n) return;
+      n.has_ai_agent = aiOf(n.tech);
+      n.has_ai_future = aiOf(n.future_tech);
+      (n.submissions || []).forEach(function (r) {
+        if (!r) return;
+        r.has_ai_agent = aiOf(r.tech);
+        r.has_ai_future = aiOf(r.future_tech);
+      });
+    });
+  }
   function rollupHasAi(n, field) {
     field = field || "has_ai_agent";
     if (n[field]) return true;
@@ -1102,9 +1135,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     markDirty(id); rerender();
   }
 
-  function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.tech = a; n.has_ai_agent = a.length > 0; markDirty(id); rerender(); }
+  function actToggleTech(id, t) { var n = byId(id); if (!n) return; var a = (n.tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.tech = a; n.has_ai_agent = aiOf(a); markDirty(id); rerender(); }
   /** 향후 AI 적용 기술 토글 — tech 도메인 공유, 파생 has_ai_future 갱신. */
-  function actToggleFuture(id, t) { var n = byId(id); if (!n) return; var a = (n.future_tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.future_tech = a; n.has_ai_future = a.length > 0; markDirty(id); rerender(); }
+  function actToggleFuture(id, t) { var n = byId(id); if (!n) return; var a = (n.future_tech || []).slice(); var i = a.indexOf(t); if (i >= 0) a.splice(i, 1); else a.push(t); n.future_tech = a; n.has_ai_future = aiOf(a); markDirty(id); rerender(); }
   /** 복수 선택 칩 토글 (선종·특이사항·반복구간). 여러 개 고를 수 있어 카드를 쪼갤 필요가 없다. */
   function actToggleMulti(id, key, v) {
     var n = byId(id); if (!n) return;
@@ -1469,6 +1502,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
         else if (n[key] === old) n[key] = val;
       });
     }
+    // ★ AI 카운트 제외목록도 함께 따라가야 한다 — 안 그러면 이름을 바꾼 기술이 명단에서 빠져
+    //   **AI 적용률이 조용히 올라간다**(depts remap 을 빠뜨려 겪은 것과 같은 종류의 버그).
+    if (key === "tech" && old) {
+      S.domains.tech_no_ai = (S.domains.tech_no_ai || []).map(function (t) { return t === old ? val : t; });
+      recalcAi();
+    }
     markDirty("dom");
     rerender(refocus);
   }
@@ -1477,7 +1516,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     while (base.indexOf(nm) >= 0) nm = "새 값 " + i++;   // 중복 없이 늘려간다
     S.domains[key] = base.concat([nm]); markDirty("dom"); rerender();
   }
-  function domDelete(key, idx) { var v = S.domains[key][idx]; if (domUsage(key, v) > 0) { flash("사용 중이라 삭제할 수 없습니다"); return; } S.domains[key].splice(idx, 1); markDirty("dom"); rerender(); }
+  function domDelete(key, idx) { var v = S.domains[key][idx]; if (domUsage(key, v) > 0) { flash("사용 중이라 삭제할 수 없습니다"); return; } S.domains[key].splice(idx, 1);
+    if (key === "tech") {   // 유령 항목이 제외목록에 남지 않게
+      S.domains.tech_no_ai = (S.domains.tech_no_ai || []).filter(function (t) { return t !== v; });
+      recalcAi();
+    }
+    markDirty("dom"); rerender(); }
 
   function doSave() {
     // 개인 모드에는 서버가 없다 — [저장] 은 "제출 파일 내보내기"다.
@@ -1627,7 +1671,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
       var d = JSON.parse(text);
       if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
       S.nodes = canonNodes(d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); }));
-      S.domains = withDefaultDomains(d.domains);   // 새 도메인(선종·특이사항) 기본값 병합
+      S.domains = withDefaultDomains(d.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
       if (d.exported_dept) S.dept = d.exported_dept;
       if (d.exported_by) S.author = d.exported_by;
       S.selectedId = null; S.sel = {}; S.dirty = []; S.exported = true;
@@ -2225,7 +2269,16 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
       if (SOLO) badge = "<span></span>";
       else if (dk === "tech") badge = '<span class="usewrap">' + useChip("tech_now", v, "현재", "y") + useChip("tech_future", v, "향후", "f") + "</span>";
       else badge = '<span class="usewrap">' + useChip(DOM_AXIS[dk] || dk, v, "업무", "y") + "</span>";
-      return '<div class="drow"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + badge + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>';
+      // 'AI로 카운트' 체크박스 — 활용기술 탭 전용, **메인앱에서만**.
+      // SOLO 에 두지 않는 이유: 개인 배포판의 domains 는 취합에서 버려지므로(parse_json 3번 블록)
+      // 20명이 각자 정책을 정하면 전부 유실된다. 사용 수를 숨기는 것과 같은 논리다.
+      var aiCell = "";
+      if (!SOLO && dk === "tech") {
+        var onAi = ((S.domains.tech_no_ai || []).indexOf(v) < 0);
+        aiCell = '<label class="aichk' + (onAi ? "" : " off") + '" title="끄면 이 기술만 가진 업무는 AI 적용률에서 빠집니다 (사용 수 집계는 그대로)">'
+          + '<input type="checkbox" data-fkey="techai" data-v="' + esc(v) + '"' + (onAi ? " checked" : "") + " />AI로 카운트</label>";
+      }
+      return '<div class="drow' + (aiCell ? " aicol" : "") + '"><input class="dinput" data-fkey="dom" data-k="' + dk + '" data-i="' + i + '" value="' + esc(v) + '" />' + badge + aiCell + '<button class="delbtn" style="' + (del ? "color:#cabfb0;border-color:#e7e1d6;cursor:not-allowed" : "") + '" data-act="domdel" data-k="' + dk + '" data-i="' + i + '">삭제</button></div>';
     }
     var rows;
     if (dk === "dept") {
@@ -2239,7 +2292,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     } else {
       rows = (S.domains[dk] || []).map(drow).join("");
     }
-    var left = '<div class="cardbox"><div class="dhead"><span>값</span>' + (SOLO ? "<span></span>" : "<span>사용 중</span>") + '<span></span></div>' + rows
+    var aiHead = (!SOLO && dk === "tech");
+    var left = '<div class="cardbox"><div class="dhead' + (aiHead ? " aicol" : "") + '"><span>값</span>'
+      + (SOLO ? "<span></span>" : "<span>사용 중</span>") + (aiHead ? "<span>AI 적용</span>" : "") + '<span></span></div>' + rows
       + '<div style="padding:13px 16px"><button class="dadd" data-act="domadd" data-k="' + dk + '">＋ 값 추가</button></div></div>'
       + '<div style="font-size:13.5px;color:#a8a29e;margin-top:12px">값을 고친 뒤 <b>칸을 벗어나면</b> 반영됩니다. '
       + (SOLO ? '제출하려면 상단 <b>⬇ 제출 파일 내보내기</b> 를 누르세요.'
@@ -3345,6 +3400,18 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
       return domRename(el.dataset.k, +el.dataset.i, el.value,
                        '[data-fkey="dom"][data-i="' + el.dataset.i + '"]');
     }
+    // 'AI로 카운트' 토글. **저장은 제외목록**이라 체크 해제 = 목록에 추가다(라벨은 긍정형).
+    // ★ 노드 편집 잠금 게이트보다 위에 둔다 — 도메인은 노드가 아니라 data-id 가 없다.
+    if (el.dataset.fkey === "techai") {
+      var tv = el.dataset.v;
+      var noai = (S.domains.tech_no_ai || []).filter(function (t) { return t !== tv; });
+      if (!el.checked) noai.push(tv);
+      S.domains.tech_no_ai = noai;
+      recalcAi();               // 파생 재계산 — KPI·막대·엑셀이 즉시 따라온다
+      markDirty("dom");
+      rerender();
+      return;
+    }
     var f = el.dataset.fkey;
     // 자유 텍스트/숫자 입력은 타이핑 중엔 모델만 갱신했으니, 칸을 벗어난 지금 전체를 한 번 동기화한다
     // (카드 배지·부하 힌트·미저장 점·빵부스러기 등). 값은 이미 모델에 들어가 있다.
@@ -3410,7 +3477,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     if (args.tree && (S.treeEpoch === null || ep !== S.treeEpoch)) {
       S.treeEpoch = ep;
       S.nodes = canonNodes((args.tree.nodes || []).map(function (n) { return Object.assign({}, n); }));
-      S.domains = withDefaultDomains(args.tree.domains);   // 새 도메인 기본값 병합
+      S.domains = withDefaultDomains(args.tree.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
       S.rev = args.tree.rev || 0;
       S.dirty = [];             // 파이썬이 준 새 정본 = 미저장 변경 없음
       if (args.dirty_all) S.dirty = S.nodes.map(function (n) { return n.id; }).concat(["dom"]);  // 엑셀 반영 직후: 전부 미저장
@@ -3479,12 +3546,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
     // 시드는 무시하고 이어서 — 이미 작성 중인 사람의 작업분을 골격이 덮지 않게 한다.
     var seedDept = "";
     if (saved) {
-      S.nodes = canonNodes(saved.nodes.map(coerceEvents)); S.domains = withDefaultDomains(saved.domains);   // 새 도메인 기본값 병합
+      S.nodes = canonNodes(saved.nodes.map(coerceEvents)); S.domains = withDefaultDomains(saved.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
       S.dept = saved.dept || ""; S.author = saved.author || ""; S.exported = true;
     } else if (window.__PD_SEED__ && Array.isArray(window.__PD_SEED__.nodes) && window.__PD_SEED__.nodes.length) {
       var sd = window.__PD_SEED__;
       S.nodes = canonNodes(sd.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); }));
-      S.domains = withDefaultDomains(sd.domains);   // 새 도메인 기본값 병합
+      S.domains = withDefaultDomains(sd.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
       S.dept = sd.dept || sd.exported_dept || "";   // 과 자동 지정(있으면)
       seedDept = S.dept;
     } else {
