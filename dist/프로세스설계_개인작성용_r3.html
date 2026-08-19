@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1619";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1749,29 +1749,38 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
   function columns() {
     // lv3(부문)은 빵부스러기 드롭다운으로 고른다 — 컬럼은 lv4~lv7 만 (lv3 컬럼 제거).
     var html = '<div class="board scroll">';
-    // 부문을 **여럿** 고르면 lv4 컬럼은 그 부문들의 대분류를 모아 보여준다.
+    // 대상 부문이 여럿이면 lv4 컬럼은 그 부문들의 대분류를 **모아** 보여준다.
     // ★ 이때는 읽기 전용 목록이다 — 컬럼은 `data-parent` 하나로 드롭 대상과 ＋ 의 부모를 정하는데,
     //   부모가 여럿이면 그 계약이 성립하지 않는다. 카드를 누르면 그 부문 하나로 좁혀진다(actSelect).
-    var multi3 = S.lv3Sel.length > 1;
+    var pick3 = pickedLv3();
+    var multi3 = pick3.length > 1;
+    // 대상이 정확히 하나면(칩 1개 선택 또는 범위에 걸리는 부문이 하나) 평소처럼 드릴다운한다.
+    var only3 = pick3.length === 1 ? pick3[0].id : "";
     for (var lv = 4; lv <= LEVEL_MAX; lv++) {
       if (lv === 4 && multi3) {
         var agg = [];
-        S.lv3Sel.forEach(function (p3) { agg = agg.concat(visibleChildren(p3)); });
+        pick3.forEach(function (p3) { agg = agg.concat(visibleChildren(p3.id)); });
         html += '<div class="col"><div class="colhead"><span class="t">lv4 ' + esc(LABELS[4])
           + '</span><span class="n">' + agg.length + "</span></div>"
           + '<div class="list scroll">'
           + '<div class="emptyhint" style="text-align:left;padding:8px 10px;line-height:1.5">'
-          + "부문 " + S.lv3Sel.length + "개를 함께 보는 중<br/>카드를 누르면 그 부문으로 좁혀집니다</div>";
+          + (scopeOn()
+              ? "<b>" + esc(S.eDept || S.eGroup) + "</b> 업무가 있는 부문 " + pick3.length + "개를 모아 보는 중"
+                + "<br/>부문 칩과 무관하게 전 부문에서 모읍니다"
+              : "부문 " + pick3.length + "개를 함께 보는 중<br/>카드를 누르면 그 부문으로 좁혀집니다")
+          + "</div>";
         agg.forEach(function (nn) { html += cardHTML(nn, 4); });
         html += "</div></div>";
         continue;
       }
-      var pid = S.sel[lv - 1];
+      var pid = (lv === 4 && only3) ? only3 : S.sel[lv - 1];
       var enabled = !!pid;
       var kids = enabled ? visibleChildren(pid) : [];
       html += '<div class="col' + (lv > 4 ? " wide" : "") + (enabled ? "" : " off") + '"><div class="colhead"><span class="t">lv' + lv + " " + esc(LABELS[lv]) + '</span><span class="n">' + kids.length + "</span></div>"
         + '<div class="list scroll" data-lv="' + lv + '" data-parent="' + esc(pid || "") + '">';
-      if (!enabled) html += '<div class="emptyhint">' + (lv === 4 ? "위에서 부문을<br/>먼저 고르세요" : "상위 항목을<br/>먼저 선택하세요") + "</div>";
+      if (!enabled) html += '<div class="emptyhint">'
+        + (lv === 4 ? (scopeOn() ? "이 범위에 해당하는<br/>업무가 없습니다" : "위에서 부문을<br/>먼저 고르세요")
+                    : "상위 항목을<br/>먼저 선택하세요") + "</div>";
       else {
         kids.forEach(function (nn) { html += cardHTML(nn, lv); });
         html += '<button class="addbtn" data-act="add" data-pid="' + esc(pid) + '" data-lv="' + lv + '">＋ 새 ' + esc(LABELS[lv]) + "</button>";
@@ -1854,9 +1863,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
     var body = "";
     (function walk(pid, depth) {
       // 최상단(부문)은 칩으로 고른 것만, 그 아래는 편집 범위에 걸리는 가지만 그린다.
-      var kids = (pid === ROOT)
-        ? childrenOf(ROOT).filter(function (n) { return S.lv3Sel.indexOf(n.id) >= 0 && inEditScope(n); })
-        : visibleChildren(pid);
+      var kids = (pid === ROOT) ? pickedLv3() : visibleChildren(pid);
       kids.forEach(function (nn) {
         var kids = childrenOf(nn.id), col = !!S.collapsed[nn.id], sel = S.selectedId === nn.id, detail = hasDetail(nn.level);
         var chips = "";
@@ -1888,9 +1895,11 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
     })(ROOT, 0);
     if (!body) {
       body = '<div class="emptyhint" style="padding:24px;text-align:center;line-height:1.6">'
-        + (S.lv3Sel.length
-            ? "이 부문에 편집 범위에 해당하는 업무가 없습니다.<br/>상단 <b>편집 범위</b>를 바꾸거나 부문을 더 고르세요."
-            : "위에서 <b>부문</b>을 고르세요 — <b>전체</b> 버튼으로 전부 볼 수 있습니다.") + "</div>";
+        + (scopeOn()
+            ? "<b>" + esc(S.eDept || S.eGroup) + "</b> 소속으로 입력된 업무가 없습니다.<br/>상단 <b>편집 범위</b>를 바꿔 보세요."
+            : (S.lv3Sel.length
+                ? "고른 부문에 업무가 없습니다."
+                : "위에서 <b>부문</b>을 고르세요 — <b>전체</b> 버튼으로 전부 볼 수 있습니다.")) + "</div>";
     }
     return '<div class="outwrap"><div class="outcard"><div class="outhead"><span class="h1">업무 계층 전체보기</span><span class="h2">클릭하면 오른쪽에서 상세 입력</span><div class="grow"></div>'
       + '<button class="minibtn" data-act="collapse">' + (anyOpen ? "모두 접기" : "모두 펼치기") + "</button>"
@@ -1926,6 +1935,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
     }).join("")
       + '<button class="lv3mini" data-act="lv3all" title="모든 부문 보기">전체</button>'
       + (S.lv3Sel.length ? '<button class="lv3mini" data-act="lv3none" title="선택 해제">지우기</button>' : "")
+      + (scopeOn() ? '<span style="font-size:12.5px;color:#b45309;margin-left:4px">'
+                     + "🔒 편집 범위가 켜져 있어 <b>전 부문</b>에서 모아 보는 중 (칩 선택은 무시)</span>" : "")
       + "</div>";
     // 부문 추가/삭제 — 칩 줄 옆 버튼. 삭제는 **정확히 하나** 골랐을 때만(여럿이면 무엇을 지울지 모호).
     var lv3btns = '<button class="crumbbtn add" data-act="add" data-pid="' + ROOT + '" data-lv="3" title="새 부문 추가">＋ 부문</button>'
@@ -2731,6 +2742,18 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1605";
   }
   /** 화면에 그릴 자식만. childrenOf 는 저장·집계도 쓰므로 **렌더 경로에서만** 이걸 쓴다. */
   function visibleChildren(pid) { return childrenOf(pid).filter(inEditScope); }
+
+  /** 화면에 그릴 **부문 목록**.
+   *
+   *  ★ 편집 범위(부서/과)가 켜져 있으면 **부문 칩 선택을 무시하고 전 부문**을 대상으로 한다.
+   *    이 필터의 목적이 "내 과 업무가 어느 부문에 흩어져 있든 한 화면에 다 보기" 이기 때문이다.
+   *    부문 칩은 범위가 꺼져 있을 때의 탐색 수단이고, 범위가 켜지면 소속이 곧 필터가 된다.
+   *  범위가 꺼져 있으면 예전대로 칩으로 고른 부문만. */
+  function pickedLv3() {
+    var all = childrenOf(ROOT);
+    return scopeOn() ? all.filter(inEditScope)
+                     : all.filter(function (n) { return S.lv3Sel.indexOf(n.id) >= 0; });
+  }
 
   function lockMsg() {
     return "🔒 " + (S.eDept || S.eGroup) + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
