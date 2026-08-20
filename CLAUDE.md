@@ -511,6 +511,23 @@ lv6 목록이 우측에 뜬다. 활용기술 탭만 칩 2개(`현재`/`향후`)�
 
 ### 프론트엔드 규칙 (index.html)
 
+- ★ **트리 인덱스는 반드시 캐시를 거친다.** `childrenOf`/`byId`/`descCount`/`descLoadNodes` 는
+  `_treeVer` 버전 가드로 1패스 인덱스를 만들어 O(1) 로 조회한다(`schema.children_index`/`node_map`
+  의 JS 트윈). 예전엔 넷 다 매 호출 전수 스캔이라 **렌더 1회가 3만 번 넘게** 불렀고, lv6 1,800개에서
+  도메인 체크박스 한 번이 600ms 였다. **선형 스캔으로 되돌리지 말 것.**
+  - 무효화는 두 겹이다: ① `rerender()` 진입 시(렌더 사이 모든 변경을 덮는 안전망)
+    ② 구조를 바꾸는 순간 `touchTree()` — 한 함수 안에서 바꾸고 **곧바로 다시 읽는** 곳이 있다
+    (`actMoveMany` 는 반복마다 `parent_id` 를 바꾸고 `childrenOf(newPid).length` 를 읽는다.
+    ①만 있으면 두 번째 반복이 낡은 개수를 읽어 order 가 겹친다).
+  - `canonNodes` 가 트리 채택 5곳 전부의 관문이라 거기서 한 번 무효화한다.
+  - ★ **반환 배열을 호출자가 변형하면 캐시가 오염된다.** 현재 호출자는 전부 `.slice()`/`.filter()`
+    를 쓰거나 요소 프로퍼티만 건드린다 — 직접 변형하는 호출자를 만들지 말 것.
+- **도메인 배지는 축당 1패스로 센다**(`countsFor`/`AXIS_VALS`). 값마다 `sumNodes` 를 부르면
+  활용기술 탭에서만 18회 전수 순회다. ★ `AXIS_VALS` 는 **`sumNodes` 의 축 분기와 1:1** 이어야
+  한다 — 한쪽만 고치면 "배지 7개인데 목록엔 3개" 가 부활한다(`S.fDept`/`S.fGroup` 필터 포함).
+- **요약 우측 목록은 300행 상한**이다(`SIDE_MAX`). 수천 행은 그리는 비용도 크지만 읽을 수도 없다.
+  **자른 사실을 반드시 화면에 밝힌다** — 침묵 절단은 "왜 우리 과 업무가 없지" 가 된다.
+
 - **JS 로직은 파이썬과 쌍둥이다.** `hasDetail`/`maskName`/`josa`/`actMoveTo`/`wouldCycle`/
   `maxDepthBelow`/`cascadeLevels`/`actReorder` 는 각각 `schema.has_detail`/`pii.mask_name`/
   `schema.josa`/`apply_move`/`would_cycle`/`max_depth_below`/`_cascade_levels`/`apply_reorder` 와

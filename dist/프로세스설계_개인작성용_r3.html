@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_0912";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -229,7 +229,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
   /* 전체보기 전용 — 좌측 트리를 넓힌다. 들여쓰기가 lv7 까지 가면(depth×20px) 이름 칸이 남지
      않아 lv6·lv7 이 전부 말줄임으로 뭉갰다. 컬럼 보기(.body 에 out 없음)는 컬럼이 스스로 폭을
      갖고 가로 스크롤을 쓰므로 그대로 둔다 — .panel 규칙을 전역으로 바꾸면 그쪽이 깨진다. */
-  .body.out .panel { flex: 0 1 390px; min-width: 360px; }
+  /* 전체보기 좌:우 = 5:3. flex-basis 를 0 으로 둬야 **전체 폭의 비율**이 된다 —
+     auto 면 콘텐츠 폭이 섞여 비율이 틀어진다. 좁은 화면에서 min-width 가 비율을 이기는 건 의도된 동작. */
+  .body.out .outwrap { flex: 5 1 0; }
+  .body.out .panel { flex: 3 1 0; min-width: 320px; }
   /* 이름 칸이 남는 폭을 다 쓰게 한다 — 고정폭이면 트리를 넓혀도 이름은 그대로 뭉갠다.
      flex:1 이라 설명·배지는 오른쪽으로 밀려 붙고, 깊은 들여쓰기에서도 이름이 먼저 산다. */
   .body.out .rowname { flex: 1 1 auto; min-width: 260px; }
@@ -621,6 +624,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
       });
       if (n.level === LEVEL_MIN) n.name = canonLv3Name(n.name);
     });
+    touchTree();      // 트리 채택 5곳이 전부 이 관문을 지난다 — 인덱스를 여기서 한 번 버린다
     return nodes;
   }
   /** 과 목록을 부서별 <optgroup> 으로. 값=과. 매핑에 없는 현재값은 '기타' 그룹에 노출해 유실 방지. */
@@ -739,7 +743,35 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     return w + ((ch - 0xAC00) % 28 ? a : b);
   }
   function esc(s) { return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"); }
-  function childrenOf(pid) { return S.nodes.filter(function (n) { return n.parent_id === pid; }).sort(function (a, b) { return (a.order - b.order) || String(a.name).localeCompare(b.name); }); }
+  // ── 트리 인덱스 (schema.children_index / schema.node_map 의 JS 트윈) ────────────
+  // 예전엔 childrenOf 가 호출마다 S.nodes 를 filter+sort 하고 byId 가 선형 탐색이었다.
+  // 렌더 1회가 이 둘을 3만 번 넘게 부르는 구조라(도메인 배지·요약 목록·stats 롤업),
+  // 노드 2,000개에서 체크박스 한 번 누르는 데 7,300만 회의 배열 원소 방문이 일어났다.
+  // 파이썬은 처음부터 인덱스를 1회 빌드해 O(1) 로 조회한다 — **JS 트윈만 빠져 있었다.**
+  //
+  // ★ 무효화는 두 겹이다:
+  //   ① rerender() 진입 시 — 렌더 사이의 모든 변경을 덮는 안전망.
+  //   ② 구조를 바꾸는 순간(touchTree) — 한 함수 안에서 바꾸고 **곧바로 다시 읽는** 곳이 있다.
+  //      예: actMoveMany 는 반복마다 parent_id 를 바꾸고 childrenOf(newPid).length 를 읽는다.
+  //      ①만 있으면 두 번째 반복이 낡은 개수를 읽어 order 가 겹친다.
+  // ★ 반환 배열을 **호출자가 변형하면 안 된다**(캐시 오염). 현재 호출자는 전부 .slice()/.filter()
+  //   를 쓰거나 요소 프로퍼티만 건드린다 — 새로 배열을 직접 변형하는 호출자를 만들지 말 것.
+  var _treeVer = 0, _kidsCache = null, _kidsVer = -1, _byIdCache = null, _byIdVer = -1;
+  var _NOKIDS = [];                       // 자식 없는 부모용 공유 상수 (매번 [] 할당 금지)
+  function touchTree() { _treeVer++; }
+  function _kidCmp(a, b) { return (a.order - b.order) || String(a.name).localeCompare(b.name); }
+  function childrenOf(pid) {
+    if (_kidsVer !== _treeVer || !_kidsCache) {
+      var m = Object.create(null), i, n;
+      for (i = 0; i < S.nodes.length; i++) {
+        n = S.nodes[i];
+        (m[n.parent_id] || (m[n.parent_id] = [])).push(n);
+      }
+      for (var k in m) m[k].sort(_kidCmp);     // 정렬 규칙은 예전과 동일해야 한다(순서가 곧 화면)
+      _kidsCache = m; _kidsVer = _treeVer;
+    }
+    return _kidsCache[pid] || _NOKIDS;
+  }
   /** 같은 부모 아래 **이름이 같은 형제**(중복) 목록 — schema.duplicate_siblings 트윈. 하위(자손)는
    *  보지 않고 이름만 본다. 복사(하위 포함 복제)로 생긴 동명 형제를 잡아 경고·내보내기 차단에 쓴다.
    *  기본 lv5 이상만(복사가 lv5+ 에서만 되므로). 반환 [{parentId, level, name, ids:[...]}]. */
@@ -858,10 +890,34 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     loadGroup(n).forEach(function (m) { h += annualHours(m); });
     return Math.round(h * 10) / 10;
   }
-  function byId(id) { for (var i = 0; i < S.nodes.length; i++) if (S.nodes[i].id === id) return S.nodes[i]; return null; }
+  function byId(id) {
+    if (!id) return null;                      // "dom" 같은 비노드 키로 전체를 훑지 않는다
+    if (_byIdVer !== _treeVer || !_byIdCache) {
+      var m = Object.create(null);
+      for (var i = 0; i < S.nodes.length; i++) m[S.nodes[i].id] = S.nodes[i];
+      _byIdCache = m; _byIdVer = _treeVer;
+    }
+    return _byIdCache[id] || null;
+  }
   function ancestors(id) { var out = [], cur = byId(id), g = 0; while (cur && cur.parent_id !== ROOT && g++ < 20) { var p = byId(cur.parent_id); if (!p) break; out.unshift(p); cur = p; } return out; }
   function pathNames(id) { var self = byId(id); return FIXED.concat(ancestors(id).map(function (a) { return a.name; })).concat(self ? [self.name] : []); }
-  function descCount(id) { var c = 0, st = childrenOf(id).slice(); while (st.length) { var x = st.pop(); c++; st = st.concat(childrenOf(x.id)); } return c; }
+  // 자손 수 — 카드마다 삭제 버튼 툴팁 하나 만들려고 서브트리를 통째로 훑던 자리다.
+  // 인덱스와 같은 버전 가드로 **1패스 bottom-up** 계산해 카드당 O(1) 로 만든다.
+  var _descCache = null, _descVer = -1;
+  function descCount(id) {
+    if (_descVer !== _treeVer || !_descCache) {
+      var m = Object.create(null), i, n;
+      for (i = 0; i < S.nodes.length; i++) m[S.nodes[i].id] = 0;
+      // 깊은 곳부터 올라가며 (자기 1 + 자손 수) 를 부모에 누적한다 — level 내림차순이면 충분하다.
+      var ord = S.nodes.slice().sort(function (a, b) { return (b.level || 0) - (a.level || 0); });
+      for (i = 0; i < ord.length; i++) {
+        n = ord[i];
+        if (n.parent_id in m) m[n.parent_id] += m[n.id] + 1;
+      }
+      _descCache = m; _descVer = _treeVer;
+    }
+    return _descCache[id] || 0;
+  }
   // pii.mask_name 과 동일 규칙이어야 한다 — 화면(JS)과 엑셀(파이썬)의 마스킹이 어긋나면 안 된다.
   // 홍길동→홍*동 / 이순→이* / 남궁길동→남**동 (가운데 전부 가림) / 콤마 그룹은 각각 처리.
   function maskName(n) {
@@ -1099,7 +1155,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     //   소속을 채우면 아무도 그 일을 한다고 낸 적 없는 과가 집계에 잡힌다(오염원). 되살리지 말 것.
     //   개인 배포판은 내보낼 때 소속이 일괄 주입된다(soloExport).
     nn.order = childrenOf(pid).length;   // 맨 끝에 붙인다. order:999 로 두면 childrenOf 의
-    S.nodes.push(nn);                    // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
+    S.nodes.push(nn); touchTree();       // 이름순 폴백이 걸려 방금 만든 카드가 중간에 튄다
     renumber(pid);
     markDirty(nn.id); selectPath(nn.id); rerender('[data-fkey="name"][data-id="' + nn.id + '"]');
   }
@@ -1124,6 +1180,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     var pid = root.parent_id, rootCopy = copies[0];
     rootCopy.order = childrenOf(pid).length;                    // 형제 끝에
     copies.forEach(function (c) { S.nodes.push(c); markDirty(c.id); });
+    touchTree();
     renumber(pid); selectPath(rootCopy.id);
     rerender('[data-fkey="name"][data-id="' + rootCopy.id + '"]');
     flash("복사했습니다 — 같은 이름이라 내보내기가 막힙니다. 이름을 수정하세요");
@@ -1247,7 +1304,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
       var ex = childByName(pid, name);
       if (ex) return ex;
       var nn = makeNode(pid, lv, name); nn.order = nextOrder(pid);
-      S.nodes.push(nn); markDirty(nn.id); cnt[lv]++;
+      S.nodes.push(nn); touchTree(); markDirty(nn.id); cnt[lv]++;
       return nn;
     }
     var cnt = { 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 }, skipped = 0, touched = false;
@@ -1290,7 +1347,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     while (st.length) { var x = st.pop(); victims[x.id] = 1; st = st.concat(childrenOf(x.id)); }
     var node = byId(id); var pid = node ? node.parent_id : ROOT; var nm = node ? node.name : "";
     var n = Object.keys(victims).length;
-    S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; });
+    S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; }); touchTree();
     S.dirty = S.dirty.filter(function (d) { return !victims[d]; });
     markDirty("del");                 // 삭제도 저장이 필요한 변경이다
     S.selectedId = null; selectPath(pid); S.selectedId = null;
@@ -1330,7 +1387,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     rerender();
   }
   // ── 드래그 조작 (schema.apply_reorder / apply_move 와 동일 규칙) ──
-  function renumber(pid) { childrenOf(pid).forEach(function (n, i) { n.order = i; }); }
+  // order 를 바꾸면 childrenOf 의 정렬 결과가 달라진다 → 인덱스를 버린다.
+  function renumber(pid) { childrenOf(pid).forEach(function (n, i) { n.order = i; }); touchTree(); }
 
   function actReorder(pid, orderedIds) {
     // 목적지 리스트 전체 id 배열이 정본 — DOM 과 상태의 drift 를 원천 차단한다
@@ -1353,7 +1411,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     ids.forEach(function (id) {
       var n = byId(id); if (!n || n.parent_id === newPid) return;
       oldPids[n.parent_id] = 1;
-      n.parent_id = newPid;
+      n.parent_id = newPid; touchTree();       // ★ 바꾼 즉시 무효화 — 아래에서 곧바로 다시 읽는다
       n.order = childrenOf(newPid).length;   // 매번 끝에 붙인다 — 이미 옮긴 것들 뒤로 순서 유지
       markDirty(id); moved.push(n);
     });
@@ -1416,7 +1474,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     if (newLevel > LEVEL_MAX) return flash("lv" + LEVEL_MAX + " 아래로는 더 내려갈 수 없습니다");
     if (newLevel + maxDepthBelow(id) > LEVEL_MAX) return flash("하위 업무까지 옮기면 lv" + LEVEL_MAX + " 을 넘습니다. 하위를 먼저 정리해 주세요");
     var oldPid = n.parent_id;
-    n.parent_id = newPid;
+    n.parent_id = newPid; touchTree();
     n.order = childrenOf(newPid).length;
     cascadeLevels(id);                                   // 자손 레벨 재계산
     renumber(oldPid); renumber(newPid);
@@ -2300,10 +2358,32 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     // "하려는 것"이 안 갈린다) — 나머지는 축 하나.
     var DOM_AXIS = { dept: "dept", automation_level: "automation", ship_type: "ship_type",
                      special_note: "special_note", linked_system: "linked_system" };
-    /** 배지 칩 1개. **숫자를 sumNodes 길이로 낸다** — 클릭했을 때 뜨는 목록과 같은 소스라
-     *  "7개 업무인데 목록엔 3개" 같은 어긋남이 원천적으로 안 생긴다. */
+    /** 이 탭에 필요한 축의 **카운트 맵을 1패스로** 만든다.
+     *
+     *  예전엔 값마다 `sumNodes(axis, v)` 를 불렀다 — 활용기술 탭이면 값 9개 × 2축 = 18회,
+     *  매회 전 노드를 훑으며 롤업까지 돌아 렌더 하나가 수백 ms 를 먹었다.
+     *  ★ **술어를 새로 쓰지 않는다** — 같은 `sumNodes` 를 축마다 **한 번씩만** 부르고 결과를
+     *    값별로 세어 둔다. 그래야 "배지 숫자 = 클릭했을 때 뜨는 목록" 계약이 자동으로 유지된다
+     *    (S.fDept/S.fGroup 필터도 sumNodes 안에 있으므로 함께 반영된다). */
+    var _useCount = {};
+    function countsFor(axis) {
+      if (_useCount[axis]) return _useCount[axis];
+      var m = Object.create(null);
+      // 축별로 그 값에 해당하는 lv6 을 한 번에 모은다. sumNodes 는 (axis, key) 를 받으므로
+      // 값마다 부르는 대신, 도메인 값 목록을 돌며 **축당 1회** 전수 순회로 카운트한다.
+      (S.domains[DOM_SRC[axis] || axis] || []).forEach(function (v) { m[v] = 0; });
+      S.nodes.forEach(function (n) {
+        if (!isLoadLevel(n.level)) return;
+        if (S.fDept && deptsOf(n).indexOf(S.fDept) < 0) return;        // sumNodes 와 같은 필터
+        if (S.fGroup && deptGroupsOf(n).indexOf(S.fGroup) < 0) return;
+        AXIS_VALS[axis](n).forEach(function (v) { if (v in m) m[v]++; else m[v] = 1; });
+      });
+      _useCount[axis] = m;
+      return m;
+    }
+    /** 배지 칩 1개. 숫자는 위 카운트 맵에서 조회만 한다(목록과 같은 술어). */
     function useChip(axis, v, label, cls) {
-      var c = sumNodes(axis, v).length;
+      var c = countsFor(axis)[v] || 0;
       var on = S.sumPick && S.sumPick.axis === axis && S.sumPick.key === v;
       return '<span class="use ' + (c > 0 ? (cls || "y") : "n") + (on ? " picked" : "") + ' clickable"'
         + ' data-act="sumpick" data-axis="' + axis + '" data-key="' + esc(v) + '"'
@@ -2800,14 +2880,25 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
   }
 
   /** 이 노드 아래의 lv6(집계 기준) 전부 — "이 분류를 어느 과가 쓰는가" 판정에 쓴다. */
+  // 자손 lv6 목록 — 편집 범위 판정(canEdit/inEditScope)이 lv3~lv5 마다 부른다.
+  // 예전엔 노드마다 서브트리를 훑고 `st.concat` 으로 배열을 재할당해 O(S²)였다.
+  // 인덱스와 같은 버전 가드로 **1패스 bottom-up** 계산한다.
+  var _dlnCache = null, _dlnVer = -1;
   function descLoadNodes(id) {
-    var out = [], st = childrenOf(id).slice();
-    while (st.length) {
-      var x = st.pop();
-      if (isLoadLevel(x.level)) out.push(x);
-      st = st.concat(childrenOf(x.id));
+    if (_dlnVer !== _treeVer || !_dlnCache) {
+      var m = Object.create(null), i, n;
+      for (i = 0; i < S.nodes.length; i++) m[S.nodes[i].id] = [];
+      var ord = S.nodes.slice().sort(function (a, b) { return (b.level || 0) - (a.level || 0); });
+      for (i = 0; i < ord.length; i++) {
+        n = ord[i];
+        if (!(n.parent_id in m)) continue;
+        var mine = m[n.id];
+        if (isLoadLevel(n.level)) m[n.parent_id].push(n);
+        for (var j = 0; j < mine.length; j++) m[n.parent_id].push(mine[j]);
+      }
+      _dlnCache = m; _dlnVer = _treeVer;
     }
-    return out;
+    return _dlnCache[id] || _NOKIDS;
   }
   /** 편집 범위 필터가 켜져 있는가. */
   function scopeOn() { return !!(S.eGroup || S.eDept); }
@@ -2985,6 +3076,21 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
       + '<div class="cardbox">' + head + rows + "</div>" + note + "</div>";
   }
 
+  // 도메인 배지 카운트용 — **sumNodes 의 축 분기와 1:1 로 맞춰야 한다.**
+  // 한쪽만 고치면 "배지 7개인데 목록엔 3개" 가 부활한다(그래서 여기 나란히 둔다).
+  var AXIS_VALS = {
+    dept: function (n) { return deptsOf(n); },
+    dept_group: function (n) { return deptGroupsOf(n); },
+    automation: function (n) { return [n.automation_level || "(미지정)"]; },
+    tech_now: function (n) { return rollupTechs(n, "tech"); },
+    tech_future: function (n) { return rollupTechs(n, "future_tech"); },
+    ship_type: function (n) { return rollupList(n, "ship_types"); },
+    special_note: function (n) { return rollupList(n, "special_note"); },
+    linked_system: function (n) { return rollupSystems(n); },
+  };
+  // 축 → 그 값이 들어 있는 도메인 키 (활용기술 두 축은 tech 하나를 공유한다)
+  var DOM_SRC = { tech_now: "tech", tech_future: "tech", automation: "automation_level" };
+
   /** 요약 드릴다운 — 선택한 집계 칸에 속한 lv6 목록.
    *  ★ 필터는 stats() 가 쓰는 게이트(isLoadLevel/rollupHasAi/rollupTechs)를 **그대로** 재사용한다.
    *    별도 조건을 새로 쓰면 표의 숫자와 목록 개수가 조용히 어긋난다. */
@@ -3033,7 +3139,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
                ship_type: "적용 선종", special_note: "특이사항", linked_system: "연계시스템" };
     var list = sumNodes(p.axis, p.key);
     var title = (AX[p.axis] || p.axis) + (p.key ? " · " + p.key : "");
-    var rows = list.map(function (n) {
+    // ★ 목록 상한 — 예전엔 선택이 없으면 lv6 **전부**(수천 행)를 그렸다. 그리는 비용도 크지만
+    //   스크롤로 훑을 수도 없는 양이다. 잘랐다는 사실을 아래 안내로 **반드시 밝힌다**
+    //   (조용히 자르면 "왜 우리 과 업무가 없지" 가 된다 — 공통규칙: 침묵 절단 금지).
+    var SIDE_MAX = 300;
+    var shown = list.length > SIDE_MAX ? list.slice(0, SIDE_MAX) : list;
+    var rows = shown.map(function (n) {
       // 좌: lv6 이름 + 상위 경로 / 우: 소속·부하·AI 칩 (넓어진 폭을 쓰려고 2열)
       var up = pathNames(n.id).slice(3, -1).join(" › ");
       var techs = rollupTechs(n, "tech"), ftechs = rollupTechs(n, "future_tech");
@@ -3065,7 +3176,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
     return '<div class="sumside"><div class="sumhead"><b>' + esc(title) + "</b>" + fTag
       + '<span>' + list.length + '개</span>'
       + (S.sumPick ? '<button class="sumx" data-act="sumclose" title="전체 보기로">✕</button>' : "") + "</div>"
-      + '<div class="sumlist">' + (rows || '<div class="sumrow" style="color:#a8a29e">해당 업무가 없습니다.</div>') + "</div></div>";
+      + '<div class="sumlist">' + (rows || '<div class="sumrow" style="color:#a8a29e">해당 업무가 없습니다.</div>')
+      + (list.length > shown.length
+          ? '<div class="sumrow" style="color:#a8a29e;justify-content:center">… ' + list.length + "개 중 "
+            + shown.length + "개만 표시합니다 · KPI·막대를 눌러 범위를 좁히거나 검색을 쓰세요</div>"
+          : "")
+      + "</div></div>";
   }
 
   /** 이름 붙인 보관본 — '2026-08 1차 취합' 처럼 사람이 의미를 붙여 남기는 기준점.
@@ -3214,6 +3330,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260819_1704";
         try { caret = { s: prev.selectionStart, e: prev.selectionEnd }; } catch (e) {}
       }
     }
+    touchTree();                 // 렌더 진입 시 인덱스를 버린다 — 직전까지의 모든 변경을 덮는 안전망
     contentEl.innerHTML = fullView();
     wireDnD();          // innerHTML 로 DOM 을 갈아끼웠으므로 Sortable 을 다시 붙인다
     layout();

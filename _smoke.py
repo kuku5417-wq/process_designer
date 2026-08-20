@@ -1202,6 +1202,42 @@ def main() -> int:
     rt31, _ = excel_io.parse_excel(excel_io.build_xlsx(off31, mask=False), off31)
     ck(rt31["domains"].get("tech_no_ai") == ["SAP"], "엑셀 왕복 후에도 tech_no_ai 생존")
 
+    # 32. 부서 미지정 제출은 취합에서 제외
+    def _mk32(env_dept=None, author=None):
+        nd = schema.bootstrap()
+        w4 = schema.add_node(nd, "lv3_seonjang", 4, "x", "미지정테스트")
+        w5 = schema.add_node(nd, w4, 5, "x", "중")
+        w6 = schema.add_node(nd, w5, 6, "x", "미지정업무")
+        schema.update_node(nd, w6, {"work_hours": "1", "freq_unit": "주", "freq_count": "1"}, "x")
+        pay = {"schema_version": 1, "nodes": schema.normalize(nd)["nodes"], "domains": {}}
+        if env_dept:
+            pay["exported_dept"] = env_dept
+        if author:
+            pay["exported_by"] = author
+        return json.dumps(pay, ensure_ascii=False).encode("utf-8")
+
+    # 폴더도 봉투도 파일명도 없다 → 제외
+    m32, rep32, _ = excel_io.collect_jsons([("아무이름.json", _mk32())], schema.bootstrap())
+    ck(len(rep32) == 1 and "소속을 알 수 없어 제외" in rep32[0]["errors"],
+       f"소속 미상 파일은 취합에서 제외하고 사유를 남긴다 (실제 {rep32[0]['errors'][:30]})")
+    ck(not any(n.get("name") == "미지정업무" for n in m32["nodes"]),
+       "제외된 파일의 노드는 정본에 들어가지 않는다")
+    ck("폴더" in rep32[0]["errors"] and "파일명" in rep32[0]["errors"],
+       "사유에 고치는 방법이 적혀 있다 (조용히 버리지 않는다)")
+    ck(not any("미상" in (n.get("depts") or []) for n in m32["nodes"]),
+       "'미상' 이라는 유령 과가 트리에 남지 않는다")
+
+    # 셋 중 하나라도 있으면 정상 취합돼야 한다 — 정상 파일까지 걸러내면 안 된다
+    mF32, _, _ = excel_io.collect_jsons(
+        [("시운전1부/기장운전1과/아무이름.json", _mk32())], schema.bootstrap())     # 폴더만
+    ck(any(n.get("name") == "미지정업무" for n in mF32["nodes"]), "폴더가 있으면 정상 취합")
+    mE32, _, _ = excel_io.collect_jsons(
+        [("아무이름.json", _mk32(env_dept="기장운전1과"))], schema.bootstrap())      # 봉투만
+    ck(any(n.get("name") == "미지정업무" for n in mE32["nodes"]), "봉투가 있으면 정상 취합")
+    mN32, _, _ = excel_io.collect_jsons(
+        [("프로세스_홍길동_기장운전1과_20260819.json", _mk32())], schema.bootstrap())  # 파일명만
+    ck(any(n.get("name") == "미지정업무" for n in mN32["nodes"]), "파일명 규약이 맞으면 정상 취합")
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

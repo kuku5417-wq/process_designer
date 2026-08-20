@@ -650,6 +650,17 @@ def collect_jsons(files: list[tuple[str, bytes]], current: dict) -> tuple[dict, 
                 # 폴더를 잘못 놓았을 수 있다 — 조용히 넘기지 않고 미리보기에 띄운다.
                 # ★ errors 가 아니라 warn 이다. errors 에 넣으면 파일이 통째로 제외된다.
                 warn = f"폴더 부서({b_dir})와 과의 소속 부서({gp})가 다릅니다 — 과 기준으로 집계합니다."
+        # 소속을 끝내 알아내지 못한 제출은 **취합에서 제외**한다. 그대로 넣으면 `미상` 이라는
+        # 유령 과가 집계·과별 그래프·부서 필터에 영구히 남고, 나중에 누구 것인지 되찾을 수도 없다.
+        # ★ `_submitter_of` 가 빈 문자열이 아니라 "미상" 을 돌려주므로 그 값을 정확히 검사한다.
+        #   (그 함수 자체는 손대지 않는다 — 봉투 우선이라는 계약에 회귀가 걸려 있다.)
+        # 조용히 버리지 않고 **고치는 방법까지** 사유에 적는다.
+        if dept == "미상":
+            reports.append({"filename": filename, "dept": dept, "author": author,
+                            "nodes": 0, "new": 0, "skipped": 0, "warn": "",
+                            "errors": "소속을 알 수 없어 제외 — <부서>/<과> 폴더 아래로 옮기거나 "
+                                      "파일명을 프로세스_이름_부서_날짜.json 형식으로 맞춰 주세요"})
+            continue
         try:
             incoming = schema.normalize({
                 "nodes": [dict(n) for n in payload["nodes"] if isinstance(n, dict)],
