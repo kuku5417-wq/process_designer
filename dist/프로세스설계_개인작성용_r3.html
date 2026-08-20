@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1202";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -486,13 +486,18 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1202";
   .verrow { display: grid; grid-template-columns: .5fr 1.4fr 1fr .7fr auto auto; gap: 8px; align-items: center;
             padding: 6px 14px; font-size: 13.5px; }
   .saverow .sbtn:hover { filter: brightness(.96); }
-  .subrow { display: grid; grid-template-columns: 1.15fr .75fr .45fr .45fr .75fr .85fr .75fr 1.4fr; gap: 8px; align-items: center;
+  .subrow { display: grid; grid-template-columns: 1.15fr .75fr .45fr .45fr .75fr .85fr .75fr 1.4fr 28px; gap: 8px; align-items: center;
             padding: 9px 12px; font-size: 13.5px; border-top: 1px solid #f4f1ea; }
   .subrow.subhead { border-top: none; background: #faf8f3; color: #a8a29e; font-size: 12.5px; font-weight: 800; }
   .subrow.editable { cursor: pointer; }
   .subrow.editable:hover { background: #f7fdfc; }
   .subrow.picked { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; }
   .subrow.ro { color: #a8a29e; }            /* 편집 범위 밖 — 위젯을 아예 그리지 않는다 */
+  .subdelcell { text-align: right; }
+  .subx { border: none; background: none; cursor: pointer; font-size: 13px; padding: 2px 3px;
+    opacity: .35; border-radius: 6px; }
+  .subrow:hover .subx { opacity: 1; }       /* 평소엔 흐리게 — 실수로 누르는 것을 줄인다 */
+  .subx:hover { background: #fef2f2; }
   .subedit { background: #f7fdfc; border-top: 1px solid #cceae4; padding: 12px 14px; }
   .subedit .segrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
   .fbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13.5px; }
@@ -1285,12 +1290,29 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1202";
     rerender();
   }
   /** 레코드 삭제. **즉시 rerender** — 안 그러면 idx 가 밀려 다음 조작이 옆 행을 건드린다. */
-  function actSubDel(id, idx) {
+  function doSubDel(id, idx) {
     var n = byId(id);
     if (!n || !(n.submissions || [])[idx]) return;
+    var r = n.submissions[idx];
     n.submissions.splice(idx, 1);
     S.subEdit = null;
     markDirty(id);
+    flash((r.dept || "") + (r.author ? " · " + maskName(r.author) : "") + " 제출값을 삭제했습니다");
+    rerender();
+  }
+  /** 과·제출자 한 명의 제출값 삭제. **확인 모달을 거친다** — 그 사람이 낸 원본이 사라지고
+   *  저장 후에는 이력·복원으로만 되돌릴 수 있다(되돌릴 수 없는 조작 규칙). */
+  function actSubDel(id, idx) {
+    var n = byId(id), r = n && (n.submissions || [])[idx];
+    if (!r) return;
+    var who = (r.dept || "소속 미상") + (r.author ? " · " + maskName(r.author) : "");
+    S.confirm = {
+      title: who + " 의 제출값을 삭제합니다",
+      body: "이 과·제출자가 낸 원본 한 줄이 지워집니다(다른 제출자는 그대로). "
+          + "되돌리려면 저장 전에 [↻ 다시 읽기], 저장 후에는 [이력 · 복원] 을 써야 합니다. "
+          + "제출 파일이 폴더에 남아 있으면 다시 취합할 때 되살아납니다.",
+      okLabel: "이 제출값 삭제", danger: true, onOk: function () { doSubDel(id, idx); },
+    };
     rerender();
   }
   function actLinkAdd(id) { var n = byId(id); if (!n) return; if (!Array.isArray(n.linked_systems)) n.linked_systems = []; n.linked_systems.push({ system: "", detail: "" }); markDirty(id); rerender(); }
@@ -3118,7 +3140,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1202";
     var recs = (n.submissions || []).filter(function (r) { return r && r.dept; });
     if (!recs.length) return "";
     var head = '<div class="subrow subhead"><span>과</span><span>제출자</span><span>인원</span><span>1회</span>'
-             + "<span>주기</span><span>부하</span><span>자동화</span><span>활용기술</span></div>";
+             + "<span>주기</span><span>부하</span><span>자동화</span><span>활용기술</span><span></span></div>";
     var pick = (S.subEdit && S.subEdit.id === n.id) ? S.subEdit.idx : -1;
     if (pick >= 0 && !recs[pick]) pick = -1;                 // 삭제·재취합으로 밀린 stale 방어
     var rows = recs.map(function (r, i) {
@@ -3138,7 +3160,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1202";
         + "<span>" + esc(freq) + "</span>"
         + "<span>" + esc(loadLabel(r)) + "</span>"
         + "<span>" + esc(r.automation_level || "—") + "</span>"
-        + "<span>" + (techs.length ? esc(techs.join(", ")) : "—") + (ok ? ' <span style="color:#0f766e">✎</span>' : "") + "</span></div>";
+        + "<span>" + (techs.length ? esc(techs.join(", ")) : "—") + (ok ? ' <span style="color:#0f766e">✎</span>' : "") + "</span>"
+        // 행에서 바로 삭제 — 편집 블록을 열어야만 보이면 찾지 못한다. 확인 모달은 actSubDel 이 건다.
+        + '<span class="subdelcell">' + (ok ? '<button class="subx" data-act="subdel" data-id="' + esc(n.id)
+            + '" data-idx="' + i + '" title="이 과·제출자의 제출값 삭제">🗑</button>' : "") + "</span></div>";
       return row + (i === pick ? subEditBlock(n, r, i) : "");
     }).join("");
     // 대표값 vs 과별 합계 — **다른 게 정상**임을 여기 적어둔다. 요약 탭 UNIT_NOTE 와 같은 이유로,
