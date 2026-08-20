@@ -54,7 +54,8 @@ FIELD_COLS: dict[str, str] = {
 # 연계시스템(전체)=linked_systems 다건 조인(객체배열이라 엑셀 한 칸에 못 담아 표시용 문자열; 정본은 JSON)
 # 제출과수·제출합계공수(h) 는 submissions[] 파생이다. **DERIVED_COLS 에만** 둘 것 —
 # FIELD_COLS 에 넣으면 parse_excel 이 파생값을 저장 필드로 역수입한다(위 규칙).
-DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서", "연계시스템(전체)", "제출과수", "제출합계공수(h)"]
+DERIVED_COLS: list[str] = ["연간공수(h)", "상위부서", "연계시스템(전체)", "제출과수", "제출합계공수(h)",
+                           "향후적용시기", "향후완료시점"]
 
 # '저장자' = 이 노드를 마지막으로 저장한 사람(updated_by). 작성자가 아니다 — 메인앱은 취합본을
 # 다듬는 관리 도구라 상단에서도 '저장자'만 받는다. parse_excel 은 이 열을 읽지 않는다(base 보존).
@@ -100,6 +101,10 @@ def flatten(data: dict, mask: bool = True) -> pd.DataFrame:
         row["연간공수(h)"] = ah if ah else ""
         row["산출물"] = n.get("outputs", "")
         row["향후AI적용기술"] = ", ".join(n.get("future_tech") or [])
+        # 향후 적용 시기 — 객체 맵이라 표시용 조인 문자열로만 낸다(역수입 안 함, JSON 이 정본).
+        fy = n.get("future_years") or {}
+        row["향후적용시기"] = ", ".join(f"{k}:{fy[k]}" for k in sorted(fy))
+        row["향후완료시점"] = max(fy.values()) if fy else ""
         row["특이사항"] = ", ".join(n.get("special_note") or [])
         row["적용선종"] = ", ".join(n.get("ship_types") or [])
         row["연계시스템"] = n.get("linked_system", "")
@@ -221,6 +226,8 @@ def _submission_df(data: dict, mask: bool = True) -> pd.DataFrame:
             row["자동화수준"] = r.get("automation_level", "")
             row["현재기술"] = ", ".join(r.get("tech") or [])
             row["향후기술"] = ", ".join(r.get("future_tech") or [])
+            _fy = r.get("future_years") or {}
+            row["향후적용시기"] = ", ".join(f"{k}:{_fy[k]}" for k in sorted(_fy))
             row["산출물"] = r.get("outputs", "")
             row["적용선종"] = ", ".join(r.get("ship_types") or [])
             row["특이사항"] = ", ".join(r.get("special_note") or [])

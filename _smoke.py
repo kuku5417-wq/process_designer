@@ -565,6 +565,40 @@ def main() -> int:
     ck(s_ms["by_dept"].get("(미지정)") == 3 and s_ms["missing_total"] == 1,
        "소속 유무는 부하 미입력과 무관하다")
 
+    # 23-j. 향후 AI 적용 시기 — 기술별 연도 + 롤업 최댓값
+    ck("future_years" in schema.NODE_DEFAULTS and "future_years" in schema.DETAIL_FIELDS,
+       "future_years 가 NODE_DEFAULTS∧DETAIL_FIELDS (없으면 취합이 복사하지 않아 유실)")
+    ck(schema.FUTURE_YEARS == ("2027", "2028", "2029", "2030", "2031"), "적용 시기 선택지 2027~2031")
+    nd_fy = schema.bootstrap()
+    _f4 = schema.add_node(nd_fy, "lv3_seonjang", 4, "x", "F4")
+    _f5 = schema.add_node(nd_fy, _f4, 5, "x", "F5")
+    _f6 = schema.add_node(nd_fy, _f5, 6, "x", "세부")
+    _f7 = schema.add_node(nd_fy, _f6, 7, "x", "단위")
+    schema.update_node(nd_fy, _f6, {"future_tech": ["RPA", "LLM"],
+                                    "future_years": {"RPA": "2027", "LLM": "2029",
+                                                     "OCR": "2028", "X": "1999"}}, "x")
+    schema.update_node(nd_fy, _f7, {"future_tech": ["RPA", "OCR"],
+                                    "future_years": {"RPA": "2031", "OCR": "2028"}}, "x")
+    nd_fy = schema.normalize(nd_fy)
+    mfy, cfy = schema.node_map(nd_fy["nodes"]), schema.children_index(nd_fy["nodes"])
+    ck(mfy[_f6]["future_years"] == {"RPA": "2027", "LLM": "2029"},
+       f"선택 안 한 기술(OCR)·범위 밖 연도(1999)는 버린다 (실제 {mfy[_f6]['future_years']})")
+    roll = schema.rollup_future_years(cfy, mfy[_f6])
+    ck(roll == {"RPA": "2031", "LLM": "2029", "OCR": "2028"},
+       f"lv7 자식까지 병합 (실제 {roll})")
+    ck(roll["RPA"] == "2031", "같은 기술이 갈리면 **늦은 해**가 이긴다(완료 시점 기준)")
+    ck(schema.future_year_max(cfy, mfy[_f6]) == "2031", "최댓값 = 완료 시점")
+    ck(schema.future_year_max(cfy, mfy[_f5]) == "", "적용 시기가 없으면 빈 문자열")
+    # 엑셀 — 파생 2열로만 나가고 **역수입되지 않는다**(객체 맵, JSON 이 정본)
+    ck("향후적용시기" in excel_io.DERIVED_COLS and "향후완료시점" in excel_io.DERIVED_COLS,
+       "향후적용시기·향후완료시점은 파생열(DERIVED_COLS)")
+    ck("향후적용시기" not in excel_io.FIELD_COLS and "향후완료시점" not in excel_io.FIELD_COLS,
+       "파생열은 FIELD_COLS 에 없다 — 있으면 parse_excel 이 역수입한다")
+    _fdf = excel_io.flatten(nd_fy)
+    _r6 = _fdf[_fdf["id"] == _f6].iloc[0]
+    ck(_r6["향후적용시기"] == "LLM:2029, RPA:2027", f"엑셀 적용시기 조인 (실제 {_r6['향후적용시기']})")
+    ck(_r6["향후완료시점"] == "2029", f"엑셀 완료시점은 자기 값 기준 (실제 {_r6['향후완료시점']})")
+
     # 23-i. 발생패턴이 취합에서 유실되지 않는다 (부하 엔진의 입력)
     for f in ("occur_pattern", "apply_phases", "events"):
         ck(f in schema.NODE_DEFAULTS and f in schema.DETAIL_FIELDS,

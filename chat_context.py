@@ -86,6 +86,11 @@ def build(data: dict, max_chars: int = MAX_CHARS) -> str:
             bits.append(f"현재기술: {now}")
         if fut:
             bits.append(f"향후기술: {fut}")
+        # 향후 적용 시기 — "언제 AI 화되나" 질문에 답할 근거. 최댓값이 완료 시점이다.
+        fy = schema.rollup_future_years(cidx, n)
+        if fy:
+            bits.append("적용시기: " + ", ".join(f"{k} {fy[k]}" for k in sorted(fy)))
+            bits.append(f"완료시점: {max(fy.values())}")
         if n.get("automation_level"):
             bits.append(f"자동화: {n['automation_level']}")
         occ = _occur_str(n)

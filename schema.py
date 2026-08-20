@@ -49,6 +49,7 @@ DETAIL_FIELDS: Final[tuple[str, ...]] = (
     "linked_system", "linked_system_detail", "linked_systems", "special_note", "ship_types",
     "work_hours", "freq_unit", "freq_count", "annual_count",
     "occur_pattern", "apply_phases", "events",
+    "future_years",
 )
 
 # 부서별 제출값 레코드(node.submissions[]) 에 담는 필드.
@@ -64,6 +65,10 @@ SUBMISSION_FIELDS: Final[tuple[str, ...]] = tuple(
 # 연간 공수 = work_hours(1회 소요시간) × annual_count(연간 횟수).
 # 곱한 값은 **저장하지 않는다** — 두 원본과 어긋날 수 있으므로 annual_hours() 로만 계산한다.
 # 주기를 고르면 횟수 기본값이 채워지지만, "호선별"·"수시"는 연간 횟수가 정해지지 않아 직접 입력한다.
+# 향후 AI 적용 시기 선택지. 도메인이 아니라 상수다 — 연도는 사용자가 늘릴 값이 아니다.
+# 범위를 넓히려면 이 배열만 고치면 된다(JS FUTURE_YEARS 트윈도 함께).
+FUTURE_YEARS: Final[tuple[str, ...]] = ("2027", "2028", "2029", "2030", "2031")
+
 FREQ_ANNUAL: Final[dict[str, int]] = {
     "일 1회": 250,      # 근무일 기준
     "주 1회": 52,
@@ -315,6 +320,9 @@ NODE_DEFAULTS: Final[dict[str, Any]] = {
     "linked_system_detail": "", # (구) 연계시스템 추가정보 단일 — back-compat
     "linked_systems": [],       # 연계시스템 다건 — [{system, detail}, ...] (호선이벤트 events[] 식)
     "future_tech": [],          # 향후 AI 적용 기술 (다중) — 현재 활용기술(tech)과 같은 도메인
+    # 향후 기술별 적용 시기 — {기술명: "2027"}. **객체 맵이라 리스트 강제변환 대상이 아니다.**
+    # normalize 가 future_tech 밖 키와 FUTURE_YEARS 밖 값을 버린다(해제한 기술의 연도가 새지 않게).
+    "future_years": {},
     "has_ai_future": False,     # 향후 AI 적용 (파생: future_tech 비었나)
     "special_note": [],         # 특이사항 (다중) — SG/DF(LNG)/메탄올/LPG
     "ship_types": [],           # 적용 선종 (다중) — 호선 패턴일 때만 입력
@@ -525,6 +533,13 @@ def _norm_detail_fields(d: dict, no_ai: frozenset[str] = frozenset()) -> dict:
     # 이 두 줄만 고치면 전원 자동으로 따라온다. 읽기 시점 계산으로 바꾸면 그 10곳 + JS 트윈을 다 손대야 한다.
     d["has_ai_agent"] = _has_ai(d["tech"], no_ai)
     d["has_ai_future"] = _has_ai(d["future_tech"], no_ai)
+    # 향후 적용 시기 {기술: 연도} — **선택된 향후 기술 + 유효 연도만** 남긴다.
+    #   해제한 기술의 연도가 남으면 엑셀·LLM 컨텍스트로 새고, 최댓값 표기까지 거짓이 된다.
+    fy = d.get("future_years")
+    d["future_years"] = {
+        str(k): str(v) for k, v in (fy.items() if isinstance(fy, dict) else [])
+        if str(k) in d["future_tech"] and str(v) in FUTURE_YEARS
+    }
     return d
 
 
@@ -941,6 +956,33 @@ def rollup_techs(cidx: dict[str, list[dict]], node: dict, field: str = "tech") -
         if c.get("level") == LEVEL_MAX:
             out |= {str(t).strip() for t in (c.get(field) or []) if str(t).strip()}
     return out
+
+
+def rollup_future_years(cidx: dict[str, list[dict]], node: dict) -> dict[str, str]:
+    """lv6 유효 적용시기 = 자신 ∪ lv7 자식들의 {기술: 연도} 병합.
+
+    같은 기술이 lv6·lv7 에서 다른 해면 **늦은 해**를 취한다 — 이 값이 "언제 다 끝나나"를
+    말하는 것이라 빠른 해를 취하면 완료 시점을 낙관적으로 속인다.
+    """
+    out: dict[str, str] = {}
+
+    def add(src: dict | None) -> None:
+        for k, v in (src or {}).items():
+            k, v = str(k), str(v)
+            if v and (k not in out or v > out[k]):     # "2027" < "2031" — 문자열 비교로 충분(4자리 고정)
+                out[k] = v
+
+    add(node.get("future_years") if isinstance(node.get("future_years"), dict) else None)
+    for c in cidx.get(node["id"], []):
+        if c.get("level") == LEVEL_MAX:
+            add(c.get("future_years") if isinstance(c.get("future_years"), dict) else None)
+    return out
+
+
+def future_year_max(cidx: dict[str, list[dict]], node: dict) -> str:
+    """이 업무가 완전히 AI화되는 시점 = 적용시기(롤업)의 최댓값. 없으면 ''."""
+    ys = rollup_future_years(cidx, node).values()
+    return max(ys) if ys else ""
 
 
 def _pct(part: int, whole: int) -> int:
