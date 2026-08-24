@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -252,11 +252,22 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
   .minibtn { font-size: 13px; font-weight: 700; color: #78716c; background: #f0ede6; border: none;
     border-radius: 7px; padding: 6px 11px; cursor: pointer; }
   .minibtn.p { color: #fff; background: #0f766e; font-weight: 800; }
-  .row { display: flex; align-items: center; border-radius: 8px; margin-bottom: 1px; }
+  .row { display: flex; align-items: center; border-radius: 8px; margin-bottom: 1px; cursor: pointer; }
+  .row.picked { background: #eff6ff; box-shadow: inset 3px 0 0 #2563eb; }
+  .rowpick { flex: none; width: 15px; height: 15px; margin: 0 2px 0 0; accent-color: #2563eb; cursor: pointer; }
+  .rowmvs { flex: none; display: inline-flex; gap: 1px; opacity: .25; }
+  .row:hover .rowmvs { opacity: 1; }        /* 평소엔 흐리게 — 행이 시끄러워지지 않게 */
+  .rowmv { border: none; background: none; cursor: pointer; font-size: 11px; color: #78716c;
+    padding: 3px 4px; border-radius: 5px; line-height: 1; }
+  .rowmv:hover:not(:disabled) { background: #e7f6f4; color: #0f766e; }
+  .rowmv:disabled { opacity: .25; cursor: not-allowed; }
+  .pickbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #eff6ff;
+    border-bottom: 1px solid #dbeafe; font-size: 13.5px; color: #1e3a8a; }
+  .pickbar b { font-weight: 800; }
   .row:hover { background: #faf8f3; }
   .row.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; }
   .tog { width: 22px; text-align: center; font-size: 12px; color: #a8a29e; padding: 10px 0; flex: none; }
-  .rowmain { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px; cursor: pointer; min-width: 0; }
+  .rowmain { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px; min-width: 0; }
   .lvb { font-size: 11px; font-weight: 800; padding: 2px 5px; border-radius: 4px; flex: none; }
   .lvb.d { background: #99f6e4; color: #115e59; }
   .lvb.g { background: #f0ede6; color: #78716c; }
@@ -1126,6 +1137,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
     // 탭은 **문자열 키**다. 숫자 인덱스로 두면 개인 모드에서 탭을 빼는 순간 인덱스가 밀려
     // 엉뚱한 화면이 그려진다.
     activeTab: "tree", domTab: "dept", mask: true, excelTab: "up", histPick: 0, restoreOk: false,
+    pick: {},               // 전체보기 다중선택 {id:1} — 이동 조작이 선택 전체에 걸린다
+    _scroll: {}, _renderKey: null,            // 스크롤 위치 보존 (rerender 가 innerHTML 을 통째로 갈아끼우므로)
     sumPick: null,          // 요약 드릴다운 선택 {axis, key} — null 이면 전체 목록
     // 요약 탭 부서/과 필터. **순수 뷰 상태**라 emit 하지도, 저장하지도 않는다(S.sumPick·S.query 와 같다).
     // 파이썬으로 내리면 tree_epoch 이 올라 미저장 편집이 사라진다(app.py _set_data 주석).
@@ -1475,6 +1488,119 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
     renumber(pid);
     orderedIds.forEach(markDirty);
     rerender();
+  }
+
+  // ── 전체보기 4방향 이동 (▲▼ 순서 · ⇤⇥ 레벨) ────────────────────
+  // 드래그는 컬럼 보기 전용(draggable:".card")이라 전체보기엔 이동 수단이 없었다.
+  // 판정 규칙은 schema.apply_move 와 같다 — 여기서 새로 만들지 말고 그 규칙을 그대로 쓴다.
+
+  /** 승격 대상 부모 = **조부모**. lv3(부모가 ROOT)은 더 올라갈 곳이 없다. */
+  function promoteTarget(id) {
+    var n = byId(id); if (!n || n.parent_id === ROOT) return null;
+    var p = byId(n.parent_id);
+    return p ? p.parent_id : null;
+  }
+  /** 강등 대상 부모 = **직전 형제**. 첫 형제는 붙을 곳이 없다. */
+  function demoteTarget(id) {
+    var n = byId(id); if (!n) return null;
+    var sibs = childrenOf(n.parent_id);
+    for (var i = 0; i < sibs.length; i++) if (sibs[i].id === id) return i > 0 ? sibs[i - 1].id : null;
+    return null;
+  }
+  /** 막을 이유(문자열) 또는 "" — 버튼 비활성 판정과 실행 시 안내가 **같은 함수**를 본다. */
+  function moveBlock(id, newPid) {
+    var n = byId(id); if (!n) return "없는 업무입니다";
+    if (newPid === null || newPid === undefined) return "";      // 호출부가 별도 사유를 낸다
+    if (n.parent_id === newPid) return "이미 그 자리입니다";
+    if (wouldCycle(id, newPid)) return "자기 자신이나 하위 업무 밑으로는 옮길 수 없습니다";
+    var newLevel = newPid === ROOT ? LEVEL_MIN : ((byId(newPid) || {}).level || 0) + 1;
+    if (newLevel > LEVEL_MAX) return "lv" + LEVEL_MAX + " 아래로는 더 내려갈 수 없습니다";
+    if (newLevel + maxDepthBelow(id) > LEVEL_MAX)
+      return "하위까지 옮기면 lv" + LEVEL_MAX + " 을 넘습니다 — 하위를 먼저 정리하세요";
+    return "";
+  }
+  /** 이 행에 대해 방향별로 가능한가 (버튼 disabled 판정). dir: -1 승격 / +1 강등 */
+  function levelMoveWhy(id, dir) {
+    var tgt = dir < 0 ? promoteTarget(id) : demoteTarget(id);
+    if (tgt === null) return dir < 0 ? "더 올라갈 수 없습니다 (최상위)" : "위에 형제가 없어 내려갈 수 없습니다";
+    return moveBlock(id, tgt);
+  }
+  /** 선택된 id 들을 **화면(트리) 순서**로. 선택이 없으면 클릭한 행 하나.
+   *  ★ 순서를 잃으면 여러 개를 옮길 때 서로 뒤집힌다. */
+  function pickedIds(fallbackId) {
+    var ids = Object.keys(S.pick).filter(function (id) { return byId(id); });
+    if (!ids.length) return fallbackId ? [fallbackId] : [];
+    var pos = {}, i = 0;
+    (function walk(pid) {
+      childrenOf(pid).forEach(function (c) { pos[c.id] = i++; walk(c.id); });
+    })(ROOT);
+    return ids.sort(function (a, b) { return (pos[a] === undefined ? 1e9 : pos[a]) - (pos[b] === undefined ? 1e9 : pos[b]); });
+  }
+  /** 조용히 일부만 처리하지 않는다 — 건너뛴 건수·사유를 반드시 알린다. */
+  function moveFlash(done, skipLock, why) {
+    var msg = done ? done + "개를 옮겼습니다" : "옮기지 못했습니다";
+    if (skipLock) msg += " · 편집 범위 밖 " + skipLock + "개 제외";
+    if (!done && why) msg += " — " + why;
+    flash(msg);
+  }
+  /** ▲▼ 형제 순서 이동. ▼는 뒤에서부터 처리해야 서로 밀지 않는다. */
+  function actRowMove(id, delta) {
+    var ids = pickedIds(id);
+    if (delta > 0) ids = ids.slice().reverse();
+    var done = 0, skipLock = 0, why = "";
+    ids.forEach(function (nid) {
+      var n = byId(nid); if (!n) return;
+      if (!canEdit(n)) { skipLock++; return; }
+      var order = childrenOf(n.parent_id).map(function (x) { return x.id; });
+      var i = order.indexOf(nid), j = i + delta;
+      if (i < 0 || j < 0 || j >= order.length) { why = why || "더 이동할 자리가 없습니다"; return; }
+      order[i] = order[j]; order[j] = nid;
+      var pos = {}; order.forEach(function (x, k) { pos[x] = k; });
+      childrenOf(n.parent_id).forEach(function (x) { x.order = pos[x.id]; });
+      touchTree(); renumber(n.parent_id); markDirty(nid);
+      done++;
+    });
+    moveFlash(done, skipLock, why);
+    rerender();
+  }
+  /** ⇤⇥ 레벨 이동. 레벨은 저장값이 아니라 깊이 파생이라 부모만 바꾸고 cascadeLevels 가 따라온다. */
+  function actLevelMove(id, dir) {
+    var ids = pickedIds(id);
+    var done = 0, skipLock = 0, why = "";
+    ids.forEach(function (nid) {
+      var n = byId(nid); if (!n) return;
+      if (!canEdit(n)) { skipLock++; return; }
+      var tgt = dir < 0 ? promoteTarget(nid) : demoteTarget(nid);
+      var block = levelMoveWhy(nid, dir);
+      if (tgt === null || block) { why = why || block; return; }
+      var oldPid = n.parent_id;
+      n.parent_id = tgt; touchTree();
+      n.order = childrenOf(tgt).length;                  // 끝에 붙인다 — 여러 개면 순서 유지
+      cascadeLevels(nid);                                // 자손 레벨 재계산
+      renumber(oldPid); renumber(tgt);
+      markDirty(nid);
+      childrenOf(nid).forEach(function (c) { markDirty(c.id); });
+      done++;
+    });
+    moveFlash(done, skipLock, why);
+    rerender();                                          // 선택(S.pick)은 유지 — 연속으로 올리기 쉽게
+  }
+  /** 행 끝 이동 버튼 4개. **막힌 방향은 disabled** 로 — 눌러도 아무 일 없는 버튼을 두지 않는다. */
+  function moveBtns(nn) {
+    var sibs = childrenOf(nn.parent_id), i = -1;
+    for (var k = 0; k < sibs.length; k++) if (sibs[k].id === nn.id) i = k;
+    function b(act, dir, label, why, off) {
+      return '<button class="rowmv" data-act="' + act + '" data-id="' + esc(nn.id) + '" data-d="' + dir + '"'
+        + (off ? " disabled" : "") + ' title="' + esc(off ? why : label) + '">' + label.charAt(0) + "</button>";
+    }
+    var upOff = i <= 0, dnOff = i < 0 || i >= sibs.length - 1;
+    var proWhy = levelMoveWhy(nn.id, -1), demWhy = levelMoveWhy(nn.id, 1);
+    return '<span class="rowmvs">'
+      + b("rowup", -1, "▲ 위로", "맨 위입니다", upOff)
+      + b("rowdown", 1, "▼ 아래로", "맨 아래입니다", dnOff)
+      + b("promote", -1, "⇤ 레벨 올리기", proWhy, !!proWhy)
+      + b("demote", 1, "⇥ 레벨 내리기", demWhy, !!demWhy)
+      + "</span>";
   }
 
   function actMove(id, newPid) { actMoveMany([id], newPid); }
@@ -2112,13 +2238,20 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
         if (kids.length) chips += '<span class="mc kids">▸' + kids.length + "</span>";
         var olock = !canEdit(nn);
         if (olock) chips = '<span class="lockchip">🔒</span>' + chips;
+        // ★ select 는 **.row 바깥**에 둔다 — 들여쓰기(padding-left)가 .row 에 걸려 있어
+        //    .rowmain 에만 두면 그 여백 전체가 죽은 영역이 된다(lv6·lv7 은 60~80px). 안쪽
+        //    버튼들은 onClick 의 closest("[data-act]") 가 더 안쪽을 집으므로 그대로 이긴다.
         body += '<div class="row' + (sel ? " sel" : "") + (isHit(nn) ? " hit" : "") + (olock ? " locked" : "")
-          + '" style="padding-left:' + (depth * 20) + 'px">'
+          + (S.pick[nn.id] ? " picked" : "") + '" data-act="select" data-id="' + esc(nn.id) + '"'
+          + ' style="padding-left:' + (depth * 20) + 'px">'
+          + '<input type="checkbox" class="rowpick" data-act="pickrow" data-id="' + esc(nn.id) + '"'
+          + (S.pick[nn.id] ? " checked" : "") + ' title="여러 개 골라 한 번에 이동" />'
           + '<div class="tog"' + (kids.length ? ' data-act="toggle" data-id="' + esc(nn.id) + '" style="cursor:pointer"' : "") + ">" + (kids.length ? (col ? "▸" : "▾") : "") + "</div>"
-          + '<div class="rowmain" data-act="select" data-id="' + esc(nn.id) + '"><span class="lvb ' + (detail ? "d" : "g") + '">lv' + nn.level + "</span>"
+          + '<div class="rowmain"><span class="lvb ' + (detail ? "d" : "g") + '">lv' + nn.level + "</span>"
           + '<input class="rowname" data-fkey="name" data-id="' + esc(nn.id) + '" value="' + esc(nn.name) + '" placeholder="' + esc(LABELS[nn.level]) + '명" />'
           + (nn.desc ? '<span class="rowdesc">' + esc(nn.desc) + "</span>" : "") + chips
           + (S.dirty.indexOf(nn.id) >= 0 ? '<span class="dot"></span>' : "") + "</div>"
+          + moveBtns(nn)
           + (nn.level < LEVEL_MAX ? '<button class="rowadd" data-act="add" data-pid="' + esc(nn.id) + '" data-lv="' + (nn.level + 1) + '" title="하위 추가">＋</button>' : "")
           + (nn.level >= 5 ? '<button class="rowdel ccopy" data-act="copy" data-id="' + esc(nn.id) + '" title="복사 — 하위 포함, 이름 수정 필요">⧉</button>' : "")
           + '<button class="rowdel" data-act="del" data-id="' + esc(nn.id) + '" title="이 ' + esc(LABELS[nn.level]) + ' 삭제' + (kids.length ? " (하위 " + descCount(nn.id) + "개 포함)" : "") + '">🗑</button>'
@@ -2137,7 +2270,21 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
     return '<div class="outwrap"><div class="outcard"><div class="outhead"><span class="h1">업무 계층 전체보기</span><span class="h2">클릭하면 오른쪽에서 상세 입력</span><div class="grow"></div>'
       + '<button class="minibtn" data-act="collapse">' + (anyOpen ? "모두 접기" : "모두 펼치기") + "</button>"
       + '<button class="minibtn p" data-act="add" data-pid="' + ROOT + '" data-lv="3">＋ 새 부문</button></div>'
+      + pickBar()
       + '<div class="list scroll" style="padding:7px">' + body + "</div></div></div>";
+  }
+
+  /** 다중선택 바 — 하나라도 고르면 뜬다. 이동 조작은 선택 전체에 걸린다. */
+  function pickBar() {
+    var ids = Object.keys(S.pick).filter(function (id) { return byId(id); });
+    if (!ids.length) return "";
+    return '<div class="pickbar"><b>' + ids.length + '개 선택</b>'
+      + '<span class="h2">고른 항목이 함께 움직입니다</span><div class="grow"></div>'
+      + '<button class="minibtn" data-act="rowup" data-id="" title="위로">▲</button>'
+      + '<button class="minibtn" data-act="rowdown" data-id="" title="아래로">▼</button>'
+      + '<button class="minibtn" data-act="promote" data-id="" title="레벨 올리기 (부모의 형제로)">⇤</button>'
+      + '<button class="minibtn" data-act="demote" data-id="" title="레벨 내리기 (직전 형제의 하위로)">⇥</button>'
+      + '<button class="minibtn" data-act="pickclear">선택 해제</button></div>';
   }
 
   // 검색어와 이름이 겹치는지 (하이라이트용). 빈 검색어는 아무것도 맞히지 않는다.
@@ -3430,6 +3577,54 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
         + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
     return topbar() + banners() + body + confirmModal();
   }
+  // ── 스크롤 위치 보존 ────────────────────────────────────────────
+  // rerender 는 innerHTML 을 통째로 갈아끼워 모든 스크롤이 0 으로 돌아간다. 긴 목록을 내려
+  // 작업하다 한 번 클릭하면 맨 위로 튀고, 사용자는 "안 눌렸나" 싶어 또 누른다.
+  // S 에 담으므로 **파이썬 왕복(저장·추가)에도 살아남는다.**
+  var SCROLL_SEL = ".list, .pbody, .page, .sumlist";
+  /** 스크롤 슬롯의 **키**.
+   *
+   *  키에는 화면을 결정하는 것이 다 들어가야 한다 — 탭 · 보기모드 · 드릴다운 범위(lv3Sel),
+   *  그리고 상세 패널은 **어느 노드의 폼인지**. 빠뜨리면 다른 화면의 스크롤을 물려받아
+   *  엉뚱한 중간이 보이고, 그 목록이 짧으면 0 으로 눌려 **원래 자리까지 잃는다.**
+   *
+   *  ★ 저장에 쓰는 키는 **지금 DOM 에 그려져 있는** 화면의 키다(현재 S 값이 아니라).
+   *    클릭 핸들러는 S 를 먼저 바꾸고 rerender 를 부르므로, 저장 때 S 를 읽으면
+   *    "떠나는 화면"의 스크롤이 "들어오는 화면"의 키에 적힌다. 그래서 렌더할 때마다
+   *    그때의 키를 S._renderKey 에 남겨 두고, 저장은 그것을 쓴다.
+   */
+  function scrollKey() {
+    return S.activeTab + "|" + (S.viewMode || "") + "|"
+      + (S.lv3Sel || []).slice().sort().join(",") + "|" + (S.selectedId || "");
+  }
+  function scrollSlots(ctx) {
+    var p = String(ctx || "|||").split("|");
+    var base = p.slice(0, 3).join("|") + "|", panelId = p[3] || "", seen = {}, out = [];
+    Array.prototype.forEach.call(contentEl.querySelectorAll(SCROLL_SEL), function (el) {
+      var c = String(el.className || "").split(" ")[0];
+      seen[c] = (seen[c] || 0) + 1;
+      out.push({ el: el, key: c === "pbody" ? base + "pbody@" + panelId : base + c + "#" + seen[c] });
+    });
+    return out;
+  }
+  function saveScroll() {
+    if (!contentEl || !S._renderKey) return;              // 첫 렌더 전에는 담을 것이 없다
+    scrollSlots(S._renderKey).forEach(function (o) {
+      if (o.el.scrollTop > 0) S._scroll[o.key] = o.el.scrollTop; else delete S._scroll[o.key];
+    });
+  }
+  function restoreScroll() {
+    if (!contentEl) return;
+    S._renderKey = scrollKey();                            // 이번에 그린 화면 — 다음 저장의 기준
+    scrollSlots(S._renderKey).forEach(function (o) {
+      var v = S._scroll[o.key];
+      if (v) o.el.scrollTop = v;                 // 키가 없으면 그대로 0 — 화면이 바뀌면 맨 위가 맞다
+    });
+    // 대화 로그만 예외 — "보던 자리"가 아니라 **새 답**이 보여야 한다
+    var cb = contentEl.querySelector(".chatbox");
+    if (cb) cb.scrollTop = cb.scrollHeight;
+  }
+
   function rerender(focusSel) {
     // 다시 그리기 전에 캐럿 위치를 기억한다. 무조건 끝으로 보내면 글자 중간을 고칠 때
     // 한 자 칠 때마다 커서가 맨 뒤로 튄다.
@@ -3440,10 +3635,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
         try { caret = { s: prev.selectionStart, e: prev.selectionEnd }; } catch (e) {}
       }
     }
+    saveScroll();                // ★ innerHTML 을 갈아끼우기 **전에** 위치를 담아둔다
     touchTree();                 // 렌더 진입 시 인덱스를 버린다 — 직전까지의 모든 변경을 덮는 안전망
     contentEl.innerHTML = fullView();
     wireDnD();          // innerHTML 로 DOM 을 갈아끼웠으므로 Sortable 을 다시 붙인다
     layout();
+    restoreScroll();             // ★ layout() **뒤에** — 컨테이너 높이가 정해져야 scrollTop 이 먹는다
     if (focusSel) {
       var el = contentEl.querySelector(focusSel);
       if (el) {
@@ -3531,6 +3728,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
     //   액션마다 조건을 흩뿌리면 새 액션이 생길 때 조용히 새어 나간다. 새 편집 액션을 추가하면
     //   이 목록에도 반드시 넣을 것. (select 는 허용 — 내용은 읽을 수 있어야 한다. add 는 아래 별도 처리.)
     var EDIT_ACTS = { del: 1, copy: 1, tech: 1, ftech: 1, mchip: 1, freqchip: 1, fyear: 1, occur: 1,
+                      // 이동도 편집이다 — 범위 밖 노드를 옮기면 남의 트리를 흔든다.
+                      // (다중선택 경로는 actRowMove/actLevelMove 안에서 건별로 다시 거른다)
+                      rowup: 1, rowdown: 1, promote: 1, demote: 1,
                       evadd: 1, evdel: 1, lsadd: 1, lsdel: 1,
                       // 과별 제출값 편집도 **노드 게이트를 먼저** 통과해야 한다
                       subdel: 1, subtech: 1, subfreq: 1 };
@@ -3591,6 +3791,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260820_1217";
       S.sumPick = same ? null : { axis: d.axis, key: d.key || "" };
       rerender();
     }
+    else if (a === "rowup") actRowMove(d.id, -1);
+    else if (a === "rowdown") actRowMove(d.id, 1);
+    else if (a === "promote") actLevelMove(d.id, -1);
+    else if (a === "demote") actLevelMove(d.id, 1);
+    else if (a === "pickrow") { if (S.pick[d.id]) delete S.pick[d.id]; else S.pick[d.id] = 1; rerender(); }
+    else if (a === "pickclear") { S.pick = {}; rerender(); }
     else if (a === "sumclose") S.sumPick = null, rerender();
     else if (a === "fclear") { S.fGroup = ""; S.fDept = ""; rerender(); }   // 요약 부서/과 필터 해제(뷰 상태)
     // 과별 막대의 현재/향후 전환 — 그래프만 바뀐다. 선택 중이던 축이 반대편이면 함께 옮겨준다.
