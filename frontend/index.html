@@ -37,7 +37,8 @@
   html.solo .app { border: none; border-radius: 0; }
 
   /* 상단바 */
-  .top { display: flex; align-items: center; gap: 10px; padding: 11px 16px; background: #fff;
+  /* gap 10→8: 상단바 요소가 11개라 2px 씩만 줄여도 20px 이 돌아온다(한 줄 유지용). */
+  .top { display: flex; align-items: center; gap: 8px; padding: 11px 16px; background: #fff;
     border-bottom: 1px solid #e7e1d6; flex: none; flex-wrap: wrap; row-gap: 8px; }
   .top > * { flex: none; }
   .top .grow { flex: 1 1 auto; }
@@ -48,7 +49,8 @@
   .btitle { font-size: 16.5px; font-weight: 800; letter-spacing: -.2px; line-height: 1.15; }
   .bsub { font-size: 12.5px; color: #a8a29e; font-weight: 600; }
   .tabs { display: flex; gap: 2px; background: #f0ede6; padding: 3px; border-radius: 9px; }
-  .tab { padding: 6px 10px; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer;
+  /* padding 을 10→8 로 줄였다. 탭 6개 × 좌우 = 24px 이 상단바 한 줄 여유로 돌아온다. */
+  .tab { padding: 6px 8px; border-radius: 7px; font-size: 14px; font-weight: 700; cursor: pointer;
     white-space: nowrap; color: #78716c; border: none; background: transparent; }
   .tab.on { background: #fff; color: #0f766e; box-shadow: 0 1px 3px rgba(28,25,23,.13); }
   .seg { display: flex; gap: 3px; background: #f0ede6; padding: 3px; border-radius: 9px; }
@@ -2368,26 +2370,33 @@
   // ── 뷰 (HTML 문자열) ────────────────────────────────
   // 진입점은 fullView() 하나다 (rerender 가 그것만 부른다).
   /** 탭 목록. 개인 모드는 서버가 없어 이력·복원이 성립하지 않으므로 아예 뺀다. */
+  // ★ 라벨은 **짧게, 이모지는 유지**한다. 상단바는 한 줄에 들어가야 하는데(아래 topbar 주석)
+  //   탭이 6개가 되면서 "계층 편집"·"제출 취합" 같은 두 낱말 라벨로는 1280px 을 넘겼다.
+  //   줄인 만큼 `tip`(전체 이름)을 title 로 달아 뜻이 사라지지 않게 한다.
   function TABS() {
-    var t = [{ k: "tree", label: "계층 편집" }];
+    var t = [{ k: "tree", label: "계층", tip: "계층 편집" }];
     // 📊 요약 — 메인앱 전용. 개인 배포판은 소속이 하나뿐이라 부서·과 비교가 무의미하다.
-    if (!SOLO) t.push({ k: "sum", label: "📊 요약" });
-    t.push({ k: "domain", label: "도메인 관리" });
+    if (!SOLO) t.push({ k: "sum", label: "📊 요약", tip: "요약 — 세부업무(lv6) 기준 현황" });
+    t.push({ k: "domain", label: "도메인", tip: "도메인 관리" });
     // 🧩 제출 취합 — 엑셀 탭과 **별개의 독립 탭**. SHOW_IO_TAB 을 꺼도 취합은 살아 있어야 한다.
-    if (!SOLO) t.push({ k: "collect", label: "🧩 제출 취합" });
+    if (!SOLO) t.push({ k: "collect", label: "🧩 취합", tip: "제출 취합 — 개인 제출 파일 모으기" });
     // 엑셀 탭 — SHOW_IO_TAB 으로 껐다 켠다. **개인 배포판은 항상 보인다**(제출 파일을 만드는
     // 유일한 경로라 숨기면 워크플로가 끊긴다). 숨기는 건 메인앱의 가져오기/내보내기뿐이다.
-    if (SOLO || SHOW_IO_TAB) t.push({ k: "io", label: SOLO ? "내보내기 / 불러오기" : "엑셀 가져오기 / 내보내기" });
-    if (!SOLO) t.push({ k: "hist", label: "이력 · 복원" });
+    if (SOLO || SHOW_IO_TAB) t.push({ k: "io", label: SOLO ? "내보내기 / 불러오기" : "엑셀",
+      tip: SOLO ? "내보내기 / 불러오기" : "엑셀 가져오기 / 내보내기" });
+    if (!SOLO) t.push({ k: "hist", label: "이력", tip: "이력 · 복원" });
     // 질의 챗봇 — 메인앱 전용(개인 배포판은 백엔드가 없다) + LLM 키가 있을 때만.
-    if (!SOLO && S.chatReady) t.push({ k: "chat", label: "💬 질의" });
+    if (!SOLO && S.chatReady) t.push({ k: "chat", label: "💬 질의", tip: "질의 — 트리를 컨텍스트로 묻기" });
     if (SOLO) t.push({ k: "manual", label: "📖 사용법" });
     return t;
   }
 
   function topbar() {
     var st = stats();
-    var tabs = TABS().map(function (t) { return '<button class="tab' + (t.k === S.activeTab ? " on" : "") + '" data-act="tab" data-k="' + t.k + '">' + esc(t.label) + "</button>"; }).join("");
+    var tabs = TABS().map(function (t) {
+      return '<button class="tab' + (t.k === S.activeTab ? " on" : "") + '" data-act="tab" data-k="' + t.k + '"'
+        + (t.tip ? ' title="' + esc(t.tip) + '"' : "") + ">" + esc(t.label) + "</button>";
+    }).join("");
     var toggle = S.activeTab === "tree" ? '<div class="seg"><button class="segb' + (S.viewMode !== "outline" ? " on" : "") + '" data-act="viewcols" title="컬럼 보기 — 레벨별 드릴다운">▦</button><button class="segb' + (S.viewMode === "outline" ? " on" : "") + '" data-act="viewout" title="전체보기 — 들여쓰기 목록">☰</button></div>' : "";
     var n = S.dirty.length + S.deleted.length;     // 삭제도 저장이 필요한 변경이다
     var badge = SOLO
