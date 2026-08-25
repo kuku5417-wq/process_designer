@@ -375,16 +375,52 @@ def _handle(evt: dict) -> None:
 
     if t in ("save", "force"):
         st.session_state["author"] = evt.get("author", "")
+        author = evt.get("author", "")
         data = dict(st.session_state["data"])
         data["nodes"] = evt.get("nodes", [])
         data["domains"] = evt.get("domains", {})
         data["rev"] = int(evt.get("rev", data.get("rev", 0)))
-        res = store.save_tree(data, evt.get("author", ""), force=(t == "force"))
+        # ★ 평소 편집은 **부분 병합**이다 — 내가 만진 노드만 디스크 최신본에 얹는다. 그래야 편집 중
+        #   남이 저장해도 서로의 작업이 안 죽는다. 전체 교체(save_tree)는 두 경우에만:
+        #     · force        — [전체 덮어쓰기]. 사용자가 명시적으로 동의한 통째 교체.
+        #     · mode=replace — 취합 반영·보관본 불러오기 직후. 트리를 통째로 갈아끼운 상태라
+        #                      부분 병합을 태우면 취합이 지운 빈 가지가 base 에서 되살아난다.
+        _merge = (t == "save" and evt.get("mode") != "replace")
+        if _merge:
+            res = store.save_merge(
+                data["nodes"], data["domains"], evt.get("dirty") or [], evt.get("deleted") or [],
+                author, my_rev=data["rev"], dom_sig=str(evt.get("dom_sig") or ""))
+        else:
+            res = store.save_tree(data, author, force=(t == "force"))
         if res.ok:
-            _set_data(store.load_tree()[0])                   # 정규화된 정본 재로드
+            _fresh = store.load_tree()[0]
+            # 병합으로 **남의 변경이 함께 들어온 양**을 알려준다 — 안 하면 화면이 왜 바뀌었는지 모른다.
+            _incoming = 0
+            if res.merged:
+                try:
+                    _d = schema.diff(data, _fresh)
+                    _incoming = len(_d["added"]) + len(_d["changed"]) - res.n_applied
+                except Exception:      # noqa: BLE001 — 안내 문구용이라 실패해도 저장은 유효하다
+                    _incoming = 0
+            _set_data(_fresh)                                 # 정규화된 정본 재로드
             st.session_state["disk_seen_mtime"] = store.disk_stat()[0]
             st.session_state.pop("conflict", None)
-            st.session_state["flash"] = f"저장했습니다 (rev {res.rev})."
+            if res.merged:
+                _msg = f"저장했습니다 (rev {res.rev}) · 내 변경 {res.n_applied}건"
+                if res.n_deleted:
+                    _msg += f" · 삭제 {res.n_deleted}건"
+                    if res.n_cascade:
+                        _msg += f"(그 아래 다른 사람이 추가한 {res.n_cascade}건 포함)"
+                if _incoming > 0:
+                    _msg += f" · 다른 사람 변경 {_incoming}건이 함께 반영됐습니다"
+                if res.overlap:
+                    _msg += (f" · {len(res.overlap)}건은 다른 사람도 손댄 업무입니다"
+                             "(이전 값은 이력·복원에 남아 있습니다)")
+                if res.dom_kept:
+                    _msg += " · 도메인이 그 사이 바뀌어 이번 변경은 반영하지 않았습니다. 다시 고쳐 주세요"
+                st.session_state["flash"] = _msg + "."
+            else:
+                st.session_state["flash"] = f"저장했습니다 (rev {res.rev})."
         elif res.conflict:
             st.session_state["conflict"] = {"disk_author": res.disk_author, "disk_rev": res.disk_rev}
         else:

@@ -1366,6 +1366,158 @@ def main() -> int:
 
     os.environ["PROCESS_DATA_PATH"] = str(_TMP)      # ★ 원복 — 이후 섹션이 같은 경로를 쓴다
 
+    # 34. 부분 저장(save_merge) — 동시 편집 보호
+    #     ★ 전체 교체(save_tree)의 충돌 검사 회귀(위 "# 9")는 그대로 통과해야 한다 — 그 함수는 안 건드렸다.
+    _mg = _TMP / "merge"
+    os.environ["PROCESS_DATA_PATH"] = str(_mg)
+
+    _d34 = schema.bootstrap()
+    _P = schema.add_node(_d34, "lv3_seonjang", 4, "관리자", "P")
+    _X = schema.add_node(_d34, _P, 5, "관리자", "X")
+    _Y = schema.add_node(_d34, _P, 5, "관리자", "Y")
+    _Z = schema.add_node(_d34, _P, 5, "관리자", "Z")
+    store.save_tree(schema.normalize(_d34), "관리자", force=True)
+    _b34, _ = store.load_tree()
+    _rev34 = _b34["rev"]
+    _A = copy.deepcopy(_b34)
+
+    # B 가 X 를 고쳐 저장 → A 는 Y 만 고쳐 부분 저장
+    _B = copy.deepcopy(_b34)
+    for _nd in _B["nodes"]:
+        if _nd["id"] == _X:
+            _nd["name"] = "X-B"
+            _nd["updated_by"] = "B"
+    store.save_tree(_B, "B", force=True)
+    for _nd in _A["nodes"]:
+        if _nd["id"] == _Y:
+            _nd["name"] = "Y-A"
+            _nd["updated_by"] = "A"
+    _r34 = store.save_merge(_A["nodes"], _A["domains"], [_Y], [], "A", my_rev=_rev34,
+                            dom_sig=store._dom_sig(_b34["domains"]))
+    _res, _ = store.load_tree()
+    _nm = {n["id"]: n["name"] for n in _res["nodes"]}
+    ck(_nm[_X] == "X-B", "★ 내가 만지지 않은 노드는 그대로 남는다 (이 기능의 존재 이유)")
+    ck(_nm[_Y] == "Y-A", "내 변경은 반영된다")
+    ck(_r34.ok and _r34.merged and _r34.n_applied == 1, "merged=True · 반영 1건")
+    ck(_r34.rev == _res["rev"] and _r34.rev == _rev34 + 2,
+       f"rev 는 **디스크 최신 +1** (my_rev 와 무관, 실제 {_r34.rev})")
+
+    # 같은 노드를 둘이 만짐 → 내 값이 이기고 overlap 으로 알린다(차단하지 않는다)
+    _b2, _ = store.load_tree()
+    _A2, _B2 = copy.deepcopy(_b2), copy.deepcopy(_b2)
+    for _nd in _B2["nodes"]:
+        if _nd["id"] == _Z:
+            _nd["name"] = "Z-B"
+            _nd["updated_by"] = "B"
+    store.save_tree(_B2, "B", force=True)
+    for _nd in _A2["nodes"]:
+        if _nd["id"] == _Z:
+            _nd["name"] = "Z-A"
+    _r2 = store.save_merge(_A2["nodes"], _A2["domains"], [_Z], [], "A", my_rev=_b2["rev"])
+    ck([n["name"] for n in store.load_tree()[0]["nodes"] if n["id"] == _Z] == ["Z-A"],
+       "같은 노드를 둘이 만지면 **마지막 저장(내 값)이 이긴다**")
+    ck(_r2.overlap == (_Z,), "남도 손댄 노드를 overlap 으로 알린다 (updated_by 기반, 차단 없음)")
+    # 같은 초에 여러 스냅샷이 생기면 파일명 정렬로는 최신을 특정할 수 없다 — 존재 여부로 본다
+    ck(any(h["rev"] == _b2["rev"] + 1 for h in store.list_history()),
+       "pre-image 스냅샷이 남아 상대 값을 되찾을 수 있다")
+
+    # 삭제 — deleted 를 보내야 반영된다(안 보내면 되살아난다)
+    _b3, _ = store.load_tree()
+    _A3 = copy.deepcopy(_b3)
+    _A3["nodes"] = [n for n in _A3["nodes"] if n["id"] != _Z]
+    _r3 = store.save_merge(_A3["nodes"], _A3["domains"], [], [_Z], "A", my_rev=_b3["rev"])
+    ck(not any(n["id"] == _Z for n in store.load_tree()[0]["nodes"]), "deleted 를 보내면 삭제된다")
+    ck(_r3.n_deleted == 1, "n_deleted 보고")
+    _b3b, _ = store.load_tree()
+    _A3b = copy.deepcopy(_b3b)
+    _A3b["nodes"] = [n for n in _A3b["nodes"] if n["id"] != _Y]
+    store.save_merge(_A3b["nodes"], _A3b["domains"], [], [], "A", my_rev=_b3b["rev"])
+    ck(any(n["id"] == _Y for n in store.load_tree()[0]["nodes"]),
+       "★ deleted 없이 빼면 **되살아난다** — 삭제 추적이 없으면 안 되는 이유(음성 케이스)")
+
+    # 삭제 자손 폐포 — A 가 지운 가지 아래에 B 가 추가한 노드
+    _b4, _ = store.load_tree()
+    _G = schema.add_node(_b4, _P, 5, "관리자", "지울가지")
+    store.save_tree(_b4, "관리자", force=True)
+    _b4, _ = store.load_tree()
+    _A4, _B4 = copy.deepcopy(_b4), copy.deepcopy(_b4)
+    _NEW = schema.add_node(_B4, _G, 6, "B", "B가추가")
+    store.save_tree(_B4, "B", force=True)
+    _A4["nodes"] = [n for n in _A4["nodes"] if n["id"] != _G]
+    _r4 = store.save_merge(_A4["nodes"], _A4["domains"], [], [_G], "A", my_rev=_b4["rev"])
+    _res4, _ = store.load_tree()
+    ck(not any(n["id"] == _NEW for n in _res4["nodes"]),
+       "★ 지운 가지 아래 **남이 추가한 노드까지** 함께 지운다")
+    ck(not any(n["parent_id"] == schema.ROOT_ID and n["name"] == "B가추가" for n in _res4["nodes"]),
+       "★ 고아 구제로 ROOT 에 끌려 올라간 **유령 lv3 부문**이 생기지 않는다")
+    ck(_r4.n_cascade == 1, f"함께 지운 건수를 보고한다 (실제 {_r4.n_cascade}) — 조용히 지우지 않는다")
+
+    # 순서 리베이스 — A 가 형제를 뒤집고 그중 하나만 dirty, 그 사이 B 가 형제를 추가
+    _d5 = schema.bootstrap()
+    _P5 = schema.add_node(_d5, "lv3_seonjang", 4, "관리자", "P5")
+    _ids5 = [schema.add_node(_d5, _P5, 5, "관리자", _nm5) for _nm5 in ["a", "b", "c"]]
+    store.save_tree(schema.normalize(_d5), "관리자", force=True)
+    _b5, _ = store.load_tree()
+    _A5, _B5 = copy.deepcopy(_b5), copy.deepcopy(_b5)
+    _SIB = schema.add_node(_B5, _P5, 5, "B", "d추가")
+    store.save_tree(_B5, "B", force=True)
+    _am5 = {n["id"]: n for n in _A5["nodes"]}
+    for _i5, _nid5 in enumerate(reversed(_ids5)):
+        _am5[_nid5]["order"] = _i5
+    store.save_merge(_A5["nodes"], _A5["domains"], [_ids5[0]], [], "A", my_rev=_b5["rev"])
+    _res5, _ = store.load_tree()
+    _sib5 = sorted([n for n in _res5["nodes"] if n["parent_id"] == _P5], key=lambda x: x["order"])
+    ck([n["name"] for n in _sib5][:3] == ["c", "b", "a"],
+       f"★ dirty 가 하나뿐이어도 **형제 순서 의도가 유지**된다 (실제 {[n['name'] for n in _sib5]})")
+    ck(any(n["id"] == _SIB for n in _res5["nodes"]), "그 사이 남이 추가한 형제가 사라지지 않는다")
+    ck([n["order"] for n in _sib5] == list(range(len(_sib5))), "order 는 0..n-1, 구멍 없음")
+
+    # 도메인 — dom_sig 는 **JS `JSON.stringify` 와 바이트 단위로 같아야** 한다.
+    #   `json.dumps` 기본 separators 는 `", "`/`": "` 라 공백이 들어가고, 그러면 서명이 영원히
+    #   불일치해 도메인 변경이 매번 조용히 보류된다(브라우저 검증에서 실제로 나온 결함).
+    #   기대 문자열을 손으로 적어 고정한다 — 규칙을 다시 유도하는 검사는 같은 실수를 못 잡는다.
+    ck(store._dom_sig({"tech": ["가", "나"], "dept": []}) == '{"dept":[],"tech":["가","나"]}',
+       f"★ _dom_sig 는 JS JSON.stringify 형식(공백 없음·한글 원문) (실제 {store._dom_sig({'tech': ['가'], 'dept': []})})")
+    ck(" " not in store._dom_sig({"a": ["x", "y"], "b": ["z"]}),
+       "_dom_sig 에 공백이 섞이지 않는다 (JS 와 갈리는 유일한 지점)")
+
+    # 도메인 — dom_sig 가드
+    _b6, _ = store.load_tree()
+    _sig6 = store._dom_sig(_b6["domains"])
+    _A6, _B6 = copy.deepcopy(_b6), copy.deepcopy(_b6)
+    _B6["domains"]["tech"] = list(_B6["domains"]["tech"]) + ["B기술"]
+    store.save_tree(_B6, "B", force=True)
+    _A6["domains"]["tech"] = list(_A6["domains"]["tech"]) + ["A기술"]
+    _r6 = store.save_merge(_A6["nodes"], _A6["domains"], ["dom"], [], "A",
+                           my_rev=_b6["rev"], dom_sig=_sig6)
+    _t6 = store.load_tree()[0]["domains"]["tech"]
+    ck(_r6.dom_kept and "B기술" in _t6 and "A기술" not in _t6,
+       "★ 그 사이 남이 도메인을 고쳤으면 내 도메인 변경을 **보류하고 알린다**(조용히 되돌리지 않는다)")
+    _b7, _ = store.load_tree()
+    _A7 = copy.deepcopy(_b7)
+    _A7["domains"]["tech"] = list(_A7["domains"]["tech"]) + ["단독추가"]
+    _r7 = store.save_merge(_A7["nodes"], _A7["domains"], ["dom"], [], "A",
+                           my_rev=_b7["rev"], dom_sig=store._dom_sig(_b7["domains"]))
+    ck((not _r7.dom_kept) and "단독추가" in store.load_tree()[0]["domains"]["tech"],
+       "서명이 같으면(아무도 안 고쳤으면) 내 도메인 변경을 채택한다")
+    _b8, _ = store.load_tree()
+    store.save_merge(_b8["nodes"], {"tech": []}, [], [], "A", my_rev=_b8["rev"])
+    ck("단독추가" in store.load_tree()[0]["domains"]["tech"],
+       "★ dirty 에 'dom' 이 없으면 incoming 도메인을 버리고 **base 를 유지**한다")
+
+    # 센티널·저장자·전체 교체 경로 무손상
+    _n_before = len(store.load_tree()[0]["nodes"])
+    store.save_merge(store.load_tree()[0]["nodes"], {}, ["dom", "del"], [], "A", my_rev=0)
+    ck(len(store.load_tree()[0]["nodes"]) == _n_before,
+       "'dom'/'del' 센티널만 보내도 노드가 바뀌지 않는다")
+    ck(not store.save_merge([], {}, [], [], "  ").ok, "저장자 없으면 부분 저장도 거부")
+    _snap34 = store.list_history()[0]["file"]
+    _rr, _restored = store.restore(_snap34, "A")
+    ck(_rr.ok and _restored is not None and not _rr.merged,
+       "★ restore 는 여전히 **전체 교체** — 부분 병합이 새지 않았다")
+
+    os.environ["PROCESS_DATA_PATH"] = str(_TMP)      # ★ 원복
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

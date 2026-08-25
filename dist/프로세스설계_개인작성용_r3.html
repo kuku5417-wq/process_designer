@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0937";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -537,6 +537,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
   .lockchip { font-size: 11px; font-weight: 800; padding: 2px 5px; border-radius: 4px;
     background: #f5f5f4; color: #78716c; }
   .panel.locked .pgrid, .panel.locked .pfoot { pointer-events: none; opacity: .55; }
+  /* 저장 왕복 중 편집 차단 — 그 사이 친 글자는 왕복 뒤 트리에 덮여 **조용히 사라진다**.
+     막지 않으면 사용자는 잃은 줄도 모른다. */
+  .saving .body, .saving .page { pointer-events: none; opacity: .6; }
+  .savebar { position: fixed; left: 50%; transform: translateX(-50%); top: 12px; z-index: 70;
+    background: #0f766e; color: #fff; padding: 8px 18px; border-radius: 999px;
+    font-size: 13.5px; font-weight: 700; box-shadow: 0 4px 14px rgba(15,118,110,.3); }
   .fbar select { font-size: 13.5px; padding: 6px 8px; border: 1px solid #ddd6ca; border-radius: 8px; background: #fff; }
   .fbar .fclr { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
   .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr auto; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
@@ -711,6 +717,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
   /** 불러온 도메인에 **빠진 기본 도메인 키를 기본값으로 채운다**(신규 도메인: 적용선종·특이사항 등).
    *  예전 초안·제출 파일·시드에는 새 도메인이 없어 칩이 비어 보인다 — 이 병합으로 항상 기본값이 뜬다.
    *  (schema.normalize 의 도메인 백필과 같은 규칙: 리스트가 아니면 기본값으로.) */
+  /** 도메인 마스터의 안정 서명 — `store._dom_sig` 의 **트윈**(규칙이 갈리면 항상 충돌로 잡힌다).
+   *  트리를 채택할 때 찍어 두고 저장 시 함께 보낸다. 파이썬이 디스크본 서명과 비교해
+   *  "그 사이 남이 도메인을 고쳤는가"를 판정한다. */
+  function _domSig(dom) {
+    var d = dom || {}, keys = Object.keys(d).sort(), out = {};
+    keys.forEach(function (k) { out[k] = (d[k] || []).slice(); });
+    return JSON.stringify(out);
+  }
   function withDefaultDomains(dom) {
     var out = dom ? JSON.parse(JSON.stringify(dom)) : {};
     Object.keys(DEF_DOMAINS).forEach(function (k) { if (!Array.isArray(out[k])) out[k] = DEF_DOMAINS[k].slice(); });
@@ -1174,6 +1188,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     // 지금 펼쳐 편집 중인 과별 제출값 행 {id, idx}. 순수 뷰 상태라 **emit·저장하지 않는다**
     // (S.sumPick/S.fDept 와 같은 성격 — 파이썬으로 내리면 tree_epoch 이 올라 미저장 편집이 사라진다).
     subEdit: null,
+    // 부분 저장(동시 편집 보호)용 —
+    //   deleted   : 내가 지운 노드 id. dirty 는 "만진 것"만 담아서 **삭제는 따로 추적해야** 한다.
+    //   domSig    : 트리를 채택한 시점의 도메인 서명. 저장 시 함께 보내 남이 그 사이 도메인을
+    //               고쳤는지 파이썬이 판정한다(schema/store._dom_sig 트윈).
+    //   replaceAll: 취합 반영·보관본 불러오기 직후처럼 **트리를 통째로 갈아끼운** 상태.
+    //               이때 부분 병합을 태우면 취합이 지운 빈 가지가 base 에서 되살아난다 → 전체 교체로 보낸다.
+    //   saving    : 저장 왕복 중. 그 사이 타이핑은 왕복 뒤 트리에 덮여 **조용히 사라진다**.
+    deleted: [], domSig: "", replaceAll: false, saving: false,
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -1457,6 +1479,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     var n = Object.keys(victims).length;
     S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; }); touchTree();
     S.dirty = S.dirty.filter(function (d) { return !victims[d]; });
+    // ★ 부분 저장은 "내가 만진 노드만" 얹으므로, **지운 것은 따로 알려주지 않으면 되살아난다.**
+    //   markDirty("del") 은 그대로 둔다 — 미저장 배지 의미와 soloSaveSoon 이 딸려 있다.
+    Object.keys(victims).forEach(function (v) { if (S.deleted.indexOf(v) < 0) S.deleted.push(v); });
     markDirty("del");                 // 삭제도 저장이 필요한 변경이다
     S.selectedId = null; selectPath(pid); S.selectedId = null;
     flash(n > 1 ? "'" + (nm || "이름 없음") + "' 외 " + (n - 1) + "개 하위 업무를 삭제했습니다" : "삭제했습니다");
@@ -1828,7 +1853,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     //   모든 노드와 일치해서, 전 노드에 새 값이 박힌다(실제로 13개 노드가 오염됐다).
     if (old) {
       var remap = function (arr) { return (arr || []).map(function (t) { return t === old ? val : t; }); };
+      // ★ 값이 실제로 바뀐 노드에 markDirty 를 해야 한다. 부분 저장은 dirty 만 얹으므로,
+      //   안 하면 **도메인 목록만 새 이름이 되고 노드 값은 옛 이름이 남는다**
+      //   (CLAUDE.md 가 두 번 경고한 "이름을 바꿔도 숫자가 안 바뀐다"의 재발).
+      //   무엇이 어떤 값으로 바뀌었는지는 파이썬이 base 에서 유도할 수 없다 — 여기서만 알 수 있다.
+      var _hit = function (n) { return JSON.stringify([n.tech, n.future_tech, n.ship_types,
+        n.special_note, n.linked_system, n.linked_systems, n.dept, n.depts, n.submissions]); };
       S.nodes.forEach(function (n) {
+        var _before = _hit(n);
         if (key === "tech") { n.tech = remap(n.tech); n.future_tech = remap(n.future_tech); }   // 현재·향후 공유 도메인
         else if (key === "ship_type") n.ship_types = remap(n.ship_types);
         else if (key === "special_note") n.special_note = remap(n.special_note);
@@ -1843,6 +1875,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
           (n.submissions || []).forEach(function (r) { if (r && r.dept === old) r.dept = val; });
         }
         else if (n[key] === old) n[key] = val;
+        if (_hit(n) !== _before) markDirty(n.id);
       });
     }
     // ★ AI 카운트 제외목록도 함께 따라가야 한다 — 안 그러면 이름을 바꾼 기술이 명단에서 빠져
@@ -1866,13 +1899,29 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     }
     markDirty("dom"); rerender(); }
 
+  var _saveGuard = null;      // 저장 응답이 안 올 때 오버레이를 푸는 타이머
   function doSave() {
     // 개인 모드에는 서버가 없다 — [저장] 은 "제출 파일 내보내기"다.
     // 편집 자체는 markDirty 마다 localStorage 에 자동 저장되므로 눌러야 안 날아가는 게 아니다.
     if (SOLO) return soloExport();
     if (!S.author) { flash("저장자를 먼저 입력하세요"); return; }
     if (!S.dirty.length) { flash("변경 사항이 없습니다"); return; }
-    emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
+    // mode: 취합 반영·보관본 불러오기 직후는 **전체 교체**(replace). 그 외 평소 편집은 부분 병합(merge).
+    //   replace 를 안 쓰면 취합이 지운 빈 가지가 디스크에서 되살아난다.
+    S.saving = true;
+    emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains,
+           dirty: S.dirty, deleted: S.deleted, dom_sig: S.domSig,
+           mode: S.replaceAll ? "replace" : "merge" });
+    rerender();                 // 저장 중 오버레이를 즉시 씌운다
+    // ★ 안전장치 — 오버레이는 응답(epoch 증가)이 와야 풀린다. 파이썬이 예외로 죽거나 연결이
+    //   끊기면 응답이 영영 안 와 **화면이 영구히 잠긴다**(실제로 겪었다). 반드시 스스로 풀어야 한다.
+    clearTimeout(_saveGuard);
+    _saveGuard = setTimeout(function () {
+      if (!S.saving) return;
+      S.saving = false;
+      rerender();
+      flash("저장 응답이 오지 않았습니다 — 편집 내용은 그대로입니다. 다시 [저장] 을 눌러 주세요");
+    }, 20000);
   }
   // ── 개인 모드(!IN_ST) — 파이썬·서버 없이 파일 하나로 도는 배포판 ──────────
   // 편집은 localStorage 에 자동 저장되고, [내 파일 내보내기] 로 JSON 을 받아 관리자에게 준다.
@@ -1936,6 +1985,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
       c.updated_by = "";        // markDirty 가 찍어둔 이름 제거 — 업무 데이터에 이름을 남기지 않는다
       return c;
     });
+    S.deleted = [];
     var payload = { schema_version: 1, exported_by: S.author, exported_dept: S.dept,
                     exported_at: new Date().toISOString(), nodes: mine, domains: S.domains };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -2018,6 +2068,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
       if (!d || !Array.isArray(d.nodes)) return flash("이 앱에서 내보낸 JSON 이 아닙니다");
       S.nodes = canonNodes(d.nodes.map(function (n) { return coerceEvents(Object.assign({}, n)); }));
       S.domains = withDefaultDomains(d.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
+      S.deleted = []; S.domSig = _domSig(S.domains);
       if (d.exported_dept) S.dept = d.exported_dept;
       if (d.exported_by) S.author = d.exported_by;
       S.selectedId = null; S.sel = {}; S.dirty = []; S.exported = true;
@@ -2126,7 +2177,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     var st = stats();
     var tabs = TABS().map(function (t) { return '<button class="tab' + (t.k === S.activeTab ? " on" : "") + '" data-act="tab" data-k="' + t.k + '">' + esc(t.label) + "</button>"; }).join("");
     var toggle = S.activeTab === "tree" ? '<div class="seg"><button class="segb' + (S.viewMode !== "outline" ? " on" : "") + '" data-act="viewcols" title="컬럼 보기 — 레벨별 드릴다운">▦</button><button class="segb' + (S.viewMode === "outline" ? " on" : "") + '" data-act="viewout" title="전체보기 — 들여쓰기 목록">☰</button></div>' : "";
-    var n = S.dirty.length;
+    var n = S.dirty.length + S.deleted.length;     // 삭제도 저장이 필요한 변경이다
     var badge = SOLO
       ? (n ? '<div class="badge dirty">● 미제출 ' + n + "건</div>" : '<div class="badge clean">제출됨</div>')
       : (n ? '<div class="badge dirty">● 미저장 ' + n + "건</div>" : '<div class="badge clean">변경 없음</div>');
@@ -3652,7 +3703,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
       ? '<div class="warn" style="margin-bottom:14px">⚠ 저장하지 않은 변경 ' + S.dirty.length + "건이 있습니다. 복원하면 사라집니다.</div>" : "";
     var authWarn = !S.author ? '<div class="warn" style="margin-bottom:14px">복원하려면 상단에 저장자를 입력하세요.</div>' : "";
     var can = S.restoreOk && !!S.author;
-    var ACT = { save: "저장", force: "강제 덮어쓰기", restore: "복원" };
+    var ACT = { save: "저장", force: "전체 덮어쓰기", restore: "복원" };
     var auditRows = aud.length
       ? aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:14.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("")
       : '<div style="padding:16px;text-align:center;color:#a8a29e;font-size:14px">기록이 없습니다.</div>';
@@ -3692,7 +3743,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
     else body = '<div class="treewrap">' + crumbBar() + editScopeBar()
         + '<div class="body' + (S.viewMode === "outline" ? " out" : "") + '">'
         + (S.viewMode === "outline" ? outline() : columns()) + panel() + "</div></div>";
-    return topbar() + banners() + body + confirmModal();
+    // 저장 왕복 중에는 편집면을 덮는다 — 그 사이 친 글자는 왕복 뒤 트리에 덮여 사라진다.
+    var savingBar = S.saving ? '<div class="savebar">💾 저장 중…</div>' : "";
+    return '<div class="' + (S.saving ? "saving" : "") + '">'
+      + topbar() + banners() + body + confirmModal() + "</div>" + savingBar;
   }
   // ── 스크롤 위치 보존 ────────────────────────────────────────────
   // rerender 는 innerHTML 을 통째로 갈아끼워 모든 스크롤이 0 으로 돌아간다. 긴 목록을 내려
@@ -4189,6 +4243,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
       S.domains = withDefaultDomains(args.tree.domains); recalcAi();   // 새 도메인 기본값 병합 + AI 파생 재계산
       S.rev = args.tree.rev || 0;
       S.dirty = [];             // 파이썬이 준 새 정본 = 미저장 변경 없음
+      // ★ 저장 성공은 언제나 epoch 증가를 동반하므로 여기서 비우는 것이 트리 채택과 **원자적**이다.
+      //   emit 시점에 낙관적으로 비우면 저장이 실패했을 때 **삭제 의도가 증발한다.**
+      S.deleted = [];
+      S.domSig = _domSig(S.domains);
+      S.saving = false;
+      // 취합 반영·보관본 불러오기 직후엔 트리를 통째로 갈아끼운 상태다 → 다음 저장은 전체 교체.
+      S.replaceAll = !!args.dirty_all;
       if (args.dirty_all) S.dirty = S.nodes.map(function (n) { return n.id; }).concat(["dom"]);  // 엑셀 반영 직후: 전부 미저장
       // 새 트리에 없는 노드를 가리키던 선택은 버린다 (복원·엑셀 반영 후)
       if (S.selectedId && !byId(S.selectedId)) { S.selectedId = null; S.sel = {}; }

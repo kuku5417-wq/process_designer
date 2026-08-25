@@ -38,6 +38,13 @@ class SaveResult:
     disk_updated_at: str = ""
     error: str = ""
     version: int = 0            # 보관본 저장 시 부여된 버전 번호 (save_named 전용)
+    # ── 부분 저장(save_merge) 결과 ──
+    merged: bool = False        # 부분 병합으로 저장됐는가 (전체 교체와 구분)
+    n_applied: int = 0          # 내 변경 중 실제로 반영된 노드 수
+    n_deleted: int = 0          # 삭제된 노드 수 (자손 포함)
+    n_cascade: int = 0          # 그중 **남이 그 아래 추가한 것**까지 함께 지운 수
+    overlap: tuple = ()         # 남도 손댄 노드 id (차단하지 않고 알리기만 한다)
+    dom_kept: bool = False      # 도메인 변경을 반영하지 못하고 디스크본을 유지했는가
 
 
 # ── 원자적 저장 ─────────────────────────────────────────
@@ -499,6 +506,152 @@ def save_tree(data: dict, author: str, force: bool = False, action: str = "save"
     except Exception:
         pass
     return SaveResult(ok=True, rev=data["rev"])
+
+
+# ── 부분 저장 (동시 편집) ────────────────────────────────
+# A가 편집하는 동안 B가 저장하면, 전체 교체 방식에서는 A의 [강제 덮어쓰기]가 **A가 만지지도 않은**
+# B의 변경까지 옛 시점으로 되돌리고, [다시 읽기]는 A의 미저장 편집을 통째로 날린다. 둘 다 손실이다.
+#
+# 그래서 저장은 **델타**로 한다: 프론트가 "내가 만진 노드 id"(dirty)와 "내가 지운 id"(deleted)를
+# 함께 보내면, 디스크 최신본을 base 로 삼아 **그 노드들만** 얹는다. 나머지는 손대지 않는다.
+#
+# ★ 이 설계가 견고한 이유 둘 —
+#   ① base 를 `load_tree()` 로 읽어 **이미 정규화된**(order 0..n-1) 상태에서 시작한다.
+#   ② 끝에서 `schema.normalize` 를 한 번 돈다 → 고아·사이클·level·order·AI 파생이 일괄 복구된다.
+#   덕분에 병합은 **완벽한 트리를 만들 의무가 없고 그럴듯한 트리만** 만들면 된다.
+# ★ `save_tree` 는 손대지 않는다 — "이 트리가 곧 진실이다"는 의미가 필요한 경로(force·restore·
+#   취합/보관본 반영 뒤 저장)가 따로 있고, 기존 충돌 검사 회귀도 그 함수를 직접 부른다.
+
+
+def _del_closure(deleted: list[str] | None, bmap: dict[str, dict]) -> set[str]:
+    """삭제 id 의 **base 상 자손 폐포**.
+
+    A가 지운 가지 아래에 B가 노드를 추가했으면 그 노드는 base 에 있고 A의 deleted 에는 없다.
+    그대로 두면 부모가 사라져 `normalize` 의 고아 구제가 **ROOT 로 끌어올려 유령 lv3 부문**을 만든다.
+    """
+    seen: set[str] = set()
+    stack = [d for d in (deleted or []) if d in bmap]
+    kids: dict[str, list[str]] = {}
+    for n in bmap.values():
+        kids.setdefault(n.get("parent_id", ""), []).append(n["id"])
+    while stack:
+        i = stack.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        stack.extend(kids.get(i, []))
+    return seen
+
+
+def _dom_sig(domains: dict | None) -> str:
+    """도메인 마스터의 안정 서명. JS 트윈(`_domSig`)과 **같은 규칙**이어야 한다.
+
+    ★ `separators` 를 **반드시 명시**한다. `json.dumps` 기본값은 `", "` / `": "` (공백 포함)인데
+    JS `JSON.stringify` 는 공백을 넣지 않는다. 빠뜨리면 서명이 **영원히 불일치**해
+    도메인 변경이 매번 `dom_kept` 로 보류되고, 사용자는 이름을 바꿔도 목록이 안 바뀐다
+    (노드 값만 `domRename` 으로 바뀌어 **도메인↔노드가 갈라진다**). 브라우저 검증에서 실제로 나왔다.
+    `ensure_ascii=False` 도 같은 이유다 — JS 는 한글을 이스케이프하지 않는다.
+    """
+    d = domains or {}
+    return json.dumps({k: list(d.get(k) or []) for k in sorted(d)},
+                      ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _rebase_order(out: list[dict], imap: dict[str, dict], touched: set[str]) -> None:
+    """A가 순서를 바꾼 형제 그룹의 order 를 다시 매긴다 (제자리).
+
+    A가 카드를 옮기면 `renumber` 가 형제 전체의 order 를 다시 매기는데 **그 형제들은 dirty 가 아니다**
+    (JS 가 markDirty 를 안 한다). 그래서 순서는 프론트가 보고하는 게 아니라 여기서 유도한다 —
+    액션마다 markDirty 를 흩뿌리면 새 액션이 생길 때 조용히 샌다.
+
+    incoming 형제는 그 순서대로 `2i`, base 에만 있는 형제(그 사이 B가 추가한 것)는 바로 앞
+    incoming 형제 뒤 `2i+1` 에 끼운다 → **A의 정렬 의도와 B의 삽입 위치를 동시에** 지킨다.
+    절대값 정합성은 뒤따르는 `normalize` 의 renumber 가 보장하므로 여기선 상대 순서만 맞으면 된다.
+    """
+    if not touched:
+        return
+    by_parent: dict[str, list[dict]] = {}
+    for n in out:
+        by_parent.setdefault(n.get("parent_id", ""), []).append(n)
+    for pid in touched:
+        sibs = by_parent.get(pid) or []
+        if not sibs:
+            continue
+        want = [n["id"] for n in sorted((x for x in sibs if x["id"] in imap),
+                                        key=lambda x: imap[x["id"]].get("order", 0))]
+        pos = {nid: 2 * i for i, nid in enumerate(want)}
+        prev = -1
+        for n in sorted(sibs, key=lambda x: x.get("order", 0)):     # base 순서로 훑으며
+            if n["id"] in pos:
+                prev = pos[n["id"]]
+            else:
+                prev += 1                                           # 앞 incoming 형제 바로 뒤
+                pos[n["id"]] = prev
+        for n in sibs:
+            n["order"] = pos.get(n["id"], n.get("order", 0))
+
+
+def save_merge(nodes: list[dict], domains: dict, dirty: list[str] | None,
+               deleted: list[str] | None, author: str, my_rev: int = 0,
+               dom_sig: str = "") -> SaveResult:
+    """내가 만진 노드만 디스크 최신본에 얹어 저장한다 (동시 편집 보호).
+
+    rev 충돌로 **거부하지 않는다** — 구성상 "안 만진 것은 안 건드린다"가 보장되므로 거부할 이유가 없다.
+    같은 노드를 둘이 만졌으면 **내 값이 이긴다**(마지막 저장 승리). 상대 값은 pre-image 스냅샷에 남는다.
+    """
+    if not (author or "").strip():
+        return SaveResult(ok=False, error="저장자를 입력해 주세요.")
+    try:
+        base, _ = load_tree()                       # ★ 정규화된 디스크 최신본 = 병합 기준
+        disk_rev = int(base.get("rev", 0))
+        bmap = {n["id"]: n for n in base.get("nodes", []) if isinstance(n, dict) and n.get("id")}
+        imap = {n["id"]: n for n in (nodes or []) if isinstance(n, dict) and n.get("id")}
+        # "dom"/"del" 같은 센티널 키는 imap 에 없으므로 자연히 걸러진다
+        dirty_ids = {d for d in (dirty or []) if d in imap}
+        del_ids = _del_closure(deleted, bmap)
+        n_cascade = len(del_ids) - len([d for d in (deleted or []) if d in bmap])
+        # 순서를 다시 매길 형제 그룹 — **옛 부모(base)** 를 반드시 포함한다.
+        # A가 Y를 P1→P2 로 옮기면 incoming 에는 P2 만 있고, 구멍이 난 P1 은 dirty 어디에도 없다.
+        touched = {imap[i].get("parent_id", "") for i in dirty_ids}
+        touched |= {bmap[i].get("parent_id", "") for i in dirty_ids if i in bmap}
+        touched |= {bmap[i].get("parent_id", "") for i in del_ids if i in bmap}
+        # 남도 손댄 노드 — markDirty 가 찍어둔 updated_by 로 **공짜 탐지**. 차단하지 않고 알리기만.
+        overlap = tuple(sorted(
+            i for i in dirty_ids
+            if i in bmap and (bmap[i].get("updated_by") or "") not in ("", author)
+        )) if disk_rev > my_rev else ()
+
+        out = [n for n in base.get("nodes", []) if n.get("id") not in del_ids and n.get("id") not in dirty_ids]
+        out += [imap[i] for i in dirty_ids]
+        _rebase_order(out, imap, touched)
+
+        # 도메인 — dirty 에 "dom" 이 없으면 **base 유지**. 프론트는 자기(낡을 수 있는) 사본을 항상 보내므로
+        # 그대로 채택하면 그 사이 B가 추가한 도메인 값이 조용히 사라진다.
+        doms, dom_kept = base.get("domains", {}), False
+        if "dom" in (dirty or []):
+            if dom_sig and dom_sig != _dom_sig(base.get("domains")):
+                dom_kept = True                     # 그 사이 남이 도메인을 고쳤다 → 내 변경은 보류
+            else:
+                doms = domains or {}
+
+        snapshot(base.get("updated_by") or "unknown")       # pre-image — 되돌릴 길을 항상 남긴다
+        data = schema.normalize({**base, "nodes": out, "domains": doms})
+        data["rev"] = disk_rev + 1
+        data["updated_at"] = schema.now_iso()
+        data["updated_by"] = author
+        save_json_atomic(data, pc.tree_path())
+    except Exception as e:      # noqa: BLE001 — 저장 실패로 앱이 죽지 않게
+        return SaveResult(ok=False, error=f"저장에 실패했습니다: {e}")
+
+    audit({"author": author, "rev": data["rev"], "n_nodes": len(data["nodes"]), "action": "merge",
+           "n_dirty": len(dirty_ids), "n_deleted": len(del_ids), "n_overlap": len(overlap)})
+    try:
+        prune_history()
+    except Exception:           # noqa: BLE001 — 정리 실패가 저장을 무르게 하지 않는다
+        pass
+    return SaveResult(ok=True, rev=data["rev"], merged=True, n_applied=len(dirty_ids),
+                      n_deleted=len(del_ids), n_cascade=max(0, n_cascade),
+                      overlap=overlap, dom_kept=dom_kept)
 
 
 def restore(name: str, author: str) -> tuple[SaveResult, dict | None]:
