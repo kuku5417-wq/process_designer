@@ -1191,7 +1191,9 @@
     fGroup: "", fDept: "",
     // 계층 편집 **편집 범위** 필터. 요약의 fGroup/fDept(보기 전용)와 **일부러 분리**한다 —
     // 한쪽은 "무엇을 볼까", 이쪽은 "무엇을 고칠 수 있나"라 의미가 달라 공유하면 사고가 난다.
-    eGroup: "", eDept: "",
+    // 편집 범위 — 부서는 **1개**(과 목록을 좁히는 역할), 과는 **여러 개**.
+    // 여러 과를 겸하는 사람이 자기 업무를 한 화면에서 다 고칠 수 있어야 한다.
+    eGroup: "", eDepts: [],
     // 부문 칩 **다중 선택**(id 배열). 빈 배열 = 아무 부문도 안 고른 상태(컬럼이 비어 있음).
     // S.sel[3] 은 '컬럼 드릴다운 중인 부문' 이라 역할이 다르다 — 정확히 하나 골랐을 때만 채운다.
     lv3Sel: [],
@@ -1265,7 +1267,9 @@
     var nn = makeNode(pid, lv, "");
     // 편집 범위(과)를 고른 상태면 새 lv6·lv7 은 그 과 소속으로 만든다 — 안 그러면 소속이 없어
     // 만들자마자 잠겨 손댈 수 없다. 범위를 안 걸었을 때는 아래 원칙대로 비워 둔다.
-    if (!SOLO && hasDetail(lv) && S.eDept) { nn.dept = S.eDept; nn.depts = [S.eDept]; }
+    // ★ 과를 **정확히 하나** 골랐을 때만. 여럿이면 새 업무를 어느 과 것으로 할지 모호하고,
+    //   임의로 첫 번째를 주면 아무도 그 일을 한다고 낸 적 없는 과가 집계에 잡힌다.
+    if (!SOLO && hasDetail(lv) && S.eDepts.length === 1) { nn.dept = S.eDepts[0]; nn.depts = [S.eDepts[0]]; }
     // ★ 그 외에는 새 노드에 소속을 주입하지 않는다. 소속의 정본은 **취합 시 스캔 폴더 경로**
     //   (첫 하위폴더=부서, 두 번째=과)다. 메인앱은 취합본을 다듬는 관리 도구라, 여기서 관리자
     //   소속을 채우면 아무도 그 일을 한다고 낸 적 없는 과가 집계에 잡힌다(오염원). 되살리지 말 것.
@@ -2289,7 +2293,7 @@
           + '<div class="list scroll">'
           + '<div class="emptyhint" style="text-align:left;padding:8px 10px;line-height:1.5">'
           + (scopeOn()
-              ? "<b>" + esc(S.eDept || S.eGroup) + "</b> 업무가 있는 부문 " + pick3.length + "개를 모아 보는 중"
+              ? "<b>" + esc(scopeLabel()) + "</b> 업무가 있는 부문 " + pick3.length + "개를 모아 보는 중"
                 + "<br/>부문 칩과 무관하게 전 부문에서 모읍니다"
               : "부문 " + pick3.length + "개를 함께 보는 중<br/>카드를 누르면 그 부문으로 좁혀집니다")
           + "</div>";
@@ -2438,7 +2442,7 @@
     if (!body) {
       body = '<div class="emptyhint" style="padding:24px;text-align:center;line-height:1.6">'
         + (scopeOn()
-            ? "<b>" + esc(S.eDept || S.eGroup) + "</b> 소속으로 입력된 업무가 없습니다.<br/>상단 <b>편집 범위</b>를 바꿔 보세요."
+            ? "<b>" + esc(scopeLabel()) + "</b> 소속으로 입력된 업무가 없습니다.<br/>상단 <b>편집 범위</b>를 바꿔 보세요."
             : (S.lv3Sel.length
                 ? "고른 부문에 업무가 없습니다."
                 : "위에서 <b>부문</b>을 고르세요 — <b>전체</b> 버튼으로 전부 볼 수 있습니다.")) + "</div>";
@@ -3205,7 +3209,9 @@
    *  하다(schema.stats 와 트윈이라 한쪽만 고치면 화면과 엑셀이 갈린다). */
   /** 부서·과 select 두 개 (요약 보기 필터 / 계층 편집 범위 공용).
    *  데이터에만 있는 소속(폴더에서 온 미등록 과 등)도 고를 수 있어야 한다 — 유실 금지 원칙. */
-  function deptSelects(curG, curD, gKey, dKey) {
+  /** 부서 select 하나만 — 요약 필터(deptSelects)와 편집 범위가 **같은 목록**을 쓰게 한다.
+   *  따로 만들면 데이터에만 있는 부서가 한쪽에서만 보이는 드리프트가 생긴다. */
+  function deptGroupSelect(curG, gKey) {
     var groups = Object.keys(DEPT_TREE), extra = [];
     S.nodes.forEach(function (n) {
       if (!isLoadLevel(n.level)) return;
@@ -3217,6 +3223,10 @@
       groups.concat(extra).map(function (g) {
         return '<option value="' + esc(g) + '"' + (curG === g ? " selected" : "") + ">" + esc(g) + "</option>";
       })).join("");
+    return '<select data-fkey="' + gKey + '">' + gOpts + "</select>";
+  }
+  function deptSelects(curG, curD, gKey, dKey) {
+    var gSel = deptGroupSelect(curG, gKey);
     var gwa = [];
     S.nodes.forEach(function (n) {
       if (!isLoadLevel(n.level)) return;
@@ -3230,25 +3240,57 @@
     var dOpts = ['<option value="">전체 과</option>'].concat(gwa.map(function (dd) {
       return '<option value="' + esc(dd) + '"' + (curD === dd ? " selected" : "") + ">" + esc(dd) + "</option>";
     })).join("");
-    return '<select data-fkey="' + gKey + '">' + gOpts + '</select><select data-fkey="' + dKey + '">' + dOpts + "</select>";
+    return gSel + '<select data-fkey="' + dKey + '">' + dOpts + "</select>";
   }
 
+  /** 편집 범위 칩에 띄울 **과 목록** — 데이터에 실제로 등장하는 과만(부서를 고르면 그 부서만).
+   *  `deptSelects` 의 과 목록 규칙과 같다 — 매핑에 없는 과(폴더에서 온 미등록 소속)도 나와야 한다. */
+  function scopeDeptList() {
+    var out = [];
+    S.nodes.forEach(function (n) {
+      if (!isLoadLevel(n.level)) return;
+      deptsOf(n).forEach(function (dd) {
+        if (dd === "(미지정)" || out.indexOf(dd) >= 0) return;
+        if (S.eGroup && deptParent(dd) !== S.eGroup) return;
+        out.push(dd);
+      });
+    });
+    return out.sort();
+  }
   /** 계층 편집 **편집 범위** 바. 범위를 고르면 그 밖의 업무는 보이되 잠긴다(canEdit).
    *  숨기지 않는 이유: 상위 분류(lv3~lv5)는 소속이 없어 숨기면 내 업무가 어디 매달렸는지를 잃고,
    *  다른 과의 중복 제출도 안 보이게 된다. */
   function editScopeBar() {
     if (SOLO) return "";                       // 개인 배포판은 소속이 하나뿐이라 의미가 없다
     var on = scopeOn();
+    var list = scopeDeptList();
+    // 과는 **칩 다중선택**이다. 선택 = 채움 + ✓, 미선택 = 흰 바탕 — 부문 칩과 같은 규칙이다
+    // (미선택까지 색을 채우면 여러 개가 선택된 것처럼 보인다: CLAUDE.md 의 부문 칩 항목).
+    var chips = list.map(function (dd) {
+      var sel = S.eDepts.indexOf(dd) >= 0;
+      return '<button class="lv3chip' + (sel ? " on" : "") + '" data-act="edeptpick" data-dept="' + esc(dd) + '"'
+        + ' style="' + (sel ? "background:#0f766e;color:#fff;border-color:#0f766e"
+                            : "background:#fff;color:#57534e;border-color:#e0dbd2") + '">'
+        + (sel ? "✓ " : "") + esc(dd) + "</button>";
+    }).join("");
+    var chipBtns = list.length
+      ? '<button class="lv3mini" data-act="edeptall" title="보이는 과 전부 선택">전체</button>'
+          + (S.eDepts.length ? '<button class="lv3mini" data-act="edeptnone" title="과 선택 해제">지우기</button>' : "")
+      : '<span style="font-size:12.5px;color:#a8a29e">이 부서로 입력된 과가 없습니다</span>';
     return '<div class="fbar scopebar">'
-      + "<b>편집 범위</b>" + deptSelects(S.eGroup, S.eDept, "egroup", "edept")
+      + "<b>편집 범위</b>" + deptGroupSelect(S.eGroup, "egroup")
+      + '<span class="lv3chips" style="gap:5px">' + chips + chipBtns + "</span>"
       + (on ? '<button class="fclr" data-act="eclear">✕ 전체 편집</button>' : "")
-      + '<span style="color:' + (on ? "#b45309" : "#a8a29e") + '">'
+      + '<span style="color:' + (on ? "#b45309" : "#a8a29e") + ';flex-basis:100%">'
       + (on
-          ? "🔒 <b>" + esc(S.eDept || S.eGroup) + "</b> 업무만 보이고 수정됩니다 · 다른 소속 업무는 "
+          ? "🔒 <b>" + esc(scopeLabel()) + "</b> 업무만 보이고 수정됩니다 · 다른 소속 업무는 "
               + "<b>숨겨집니다</b>(저장하면 그대로 보존)"
-              + (S.eDept ? " · 새 업무는 " + esc(S.eDept) + " 소속으로 만들어집니다"
-                         : " · <b>과</b>까지 골라야 새 업무를 추가할 수 있습니다")
-          : "부서·과를 고르면 그 소속 업무만 보이고 수정됩니다 (남의 업무를 실수로 고치는 것을 막습니다)")
+              + (S.eDepts.length === 1
+                  ? " · 새 업무는 " + esc(S.eDepts[0]) + " 소속으로 만들어집니다"
+                  : S.eDepts.length > 1
+                      ? " · 새 업무 추가는 <b>과를 하나만</b> 골랐을 때만 됩니다"
+                      : " · <b>과</b>까지 골라야 새 업무를 추가할 수 있습니다")
+          : "부서를 고르고 <b>과</b>를 눌러 고르세요 (여러 과를 함께 고를 수 있습니다) — 그 소속 업무만 보이고 수정됩니다")
       + "</span></div>";
   }
 
@@ -3330,10 +3372,24 @@
     return _dlnCache[id] || _NOKIDS;
   }
   /** 편집 범위 필터가 켜져 있는가. */
-  function scopeOn() { return !!(S.eGroup || S.eDept); }
-  /** 이 lv6·lv7 이 지금 선택한 부서/과에 속하는가. */
+  function scopeOn() { return !!(S.eGroup || S.eDepts.length); }
+  /** 이 lv6·lv7 이 지금 선택한 부서/과에 속하는가.
+   *
+   *  과를 하나라도 골랐으면 **고른 과 중 하나에만 걸리면 된다**(합집합). 한 업무를 여러 과가
+   *  함께 수행하므로(`depts[]`) 교집합으로 보면 겸업 업무가 통째로 빠진다.
+   *  과를 안 골랐으면 예전대로 부서 전체가 범위다. */
   function inScope(n) {
-    return S.eDept ? deptsOf(n).indexOf(S.eDept) >= 0 : deptGroupsOf(n).indexOf(S.eGroup) >= 0;
+    if (S.eDepts.length) {
+      return deptsOf(n).some(function (d) { return S.eDepts.indexOf(d) >= 0; });
+    }
+    return deptGroupsOf(n).indexOf(S.eGroup) >= 0;
+  }
+  /** 화면에 쓸 범위 이름 — 과가 여럿이면 "A 외 2과". 문구를 짓는 곳이 6군데라 한 곳에 모은다. */
+  function scopeLabel() {
+    var n = S.eDepts.length;
+    if (n === 1) return S.eDepts[0];
+    if (n > 1) return S.eDepts[0] + " 외 " + (n - 1) + "과";
+    return S.eGroup;
   }
   /** ★ 편집 권한 게이트 — 이 함수 하나가 정본이다.
    *
@@ -3386,17 +3442,18 @@
   function canEditSub(n, rec) {
     if (!n || !rec || !canEdit(n)) return false;
     if (!scopeOn()) return true;
-    return S.eDept ? rec.dept === S.eDept : deptParent(rec.dept) === S.eGroup;
+    return S.eDepts.length ? S.eDepts.indexOf(rec.dept) >= 0
+                           : deptParent(rec.dept) === S.eGroup;
   }
   function canEditSubIdx(id, idx) {
     var n = byId(id), r = n && (n.submissions || [])[idx];
     return !!r && canEditSub(n, r);
   }
   function subLockMsg() {
-    return "🔒 " + (S.eDept || S.eGroup) + " 의 제출값만 고칠 수 있습니다";
+    return "🔒 " + scopeLabel() + " 의 제출값만 고칠 수 있습니다";
   }
   function lockMsg() {
-    return "🔒 " + (S.eDept || S.eGroup) + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
+    return "🔒 " + scopeLabel() + " 범위 밖입니다 — 상단에서 편집 범위를 바꾸세요";
   }
 
   /** 과별 제출값 1건 편집 블록(아코디언). 표 7열 안에 칩을 넣으면 폭이 무너져 아래로 펼친다.
@@ -3935,9 +3992,19 @@
     var SUB_ACTS = { subdel: 1, subtech: 1, subfreq: 1, subpick: 1 };
     if (SUB_ACTS[a] && !canEditSubIdx(d.id, +d.idx)) return flash(subLockMsg());
     // 추가는 허용하되, 과를 안 고르면 새 업무에 소속을 줄 수 없어 만들자마자 잠긴다 — 미리 막는다.
-    if (a === "add" && scopeOn() && !S.eDept && hasDetail(+d.lv))
-      return flash("새 업무를 추가하려면 편집 범위에서 **과**까지 고르세요");
-    if (a === "eclear") { S.eGroup = ""; S.eDept = ""; rerender(); return; }
+    if (a === "add" && scopeOn() && S.eDepts.length !== 1 && hasDetail(+d.lv))
+      return flash(S.eDepts.length > 1
+        ? "새 업무는 과를 **하나만** 고른 상태에서 추가하세요 (지금 " + S.eDepts.length + "과 선택됨)"
+        : "새 업무를 추가하려면 편집 범위에서 **과**까지 고르세요");
+    if (a === "eclear") { S.eGroup = ""; S.eDepts = []; rerender(); return; }
+    // 과 칩 — 토글 / 전체 / 지우기. 부서는 select 로 남는다(과 목록을 좁히는 역할).
+    if (a === "edeptpick") {
+      var _i = S.eDepts.indexOf(d.dept);
+      if (_i >= 0) S.eDepts.splice(_i, 1); else S.eDepts.push(d.dept);
+      rerender(); return;
+    }
+    if (a === "edeptall") { S.eDepts = scopeDeptList(); rerender(); return; }
+    if (a === "edeptnone") { S.eDepts = []; rerender(); return; }
     else if (a === "viewcols") S.viewMode = "columns", rerender();
     else if (a === "viewout") S.viewMode = "outline", rerender();
     else if (a === "select") actSelect(d.id);
@@ -4211,8 +4278,7 @@
     if (f === "fdept") { S.fDept = el.value; rerender(); return; }
     // 계층 편집 **편집 범위**(잠금 기준). 부서를 바꾸면 과를 비운다 — 다른 부서의 과가 남으면
     // 아무 업무도 범위에 안 들어와 전부 잠긴다.
-    if (f === "egroup") { S.eGroup = el.value; S.eDept = ""; rerender(); return; }
-    if (f === "edept") { S.eDept = el.value; rerender(); return; }
+    if (f === "egroup") { S.eGroup = el.value; S.eDepts = []; rerender(); return; }
     // ★ 편집 잠금 게이트(select·체크박스 쪽). 타이핑은 applyInput 이 막고 여기는 그 밖의 위젯을 막는다.
     if (el.dataset.id && !canEdit(byId(el.dataset.id))) { rerender(); return flash(lockMsg()); }
     if (f.indexOf("sub_") === 0) {          // 과별 제출값 select (자동화 수준 등)
