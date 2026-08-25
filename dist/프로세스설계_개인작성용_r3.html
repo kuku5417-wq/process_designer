@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_0908";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -135,12 +135,27 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
   .card { background: #fff; border: 1px solid #e7e1d6; border-left: 3px solid #cabfb0;
     border-radius: 10px; padding: 11px 13px; cursor: pointer; transition: border-color .12s; }
   .card:hover { border-color: #5eead4; }
+  .card { position: relative; }        /* .multisel::before 체크 표시의 앵커 */
   .card.sel { background: #f0fdfa; border-color: #0f766e; border-left-color: #0f766e;
     box-shadow: 0 2px 8px rgba(15,118,110,.12); }
   .card.path { background: #f7fdfc; border-left-color: #5eead4; }
   /* Ctrl+클릭으로 다중선택된 카드 — 함께 드래그된다 */
   .card.multisel { background: #eff6ff; border-color: #2563eb; border-left-color: #2563eb;
-    box-shadow: 0 0 0 1.5px rgba(37, 99, 235, .35); }
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, .55); }
+  /* 선택 표시는 CSS 만으로 — JS 상태가 필요 없다. 파란 링만으로는 눈에 안 띈다는 피드백. */
+  .card.multisel::before { content: "✓"; position: absolute; top: -7px; left: -7px; z-index: 2;
+    width: 18px; height: 18px; border-radius: 50%; background: #2563eb; color: #fff;
+    font-size: 11px; font-weight: 800; line-height: 18px; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+  /* 선택 개수 칩 — ★ document.body 에 붙인다(#flash 와 같은 방식).
+     contentEl.innerHTML 교체에 **면역**이라 rerender 마다 상태를 다시 흘릴 필요가 없다. */
+  #multichip { position: fixed; left: 50%; transform: translateX(-50%); bottom: 22px; z-index: 60;
+    background: #1e3a8a; color: #fff; padding: 9px 16px; border-radius: 999px; font-size: 13.5px;
+    font-weight: 700; box-shadow: 0 6px 20px rgba(30,58,138,.35); display: flex; gap: 12px;
+    align-items: center; }
+  #multichip button { background: rgba(255,255,255,.18); color: #fff; border: none; border-radius: 999px;
+    padding: 4px 11px; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+  #multichip button:hover { background: rgba(255,255,255,.3); }
   .card .top1 { display: flex; align-items: center; gap: 4px; }
   .card .nm { flex: 1; font-size: 15px; font-weight: 700; line-height: 1.35; word-break: break-all; }
   /* 카드 이름 인라인 편집 — 평소엔 텍스트처럼, 올리면 테두리, 포커스 시 강조 */
@@ -524,7 +539,13 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
   .panel.locked .pgrid, .panel.locked .pfoot { pointer-events: none; opacity: .55; }
   .fbar select { font-size: 13.5px; padding: 6px 8px; border: 1px solid #ddd6ca; border-radius: 8px; background: #fff; }
   .fbar .fclr { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
-  .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
+  .histrow { display: grid; grid-template-columns: 1.7fr 1fr .7fr .7fr auto; gap: 8px; align-items: center; padding: 11px 14px; cursor: pointer; font-size: 14.5px; border-radius: 9px; }
+  /* 고정 토글 — 고정된 스냅샷은 오래돼도 자동 정리에서 살아남는다 */
+  .pinbtn { border: 1px solid #ddd6ca; background: #fff; border-radius: 8px; padding: 3px 9px;
+    cursor: pointer; font-size: 13px; line-height: 1.4; color: #a8a29e; }
+  .pinbtn.on { border-color: #b45309; background: #fffbeb; color: #b45309; font-weight: 800; }
+  .pinbtn:hover { filter: brightness(.97); }
+  .histrow.pinned { background: #fffdf5; }
   .histrow.sel { background: #f0fdfa; box-shadow: inset 3px 0 0 #0f766e; font-weight: 700; }
   .diffgrid { display: flex; gap: 12px; }
   .diff { flex: 1; border-radius: 11px; padding: 14px; text-align: center; }
@@ -1692,6 +1713,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
     setTimeout(function () { _dragging = false; }, 0);
   }
   function wireDnD() {
+    // rerender 로 DOM 이 통째로 갈렸다 — 선택은 살아남을 수 없다. 칩을 지워 **풀렸음을 보여준다**.
+    _multiSel = {}; paintMultiSel();
+    // 관찰자도 새 DOM 에 다시 건다(옛 노드를 보던 것은 버린다).
+    if (_multiObs) { try { _multiObs.disconnect(); } catch (e) {} _multiObs = null; }
+    if (window.MutationObserver && contentEl) {
+      _multiObs = new MutationObserver(function () { syncMultiSel(); });
+      _multiObs.observe(contentEl, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    }
     _sorts.forEach(function (s) { try { s.destroy(); } catch (e) {} });
     _sorts = [];
     endDrag();     // rerender 로 DOM 이 갈렸으므로 드래그 상태도 초기화
@@ -1711,6 +1740,24 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
         draggable: ".card", filter: ".addbtn,.cdrop,.nm,.cdel,.card.locked",
         // Ctrl(⌘)+클릭으로 여러 카드를 골라 한 번에 드래그(MultiDrag, complete 빌드 내장).
         multiDrag: true, multiDragKey: "CTRL", selectedClass: "multisel", avoidImplicitDeselect: true,
+        // ★ 잠긴 카드는 선택 자체를 막는다. Sortable 의 filter 가 **선택에도** 적용되는지는
+        //   버전에 따라 다른데, 섞이면 actMoveMany 가 canEdit 을 보지 않으므로
+        //   **편집 범위 게이트가 통째로 새어 나간다**(무결성 문제).
+        onSelect: function (e) {
+          var id = e.item && e.item.dataset.id;
+          if (id && !canEdit(byId(id))) {
+            if (Sortable.utils && Sortable.utils.deselect) Sortable.utils.deselect(e.item);
+            e.item.classList.remove("multisel");
+            return flash(lockMsg());
+          }
+          if (id) _multiSel[id] = 1;
+          paintMultiSel();
+        },
+        onDeselect: function (e) {
+          var id = e.item && e.item.dataset.id;
+          if (id) delete _multiSel[id];
+          paintMultiSel();
+        },
         onStart: function () { _dragging = true; document.body.classList.add("dragging", "dragL" + lv); },
         onEnd: function (e) {
           endDrag();
@@ -1994,6 +2041,65 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
   }
 
   function flash(msg) { S.flash = msg; renderFlash(); clearTimeout(flashTimer); flashTimer = setTimeout(function () { S.flash = ""; renderFlash(); }, 1900); }
+  // ── 다중선택 표시 ──────────────────────────────────────────────
+  // Sortable MultiDrag 가 붙이는 `.multisel` 은 **DOM 전용 클래스**라, rerender 가 innerHTML 을
+  // 갈고 wireDnD 가 Sortable 을 재생성하면 선택이 사라진다. 그 사실을 감추지 않고
+  // **칩이 함께 사라지는 것으로 보여준다** — 복원(Sortable.utils.select)은 rerender 호출처
+  // 40여 곳의 낡은 선택을 전부 맞춰야 해서 부채가 된다.
+  var _multiSel = {};
+  var _multiObs = null;
+  function multiCount() { return Object.keys(_multiSel).length; }
+  /** `.multisel` 클래스를 **DOM 에서 읽어** 선택 상태를 동기화한다.
+   *
+   *  ★ Sortable 의 onSelect/onDeselect 에만 기대지 않는 이유: `Sortable.utils.select()` 는
+   *    클래스만 붙이고 콜백을 부르지 않는 것을 실측했고(1.15.6), 사용자 Ctrl+클릭에서 콜백이
+   *    도는지는 **버전 의존**이다. 콜백이 안 돌면 칩도 잠금 가드도 조용히 죽는다.
+   *    클래스는 어느 경로로 붙든 반드시 DOM 에 나타나므로 여기가 유일한 확실한 진실이다.
+   *  ★ 잠긴 카드가 선택되면 여기서 되돌린다 — actMoveMany 는 canEdit 을 보지 않으므로
+   *    섞이면 **편집 범위 게이트가 통째로 샌다**.
+   */
+  function syncMultiSel() {
+    var next = {}, leaked = false;
+    [].forEach.call(contentEl.querySelectorAll(".card.multisel"), function (el) {
+      var id = el.dataset.id;
+      if (id && !canEdit(byId(id))) {          // 편집 범위 밖은 선택될 수 없다
+        try { if (window.Sortable && Sortable.utils) Sortable.utils.deselect(el); } catch (e) {}
+        el.classList.remove("multisel");
+        leaked = true;
+        return;
+      }
+      if (id) next[id] = 1;
+    });
+    _multiSel = next;
+    paintMultiSel();
+    if (leaked) flash(lockMsg());
+  }
+  function paintMultiSel() {
+    var ex = document.getElementById("multichip");
+    var n = multiCount();
+    if (n < 1) { if (ex) ex.remove(); return; }
+    if (!ex) {
+      ex = document.createElement("div");
+      ex.id = "multichip";
+      document.body.appendChild(ex);
+      // onClick 은 appEl 에 위임돼 있다 — body 에 붙은 칩에는 **직접** 리스너를 단다.
+      ex.addEventListener("click", function (e) {
+        if (e.target && e.target.tagName === "BUTTON") clearMultiSel();
+      });
+    }
+    ex.innerHTML = "<span>✓ " + n + "개 선택됨 · 드래그하면 함께 이동합니다</span>"
+      + "<button type=\"button\">선택 해제</button>";
+  }
+  function clearMultiSel() {
+    Object.keys(_multiSel).forEach(function (id) {
+      var el = contentEl.querySelector('.card[data-id="' + id + '"]');
+      if (el && window.Sortable && Sortable.utils && Sortable.utils.deselect) Sortable.utils.deselect(el);
+      if (el) el.classList.remove("multisel");
+    });
+    _multiSel = {};
+    paintMultiSel();
+  }
+
   function renderFlash() { var ex = document.getElementById("flash"); if (ex) ex.remove(); if (S.flash) { var d = document.createElement("div"); d.id = "flash"; d.className = "flash"; d.textContent = S.flash; document.body.appendChild(d); } }
 
   // ── 뷰 (HTML 문자열) ────────────────────────────────
@@ -3513,7 +3619,18 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
         + "아직 저장 이력이 없습니다. 저장을 하면 직전 버전이 여기에 쌓입니다.</div>"
         + pageSaves() + "</div></div>";
     }
-    var rows = hist.map(function (h, i) { return '<div class="histrow' + (S.histPick === i ? " sel" : "") + '" data-act="histpick" data-i="' + i + '"><span>' + esc(h.ts) + "</span><span>" + esc(maskName(h.author)) + "</span><span>rev" + esc(h.rev) + "</span><span>" + esc(h.n_nodes) + "개</span></div>"; }).join("");
+    // 핀 버튼은 행 안에 있지만 행의 histpick 을 가로채지 않는다 —
+    // onClick 의 closest("[data-act]") 가 **가장 안쪽**을 집는다(전체보기 행과 같은 구조).
+    var rows = hist.map(function (h, i) {
+      return '<div class="histrow' + (S.histPick === i ? " sel" : "") + (h.pinned ? " pinned" : "")
+        + '" data-act="histpick" data-i="' + i + '">'
+        + "<span>" + esc(h.ts) + "</span><span>" + esc(maskName(h.author)) + "</span>"
+        + "<span>rev" + esc(h.rev) + "</span><span>" + esc(h.n_nodes) + "개</span>"
+        + '<button class="pinbtn' + (h.pinned ? " on" : "") + '" data-act="histpin" data-file="' + esc(h.file)
+        + '" data-pin="' + (h.pinned ? "0" : "1") + '" title="'
+        + (h.pinned ? "고정 해제 — 오래되면 자동 정리 대상이 됩니다" : "고정 — 오래돼도 자동 정리에서 제외됩니다")
+        + '">' + (h.pinned ? "📌 고정됨" : "고정") + "</button></div>";
+    }).join("");
     var hp = hist[S.histPick] || hist[0];
 
     // 실제 diff 는 파이썬(schema.diff)이 계산해 args.diff_preview 로 넘겨준다.
@@ -3540,7 +3657,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
       ? aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:14.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("")
       : '<div style="padding:16px;text-align:center;color:#a8a29e;font-size:14px">기록이 없습니다.</div>';
     return head
-      + '<div class="cardbox" style="margin-top:18px"><div class="histrow" style="background:#faf8f3;color:#a8a29e;font-size:13px;font-weight:800;cursor:default"><span>시각</span><span>작성자</span><span>rev</span><span>업무 수</span></div>' + rows + "</div>"
+      + '<div class="cardbox" style="margin-top:18px"><div class="histrow" style="background:#faf8f3;color:#a8a29e;font-size:13px;font-weight:800;cursor:default"><span>시각</span><span>작성자</span><span>rev</span><span>업무 수</span><span>고정</span></div>' + rows + "</div>"
       + '<div class="cardbox" style="padding:20px;margin-top:16px"><div style="font-size:14px;font-weight:800;color:#57534e">복원할 시점</div><div style="font-size:15px;font-weight:700;color:#0f766e;margin:6px 0 16px">' + esc(hp.ts) + " · " + esc(maskName(hp.author)) + " · rev" + esc(hp.rev) + "</div>"
       + dirtyWarn + authWarn
       + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>" + removedList
@@ -3853,6 +3970,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260824_1728";
             onOk: function () { emit({ type: "saves_delete", name: nm3 }); } };
       rerender();
     }
+    // 스냅샷 고정/해제 — 확인 모달 없음(잃는 게 없다. saveas 와 같은 판단).
+    else if (a === "histpin") emit({ type: "histpin", file: d.file, pinned: d.pin === "1" });
     else if (a === "restore") { if (!S.author) return flash("저장자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
     else if (a === "reload") actReload();
     else if (a === "force") emit({ type: "force", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });

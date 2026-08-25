@@ -11,6 +11,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _TMP = Path(tempfile.mkdtemp(prefix="pd_smoke_"))
@@ -1271,6 +1272,99 @@ def main() -> int:
     mN32, _, _ = excel_io.collect_jsons(
         [("프로세스_홍길동_기장운전1과_20260819.json", _mk32())], schema.bootstrap())  # 파일명만
     ck(any(n.get("name") == "미지정업무" for n in mN32["nodes"]), "파일명 규약이 맞으면 정상 취합")
+
+    # 33. 스냅샷 정리(prune_history) + rev 고정(핀)
+    #     ★ prune_history 회귀가 지금까지 하나도 없었다 — 핀 예외를 넣기 전에 기준선부터 박는다.
+    _pin_dir = _TMP / "pin"
+    os.environ["PROCESS_DATA_PATH"] = str(_pin_dir)
+    _hd = pc.get_history_dir()
+
+    def _mkhist(i, days_old):
+        """_SNAP_RE 규약에 맞는 스냅샷 1개. mtime 을 days_old 일 과거로 민다."""
+        nm = f"process_tree_2026{(i % 12) + 1:02d}{(i % 28) + 1:02d}_{i:02d}0000_사람{i:02d}.json"
+        p = _hd / nm
+        p.write_text(json.dumps({"rev": i, "nodes": [], "updated_by": f"사람{i:02d}"},
+                                ensure_ascii=False), encoding="utf-8")
+        t = time.time() - days_old * 86400
+        os.utime(p, (t, t))
+        return nm
+
+    # 조기반환(len(files) <= keep_min)을 넘기려면 50개 초과가 필수다
+    for _i in range(60):
+        _mkhist(_i, 200)
+    _all33 = [f.name for f in sorted(_hd.glob("process_tree_*.json"), reverse=True)]
+    ck(len(_all33) == 60, f"픽스처 60개 (실제 {len(_all33)})")
+
+    ck(store.load_pins() == set(), "핀 파일이 없으면 빈 집합")
+    _victim = _all33[50]                       # keep_min 밖 = 삭제 대상
+    ck(store.set_pin(_victim, True), "스냅샷 고정")
+    ck(store.load_pins() == {_victim}, "핀 목록에 담긴다")
+
+    _n33 = store.prune_history()
+    _left = [f.name for f in _hd.glob("process_tree_*.json")]
+    ck(_n33 == 9, f"오래된 10개 중 **핀 1개를 빼고 9개** 삭제 (실제 {_n33})")
+    ck(_victim in _left, "★ 고정한 스냅샷은 오래돼도 살아남는다")
+    ck(len(_left) == 51, f"최신 50개 + 핀 1개 = 51 (실제 {len(_left)})")
+    ck(all(n in _left for n in _all33[:50]), "최신 50개는 전부 보존(keep_min 규칙 불변)")
+
+    # 핀이 늘어도 **비핀 보존량이 줄지 않는다** — files[keep_min:] 슬라이스를 안 건드린 이유
+    for _i in range(60, 70):
+        _mkhist(_i, 200)
+    _all2 = [f.name for f in sorted(_hd.glob("process_tree_*.json"), reverse=True)]
+    for _p in _all2[50:55]:
+        store.set_pin(_p, True)
+    _before2 = len(_all2)
+    _n2 = store.prune_history()
+    _left2 = [f.name for f in _hd.glob("process_tree_*.json")]
+    ck(all(n in _left2 for n in _all2[:50]), "핀이 5개여도 최신 50개는 여전히 전부 보존")
+    ck(all(n in _left2 for n in _all2[50:55]), "핀 5개 전부 생존")
+    # 앞 블록의 _victim 핀도 아직 살아 있으므로 기대값을 **실제 핀 수로 계산**한다
+    # (상수로 박으면 앞 블록을 고칠 때마다 여기가 깨진다).
+    _outside = len(store.load_pins() - set(_all2[:50]))
+    ck(len(_left2) == 50 + _outside,
+       f"남는 것 = 최신 50 + keep_min 밖 핀 {_outside}개 (실제 {len(_left2)})")
+
+    # mtime 이 최근이면 핀이 없어도 안 지운다 (cutoff 규칙 불변)
+    _fresh = _mkhist(99, 0)
+    store.prune_history()
+    ck(_fresh in [f.name for f in _hd.glob("process_tree_*.json")], "최근 파일은 핀 없이도 생존")
+
+    # list_history 의 pinned 필드 + 정렬 순서 불변
+    _hl = store.list_history()
+    ck(all("pinned" in h for h in _hl), "list_history 가 pinned 를 함께 준다")
+    ck([h["file"] for h in _hl] == sorted([h["file"] for h in _hl], reverse=True),
+       "핀이 최신순 정렬을 바꾸지 않는다")
+    ck(next(h["pinned"] for h in _hl if h["file"] == _victim) is True, "고정본은 pinned=True")
+    ck(next(h["pinned"] for h in _hl if h["file"] == _fresh) is False, "비고정본은 pinned=False")
+    ck(not any(h["file"] == "_pins.json" for h in _hl),
+       "★ _pins.json 은 스냅샷 목록에 안 나온다 (복원 후보로 뜨면 안 된다)")
+
+    # 경로 조작·비스냅샷 거부
+    ck(store.set_pin("../evil.json", True) is False, "상위 경로 탈출 거부")
+    ck(store.set_pin("_audit.jsonl", True) is False, "스냅샷 규약이 아닌 파일 거부")
+    ck(store.set_pin("a" + chr(92) + "b.json", True) is False, "역슬래시 경로 거부")
+    ck(store.set_pin("없는파일_2026.json", True) is False, "_SNAP_RE 불일치 거부")
+    ck(store.set_pin("process_tree_20260101_010000_유령.json", True) is False,
+       "규약은 맞아도 **없는 파일**은 고정하지 않는다")
+
+    # 해제
+    ck(store.set_pin(_victim, False), "고정 해제")
+    ck(_victim not in store.load_pins(), "해제되면 목록에서 빠진다")
+
+    # 손상 _pins.json — 여기서 죽으면 save_tree 가 통째로 죽는다
+    pc.pins_path().write_text("{깨진 JSON", encoding="utf-8")
+    ck(store.load_pins() == set(), "★ 손상 핀 파일 → 빈 집합 (예외를 던지지 않는다)")
+    ck(store.prune_history() >= 0, "★ 손상 핀 파일이 있어도 prune_history 가 죽지 않는다")
+
+    # 유령 핀(고정된 파일을 사람이 직접 지움) → set_pin 이 정리한다
+    _g = _mkhist(98, 0)
+    store.set_pin(_g, True)
+    (_hd / _g).unlink()
+    ck(store.set_pin(_fresh, True) and _g not in store.load_pins(),
+       "유령 핀은 다음 set_pin 때 정리된다")
+    ck(store.prune_history() >= 0, "유령 핀이 있어도 prune_history 생존")
+
+    os.environ["PROCESS_DATA_PATH"] = str(_TMP)      # ★ 원복 — 이후 섹션이 같은 경로를 쓴다
 
     print()
     if _fails:

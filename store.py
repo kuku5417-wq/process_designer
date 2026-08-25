@@ -203,6 +203,7 @@ def list_history(limit: int = 200) -> list[dict]:
         files = sorted(pc.get_history_dir().glob("process_tree_*.json"), reverse=True)[:limit]
     except Exception:
         return out
+    pinned = load_pins()
     for f in files:
         m = _SNAP_RE.match(f.name)
         ts = ""
@@ -221,7 +222,10 @@ def list_history(limit: int = 200) -> list[dict]:
             author = str(raw.get("updated_by", "")) or author
         except Exception:
             pass
-        out.append({"file": f.name, "ts": ts, "author": author, "rev": rev, "n_nodes": n_nodes})
+        # `pinned` 를 여기 실으면 app.py 를 손대지 않아도 프론트까지 그대로 흘러간다
+        # (`_args` 가 `store.list_history()` 를 통째로 싣는다).
+        out.append({"file": f.name, "ts": ts, "author": author, "rev": rev,
+                    "n_nodes": n_nodes, "pinned": f.name in pinned})
     return out
 
 
@@ -238,6 +242,50 @@ def load_snapshot(name: str) -> dict | None:
         return None
 
 
+def load_pins() -> set[str]:
+    """고정된 스냅샷 파일명 집합.
+
+    ★ **절대 예외를 던지지 않는다.** `prune_history` 가 이걸 부르고, `prune_history` 는
+      `save_tree` 안에서 불린다 — 여기서 죽으면 **저장이 죽는다**(공통규칙 5 폴백).
+      파일이 없거나 깨졌으면 "고정 없음"으로 본다.
+    """
+    try:
+        p = pc.pins_path()
+        if not p.exists():
+            return set()
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        return {str(x) for x in (raw.get("files") or []) if str(x).strip()}
+    except Exception:      # noqa: BLE001 — 손상 파일 때문에 저장이 막히면 안 된다
+        return set()
+
+
+def set_pin(name: str, pinned: bool) -> bool:
+    """스냅샷 하나를 고정/해제. 고정된 것은 오래돼도 `prune_history` 가 지우지 않는다.
+
+    ★ 파일명 검증을 `load_snapshot` 과 **같은 수준**으로 건다 — 임의 문자열이 핀 목록에 들어가면
+      나중에 그 이름의 파일이 생겼을 때 뜻하지 않게 보호된다. `_SNAP_RE` 매칭까지 요구해
+      `_audit.jsonl`·`_pins.json` 자신 같은 것이 못 들어오게 한다.
+    ★ 유령 핀(사람이 파일을 직접 지운 경우) 정리는 **여기서만** 한다 — 읽을 때마다 정리하면
+      매 렌더가 쓰기가 된다.
+    """
+    if not name or "/" in name or "\\" in name or ".." in name or not _SNAP_RE.match(name):
+        return False
+    try:
+        hd = pc.get_history_dir()
+        pins = load_pins()
+        if pinned:
+            if not (hd / name).exists():
+                return False              # 없는 스냅샷은 고정하지 않는다
+            pins.add(name)
+        else:
+            pins.discard(name)
+        pins = {n for n in pins if (hd / n).exists()}      # 유령 핀 정리
+        save_json_atomic({"files": sorted(pins)}, pc.pins_path())
+        return True
+    except Exception:      # noqa: BLE001 — 핀 실패로 앱이 죽지 않게
+        return False
+
+
 def prune_history(keep_days: int = 90, keep_min: int = 50) -> int:
     """오래된 스냅샷 정리. 최근 keep_days 일 전량 + 최신 keep_min 개는 항상 보존."""
     try:
@@ -247,9 +295,14 @@ def prune_history(keep_days: int = 90, keep_min: int = 50) -> int:
     if len(files) <= keep_min:
         return 0
     cutoff = time.time() - keep_days * 86400
+    # ★ `files[keep_min:]` 슬라이스는 **건드리지 않는다.** 핀을 슬라이스 밖으로 빼면 keep_min 이
+    #   "비핀 50개"라는 **다른 규칙**이 돼, 핀이 늘수록 일반 스냅샷 보존량이 줄어든다.
+    pinned = load_pins()
     removed = 0
     for f in files[keep_min:]:
         try:
+            if f.name in pinned:
+                continue                  # 고정된 스냅샷은 오래돼도 남긴다
             if f.stat().st_mtime < cutoff:
                 f.unlink()
                 removed += 1

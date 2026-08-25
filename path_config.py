@@ -133,6 +133,15 @@ def audit_path() -> Path:
     return get_history_dir() / "_audit.jsonl"
 
 
+def pins_path() -> Path:
+    """고정(핀)된 스냅샷 목록 파일.
+
+    `history/` 안에 두지만 `list_history`/`prune_history` 의 글롭이 `process_tree_*.json` 이라
+    자기 자신은 목록에도 삭제 대상에도 잡히지 않는다(`_audit.jsonl` 과 같은 자리·같은 이유).
+    """
+    return get_history_dir() / "_pins.json"
+
+
 def get_collect_default() -> str:
     """제출 취합 스캔 폴더의 기본값 (관리자 PC 기준 경로).
 

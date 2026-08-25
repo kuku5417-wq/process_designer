@@ -489,6 +489,16 @@ def _handle(evt: dict) -> None:
         ok = store.delete_named(evt.get("name") or "", None if _dv in (None, "") else int(_dv))
         st.session_state["flash"] = ("보관본을 삭제했습니다." if ok else "보관본을 삭제하지 못했습니다.")
 
+    elif t == "histpin":                     # 스냅샷 고정/해제 — 오래돼도 자동 정리에서 제외
+        # ★ _set_data 를 부르지 않는다. 메타데이터 조작인데 tree_epoch 이 오르면 프론트가 트리를
+        #   갈아끼워 **미저장 편집이 사라진다**(chat 핸들러와 같은 이유). 다음 렌더에서
+        #   _args 가 list_history() 를 다시 읽으므로 화면은 알아서 갱신된다.
+        _pin_on = bool(evt.get("pinned"))
+        _pin_ok = store.set_pin(evt.get("file") or "", _pin_on)
+        st.session_state["flash"] = (
+            ("고정했습니다 — 오래돼도 자동 정리에서 제외됩니다." if _pin_on else "고정을 해제했습니다.")
+            if _pin_ok else "고정 상태를 바꾸지 못했습니다.")
+
     elif t == "reload":
         _set_data(store.load_tree()[0])
         st.session_state["disk_seen_mtime"] = store.disk_stat()[0]

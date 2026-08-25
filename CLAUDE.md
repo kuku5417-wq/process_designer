@@ -339,6 +339,22 @@ uv run streamlit run app.py --server.port 8540
   빠뜨리면 관리자가 엑셀을 한 번 내려받아 올리는 순간 과별 값이 전멸한다. `parse_json`(개인 파일
   이어붙이기)도 같은 이유로 취합 산출물 3종(`submissions`/`submit_count`/`submit_detail`)을 base 에서 살린다.
 
+### 📌 rev 고정(핀) — `history/_pins.json`
+
+`이력·복원` 목록 각 행의 [고정] 버튼. 고정된 스냅샷은 **오래돼도 `prune_history` 가 지우지 않는다.**
+
+- ★ **`prune_history` 의 `files[keep_min:]` 슬라이스를 건드리지 않는다.** 핀을 슬라이스 밖으로 빼면
+  `keep_min` 이 "**비핀** 50개"라는 다른 규칙이 돼, 핀이 늘수록 일반 스냅샷 보존량이 줄어든다.
+  루프 안 `if f.name in pinned: continue` **한 줄**이 전부다.
+- **파일명에 핀 표식을 넣지 말 것** — `_SNAP_RE` 의 `group(3)` 이 작성자라 오염된다(`_safe_name` 주석).
+- `_pins.json` 은 `process_tree_*.json` 글롭에 안 걸려 목록·삭제 대상이 아니다(`_audit.jsonl` 선례).
+- ★ **`load_pins` 는 절대 예외를 던지지 않는다** — `prune_history` → `save_tree` 안에서 불리므로
+  여기서 죽으면 **저장이 죽는다**. 손상 파일은 "고정 없음"으로 본다.
+- `set_pin` 은 `load_snapshot` 과 같은 경로 가드 + **`_SNAP_RE` 매칭**을 요구한다(`_audit.jsonl` 같은
+  것이 핀 목록에 못 들어오게). 유령 핀 정리는 **`set_pin` 에서만** — 읽을 때 정리하면 매 렌더가 쓰기가 된다.
+- `list_history` 가 `pinned` 를 함께 실어 **`app.py` 무수정**으로 프론트까지 간다.
+- `histpin` 은 **`_set_data` 를 부르지 않는다**(메타 조작인데 epoch 이 오르면 미저장 편집이 사라진다).
+
 ### 🔖 이름 붙인 보관본 (`saves/<이름>/v0001_….json`)
 
 `이력·복원` 탭 아래쪽. "2026 상반기안" 처럼 **사람이 의미를 붙여 남기는 계보**다.
@@ -513,6 +529,16 @@ lv6 목록이 우측에 뜬다. 활용기술 탭만 칩 2개(`현재`/`향후`)�
   바꿔, 칩 클릭=lv3 선택, 카드를 칩에 드롭=그 부문으로 이동(lv3 변경). 칩 드롭 타깃 그룹은 `L4`.
 - **다중선택 드래그**(SortableJS MultiDrag, 번들에 포함): `multiDrag:true, multiDragKey:"CTRL",
   selectedClass:"multisel"`. Ctrl+클릭으로 여러 카드를 골라 한 번에 옮긴다 → `actMoveMany(ids,newPid)`.
+  - **선택 개수 칩**(`#multichip`)은 `document.body` 에 붙인다(`#flash` 와 같은 방식) —
+    `contentEl.innerHTML` 교체에 **면역**이라 rerender 마다 상태를 다시 흘릴 필요가 없다.
+  - ★ **선택 추적은 Sortable 콜백이 아니라 `MutationObserver` 로 `.multisel` 클래스를 본다.**
+    `Sortable.utils.select()` 가 클래스만 붙이고 `onSelect` 를 안 부르는 것을 1.15.6 에서 실측했고,
+    사용자 Ctrl+클릭에서 콜백이 도는지는 **버전 의존**이다. 콜백에만 기대면 칩과 잠금 가드가
+    조용히 죽는다. 클래스는 어느 경로로 붙든 DOM 에 나타나므로 거기가 유일한 확실한 진실이다.
+  - ★ **잠긴 카드(편집 범위 밖)가 선택되면 되돌린다** — `actMoveMany` 는 `canEdit` 을 보지 않으므로
+    섞이면 **편집 범위 게이트가 통째로 샌다**.
+  - `rerender` 후 선택은 **살아남지 않는다**(Sortable 재생성). 칩이 함께 사라져 풀렸음이 보인다 —
+    복원(`Sortable.utils.select`)은 rerender 호출처 40여 곳의 낡은 선택을 다 맞춰야 해 부채가 된다.
 
 ### 남은 것 (부하 엔진)
 
