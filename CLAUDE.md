@@ -715,6 +715,17 @@ lv6 목록이 우측에 뜬다. 활용기술 탭만 칩 2개(`현재`/`향후`)�
 - **되돌릴 수 없는 조작은 확인 모달**(`S.confirm`)을 거친다 — 자손 있는 삭제, 미저장 상태의
   다시 읽기, **과·제출자 제출값 삭제**(`actSubDel`). 제출값 삭제는 그 사람이 낸 원본이
   사라지므로 행에 있는 🗑 이 곧바로 지우지 않는다(제출 파일이 남아 있으면 재취합으로 되살아난다).
+- ★ **`fullView()` 의 반환값을 무언가로 감싸지 말 것.** `contentEl` 은 **고정 높이 flex column**
+  이고, 높이가 `.treewrap{flex:1}` → `.body{flex:1}` → `.list{flex:1;overflow-y:auto}` 로 흘러야
+  컬럼이 스크롤 상자가 된다. 래퍼 `<div>` 를 하나 끼우면 그것이 유일한 flex 자식이 되면서
+  **사슬이 끊기고**, 높이를 못 받은 `.list` 가 콘텐츠만큼 늘어나 iframe(`scrolling:"no"`) 밖으로
+  잘린다 — **세로 스크롤이 통째로 사라진다.** 저장 중 오버레이를 붙이며 실제로 그랬다.
+  전체에 거는 상태 클래스는 **`contentEl` 자체에** 토글한다(`rerender` 의
+  `contentEl.classList.toggle("saving", …)`). `needHeight` 가 `contentEl.children` 을
+  블록별로 재는 것도 이 구조를 전제한다 — 래퍼가 있으면 측정 단위까지 뭉개진다.
+- **화면 전체에 겹치는 배지(`#flash`·`#multichip`·`#savebar`)는 `document.body` 에 붙인다.**
+  `contentEl` 안에 두면 `needHeight` 가 그 높이까지 세서 뜰 때마다 프레임이 들썩인다
+  (`position:fixed` 라도 `offsetHeight` 는 잡힌다). `innerHTML` 교체에 면역인 것은 덤이다.
 - **프레임 높이는 콘텐츠를 재서 정한다** (`layout`/`needHeight`/`innerNeed`, `H_MIN 560`~`H_MAX 900`).
   예전엔 `setHeight(824)` 상수라 카드가 몇 장뿐이어도 아래가 통째로 비었다.
   ★ 측정에 **`scrollHeight` 를 쓰면 안 된다** — 콘텐츠가 상자보다 짧아도 `clientHeight` 아래로는
