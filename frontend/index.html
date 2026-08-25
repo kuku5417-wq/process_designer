@@ -1764,21 +1764,56 @@
       return g.ids.length >= 2 && g.ids.every(function (i) { var n = byId(i); return n && canEdit(n); });
     });
   }
+  /** **세부업무(lv6)에 닿지 않는 상위 가지**(lv3~lv5) — `excel_io.prune_empty_branches` 의 JS 판.
+   *
+   *  취합이 지우는 것과 같은 대상이다. 아무도 채우지 않은 분류가 요약·집계 목록을 채우기 때문에
+   *  합치기로 정리할 때 함께 걷어낸다. **판정은 `descLoadNodes`(자손 lv6 목록) 하나로** 한다 —
+   *  편집 범위 게이트가 쓰는 것과 같은 함수라 기준이 갈리지 않는다.
+   *
+   *  반환은 **맨 위 가지만**이다(자손은 어차피 함께 지워지므로 목록에 두 번 세지 않는다).
+   *  편집 범위가 걸려 있으면 내가 고칠 수 있는 것만 — 남의 빈 분류를 지우면 게이트가 샌다.
+   */
+  function emptyBranches() {
+    var isEmpty = function (n) {
+      return n && Number(n.level) < LOAD_LV && !descLoadNodes(n.id).length;
+    };
+    return S.nodes.filter(function (n) {
+      if (!isEmpty(n) || !canEdit(n)) return false;
+      var par = n.parent_id === ROOT ? null : byId(n.parent_id);
+      return !(par && isEmpty(par) && canEdit(par));      // 부모가 이미 대상이면 그쪽만 센다
+    });
+  }
   function actMergeAll() {
     var gs = dupGroupsMergeable();
     var all = dupSiblings(4);
-    if (!gs.length) {
-      return flash(all.length ? "합칠 수 있는 그룹이 없습니다 — 편집 범위 밖입니다" : "같은 이름 항목이 없습니다");
+    var empties = emptyBranches();
+    if (!gs.length && !empties.length) {
+      return flash(all.length ? "정리할 수 있는 것이 없습니다 — 편집 범위 밖입니다" : "정리할 것이 없습니다");
     }
     var extra = gs.reduce(function (a, g) { return a + g.ids.length - 1; }, 0);
     var skipped = all.length - gs.length;
+    // ★ 빈 가지 삭제는 **먼저 알린다**. 몇 개인지와 어디인지를 보여주지 않고 지우면
+    //   "내가 만들던 분류가 사라졌다" 가 된다(취합의 prune_empty 미리보기와 같은 원칙).
+    var emptyNote = "";
+    if (empties.length) {
+      var names = empties.slice(0, 6).map(function (n) {
+        var par = n.parent_id === ROOT ? null : byId(n.parent_id);
+        return "'" + ((par ? par.name + " › " : "") + (n.name || "이름 없음")) + "'";
+      }).join(", ");
+      emptyNote = " 그리고 세부업무(lv6)가 없는 빈 가지 " + empties.length + "개를 지웁니다 — "
+        + names + (empties.length > 6 ? " 외 " + (empties.length - 6) + "개" : "")
+        + " (그 아래 분류도 함께).";
+    }
     S.confirm = {
-      title: "같은 이름 " + gs.length + "묶음(" + extra + "개)을 합칩니다"
+      title: (extra ? "같은 이름 " + gs.length + "묶음(" + extra + "개)을 합치고" : "빈 가지를 정리하고")
+        + (empties.length ? " 빈 가지 " + empties.length + "개를 지웁니다" : " 정리합니다")
         + (skipped > 0 ? " (범위 밖 " + skipped + "묶음 제외)" : ""),
-      body: "각 묶음의 맨 앞 항목으로 나머지를 합칩니다. 하위도 이름이 같으면 함께 합쳐지고, "
-        + "값이 둘 다 채워져 있으면 첫 번째 값을 남깁니다. "
-        + "되돌리려면 저장 전에 [다시 읽기] 를 해야 합니다.",
-      okLabel: extra + "개 합치기",
+      body: (extra ? "각 묶음의 맨 앞 항목으로 나머지를 합칩니다. 하위도 이름이 같으면 함께 합쳐지고, "
+        + "값이 둘 다 채워져 있으면 첫 번째 값을 남깁니다." : "")
+        + emptyNote
+        + " 되돌리려면 저장 전에 [다시 읽기] 를 해야 합니다.",
+      okLabel: (extra ? extra + "개 합치기" : "") + (extra && empties.length ? " · " : "")
+        + (empties.length ? empties.length + "개 지우기" : ""),
       danger: true, onOk: doMergeAll,
     };
     rerender();
@@ -1800,8 +1835,26 @@
       S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; });
       touchTree();
     }
+    // ★ 병합을 끝낸 **뒤에** 빈 가지를 다시 계산한다. 합치는 과정에서 하위가 옮겨 다니므로
+    //   미리 잡아둔 목록은 낡는다(빈 줄 알았던 가지에 lv6 이 들어와 있을 수 있다).
+    var pruned = 0;
+    for (var pg = 0; pg < 10; pg++) {
+      var es = emptyBranches();
+      if (!es.length) break;
+      es.forEach(function (n) {
+        var st = [n.id];
+        while (st.length) {
+          var cur = st.pop();
+          if (victims[cur]) continue;
+          victims[cur] = 1; pruned++;
+          childrenOf(cur).forEach(function (c) { st.push(c.id); });
+        }
+      });
+      S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; });
+      touchTree();
+    }
     var gone = Object.keys(victims);
-    if (!gone.length) { flash("합칠 동명 항목이 없습니다"); return rerender(); }
+    if (!gone.length) { flash("정리할 것이 없습니다"); return rerender(); }
     S.dirty = S.dirty.filter(function (d) { return !victims[d]; });
     gone.forEach(function (v) { if (S.deleted.indexOf(v) < 0) S.deleted.push(v); });
     markDirty("del");
@@ -1810,7 +1863,9 @@
     Object.keys(pars).forEach(renumber);
     recalcAi();
     if (S.selectedId && !byId(S.selectedId)) { S.selectedId = null; S.sel = {}; }
-    flash("같은 이름 " + groups + "묶음을 합쳤습니다 — 업무 " + gone.length + "개 정리"
+    flash((groups ? "같은 이름 " + groups + "묶음을 합쳤습니다" : "정리했습니다")
+      + " — 업무 " + gone.length + "개 정리"
+      + (pruned ? " · 빈 가지 " + pruned + "개 삭제" : "")
       + (stat.moved ? " · 하위 " + stat.moved + "개 이동" : "")
       + (stat.dropped ? " · 값이 달라 " + stat.dropped + "칸은 첫 번째 값을 남겼습니다" : ""));
     rerender();
@@ -2513,18 +2568,26 @@
     var h = "";
     // 같은 이름 형제(중복) — 복사 후 이름을 안 바꾸면 뜬다. 취합이 이름 경로로 병합하므로 위험.
     var dups = dupSiblings();
-    if (dups.length) {
+    // 빈 가지(lv6 에 안 닿는 상위 분류)도 같은 배너에서 알린다 — 정리 버튼이 하나뿐이라
+    // 중복이 없고 빈 가지만 있을 때도 버튼에 닿을 수 있어야 한다.
+    var emptyN = emptyBranches().length;
+    if (dups.length || emptyN) {
       var items = dups.map(function (d) {
         var par = (d.parentId && d.parentId !== ROOT) ? byId(d.parentId) : null;
         return "'" + esc((par ? par.name + " › " : "") + d.name) + "' " + d.ids.length + "개";
       }).join(", ");
-      // [전부 합치기] — 하나씩 드래그하지 않고 한 번에 정리한다(하위 재귀 병합은 드래그와 같은 규칙).
+      var msg = dups.length
+        ? "⚠ 같은 이름의 항목이 있습니다 — " + (SOLO ? "<b>내보내기 전에</b> " : "")
+            + "이름을 수정하거나 합치세요: " + items
+            + (emptyN ? " · 세부업무가 없는 빈 가지도 <b>" + emptyN + "개</b> 있습니다" : "")
+        : "⚠ 세부업무(lv6)가 없는 빈 가지가 <b>" + emptyN + "개</b> 있습니다 — 요약·집계 목록만 채웁니다";
+      // [정리하기] — 동명 병합(하위 재귀)과 빈 가지 삭제를 한 번에. 무엇을 지우는지 먼저 알린다.
       h += '<div class="warn" style="margin:8px 14px 0;border-radius:10px;display:flex;'
         + 'align-items:center;gap:10px;flex-wrap:wrap">'
-        + '<span style="flex:1 1 auto">⚠ 같은 이름의 항목이 있습니다 — '
-        + (SOLO ? '<b>내보내기 전에</b> ' : '') + '이름을 수정하거나 합치세요: ' + items + "</span>"
+        + '<span style="flex:1 1 auto">' + msg + "</span>"
         + '<button class="minibtn" data-act="mergeall" '
-        + 'title="같은 이름끼리 한 번에 합칩니다 — 하위도 이름이 같으면 함께 합쳐집니다">⧉ 전부 합치기</button>'
+        + 'title="같은 이름끼리 합치고(하위 재귀) 세부업무가 없는 빈 가지를 지웁니다 — 지우기 전에 무엇인지 보여줍니다">'
+        + (dups.length ? "⧉ 전부 합치기" : "🧹 빈 가지 정리") + "</button>"
         + "</div>";
     }
     // lv3 동명 부문 — 오타 교정(CEDAR CUS → CEDAR CSU) 뒤에 생길 수 있다. 위 가드는 lv5+ 라 안 잡힌다.
