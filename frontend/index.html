@@ -2256,6 +2256,9 @@
       + ident
       + (!SOLO && S.rev ? '<span class="revcap">rev ' + esc(S.rev) + "</span>" : "")
       + badge
+      // 지금 화면 내용을 CSV 로. 메인앱은 엑셀 탭(SHOW_IO_TAB)이 꺼져 있어 여기가 유일한 통로다.
+      // 개인 배포판은 '내보내기 / 불러오기' 탭에 같은 버튼이 있으므로 넣지 않는다(중복).
+      + (SOLO ? "" : '<button class="minibtn ico" data-act="dlcsv" title="엑셀(CSV) 내려받기 — 지금 화면 내용 그대로입니다(저장하지 않은 편집도 포함)">⬇</button>')
       // v1 사이드바의 [↻ 디스크 다시 읽기] — 배너를 기다리지 않고 언제든 최신본을 받는다
       + (SOLO ? "" : '<button class="minibtn ico" data-act="reload" title="다시 읽기 — 다른 사람이 저장한 최신 내용을 불러옵니다">↻</button>')
       + '<button class="save ' + (canSave ? "on" : "off") + (SOLO ? "" : " ico") + '" data-act="save"'
@@ -4175,6 +4178,9 @@
     }
     // 스냅샷 고정/해제 — 확인 모달 없음(잃는 게 없다. saveas 와 같은 판단).
     else if (a === "histpin") emit({ type: "histpin", file: d.file, pinned: d.pin === "1" });
+    else if (a === "dlcsv")
+      // 파일명에 rev 를 넣어 여러 번 받아도 안 덮인다(스냅샷 CSV 와 같은 규칙).
+      csvDownload(true, "프로세스계층도_rev" + (S.rev || 0) + "_" + _dateStamp() + ".csv");
     else if (a === "snapcsv") {
       // ★ 클릭 제스처 **안에서** Blob 을 만들어 바로 내려받는다(파이썬 왕복을 끼우면 크롬이 막는다).
       var _st = S.snapTree, _hp = S.history[S.histPick] || {};
