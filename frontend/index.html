@@ -837,6 +837,21 @@
     }
     return _kidsCache[pid] || _NOKIDS;
   }
+  /** **살아 있는 트리가 아닌** 노드 배열용 children 인덱스 (스냅샷 CSV 등).
+   *
+   *  ★ `S.nodes` 를 임시로 바꿔치고 `touchTree()` 하는 방식은 **금지**다 — `childrenOf`/`byId` 는
+   *    전역 캐시라 그 사이 다른 코드가 읽으면 과거 트리를 현재로 착각한다(캐시 오염).
+   *    정렬 비교자는 `_kidCmp` 를 **재사용**한다 — 따로 쓰면 CSV 행 순서가 화면과 갈린다.
+   */
+  function kidsIndexOf(nodes) {
+    var m = Object.create(null), i, n;
+    for (i = 0; i < (nodes || []).length; i++) {
+      n = nodes[i];
+      (m[n.parent_id] || (m[n.parent_id] = [])).push(n);
+    }
+    for (var k in m) m[k].sort(_kidCmp);
+    return m;
+  }
   /** 같은 부모 아래 **이름이 같은 형제**(중복) 목록 — schema.duplicate_siblings 트윈. 하위(자손)는
    *  보지 않고 이름만 본다. 복사(하위 포함 복제)로 생긴 동명 형제를 잡아 경고·내보내기 차단에 쓴다.
    *  기본 lv5 이상만(복사가 lv5+ 에서만 되므로). 반환 [{parentId, level, name, ids:[...]}]. */
@@ -906,8 +921,10 @@
    *  ship_types·special_note 처럼 도메인 값을 담는 배열 필드에 쓴다. */
   function rollupList(n, field) { return rollupTechs(n, field); }
   /** 향후 적용시기 롤업 {기술: 연도} — 자신 ∪ lv7 자식 (schema.rollup_future_years 트윈).
-   *  같은 기술이 lv6·lv7 에서 다르면 **늦은 해**를 취한다 — 빠른 해를 쓰면 완료 시점을 낙관적으로 속인다. */
-  function rollupFutureYears(n) {
+   *  같은 기술이 lv6·lv7 에서 다르면 **늦은 해**를 취한다 — 빠른 해를 쓰면 완료 시점을 낙관적으로 속인다.
+   *  `kids` 를 주면 그 인덱스로 lv7 자식을 찾는다(스냅샷 CSV). ★ 넘기는 것을 빠뜨리면 이 열만
+   *  **살아 있는 트리 기준**이 돼 CSV 전체를 못 믿게 된다. */
+  function rollupFutureYears(n, kids) {
     var out = {};
     function add(src) {
       if (!src) return;
@@ -917,12 +934,13 @@
       });
     }
     add(n.future_years);
-    childrenOf(n.id).forEach(function (c) { if (c.level === LEVEL_MAX) add(c.future_years); });
+    var cs = kids ? (kids[n.id] || _NOKIDS) : childrenOf(n.id);
+    cs.forEach(function (c) { if (c.level === LEVEL_MAX) add(c.future_years); });
     return out;
   }
   /** 이 업무가 완전히 AI화되는 시점 = 적용시기(롤업)의 최댓값 (schema.future_year_max 트윈). */
-  function futureYearMax(n) {
-    var m = rollupFutureYears(n), best = "";
+  function futureYearMax(n, kids) {
+    var m = rollupFutureYears(n, kids), best = "";
     Object.keys(m).forEach(function (k) { if (m[k] > best) best = m[k]; });
     return best;
   }
@@ -1188,6 +1206,8 @@
     //               이때 부분 병합을 태우면 취합이 지운 빈 가지가 base 에서 되살아난다 → 전체 교체로 보낸다.
     //   saving    : 저장 왕복 중. 그 사이 타이핑은 왕복 뒤 트리에 덮여 **조용히 사라진다**.
     deleted: [], domSig: "", replaceAll: false, saving: false,
+    // 선택한 스냅샷의 트리(CSV 다운로드용). 파이썬이 histpick 응답에 **한 번만** 실어 준다.
+    snapTree: null,
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -1494,7 +1514,8 @@
   }
 
   function actHistPick(i) {
-    S.histPick = i; S.restoreOk = false; S.diffPreview = null;
+    // ★ 다른 rev 를 골랐는데 낡은 트리를 내려받으면 안 된다 — 응답이 올 때까지 무효화한다.
+    S.histPick = i; S.restoreOk = false; S.diffPreview = null; S.snapTree = null;
     rerender();
     // 실제 diff 는 파이썬 schema.diff 가 계산한다 — JS 에 재구현하지 않는다
     var h = S.history[i];
@@ -2009,15 +2030,21 @@
     v = (v == null) ? "" : String(v);
     return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
   }
-  function csvRows(mask) {
+  /** `nodes` 를 주면 **그 배열**을 훑는다(스냅샷 CSV). 없으면 살아 있는 트리.
+   *  `mask` 는 지금 쓰이지 않지만 호출부 시그니처를 유지한다. */
+  function csvRows(mask, nodes) {
+    var kids = nodes ? kidsIndexOf(nodes) : null;
+    var kidsAt = function (pid) { return kids ? (kids[pid] || _NOKIDS) : childrenOf(pid); };
     var rows = [CSV_COLS.slice()];
     (function walk(pid, names) {
-      childrenOf(pid).forEach(function (n) {
+      kidsAt(pid).forEach(function (n) {
         var path = names.concat([n.name || ""]);
         var full = FIXED.concat(path);                 // lv0~lv2 고정단 재부착
         var lvc = []; for (var i = 0; i <= LEVEL_MAX; i++) lvc.push(full[i] || "");   // lv0~lv7
         var leaf = hasDetail(n.level);
-        var dept = leaf ? (n.dept || S.dept || "") : (n.dept || "");   // lv6·lv7 은 소속(과) 반영
+        // ★ 폴백은 **개인 배포판에서만**. 메인앱에서 관리자 소속이 과거 트리에 새면 안 된다
+        //   (메인앱 상단에는 부서 칸 자체가 없어 S.dept 는 항상 비어 있지만, 의미를 못박아 둔다).
+        var dept = leaf ? (n.dept || (SOLO ? S.dept : "") || "") : (n.dept || "");
         var ship = leaf ? (n.ship_types || []).join(", ") : "";        // 도메인 값 그대로
         var links = leaf ? (n.linked_systems || []).map(function (ls) { return (ls.system || "") + (ls.detail ? " · " + ls.detail : ""); }).filter(Boolean).join(" / ") : "";
         // 수행과(전체) — 여러 과가 하는 업무는 과가 여럿이다(대표 과는 '부서/과' 열)
@@ -2029,7 +2056,7 @@
           leaf ? (n.has_ai_agent ? "Y" : "N") : "", leaf ? (n.has_ai_future ? "Y" : "N") : "",
           (n.tech || []).join(", "), (n.future_tech || []).join(", "),
           leaf ? Object.keys(n.future_years || {}).sort().map(function (k) { return k + ":" + n.future_years[k]; }).join(", ") : "",
-          leaf ? futureYearMax(n) : "",
+          leaf ? futureYearMax(n, kids) : "",
           n.automation_level || "", ship,
           (n.special_note || []).join(", "), (n.apply_phases || []).join(", "),
           n.outputs || "", links, n.desc || "",
@@ -2039,8 +2066,8 @@
     })(ROOT, []);
     return rows;
   }
-  function csvDownload(mask, fname) {
-    var rows = csvRows(mask);
+  function csvDownload(mask, fname, nodes) {
+    var rows = csvRows(mask, nodes);
     if (rows.length <= 1) { flash("내보낼 업무가 없습니다"); return; }
     var csv = rows.map(function (r) { return r.map(_csvCell).join(","); }).join("\r\n");
     _dl(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" }), fname);   // BOM = 엑셀 한글
@@ -3695,6 +3722,8 @@
       ? '<div class="warn" style="margin-bottom:14px">⚠ 저장하지 않은 변경 ' + S.dirty.length + "건이 있습니다. 복원하면 사라집니다.</div>" : "";
     var authWarn = !S.author ? '<div class="warn" style="margin-bottom:14px">복원하려면 상단에 저장자를 입력하세요.</div>' : "";
     var can = S.restoreOk && !!S.author;
+    // 지금 고른 rev 의 트리가 실제로 도착했을 때만 활성 — 다른 rev 의 트리를 내려받으면 안 된다.
+    var snapOk = !!(S.snapTree && S.snapTree.file === hp.file);
     var ACT = { save: "저장", force: "전체 덮어쓰기", restore: "복원" };
     var auditRows = aud.length
       ? aud.map(function (a) { var lab = ACT[a.action] || a.action; var stl = a.action === "force" ? "background:#fef3c7;color:#92400e" : a.action === "restore" ? "background:#e0e7ff;color:#3730a3" : "background:#ccfbf1;color:#115e59"; return '<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;align-items:center;padding:9px 14px;border-bottom:1px solid #f7f4ee;font-size:14.5px"><span>' + esc((a.ts || "").replace("T", " ")) + "</span><span>" + esc(maskName(a.author)) + '</span><span><span class="actx" style="' + stl + '">' + esc(lab) + "</span></span><span>rev" + esc(a.rev) + "</span><span>" + esc(a.n_nodes) + "개</span></div>"; }).join("")
@@ -3705,7 +3734,10 @@
       + dirtyWarn + authWarn
       + '<div style="font-size:14px;font-weight:800;color:#57534e;margin-bottom:9px">지금 화면과의 차이 (복원하면 이렇게 바뀝니다)</div><div class="diffgrid">' + diffs + "</div>" + removedList
       + '<label style="display:flex;align-items:center;gap:9px;margin:18px 0 0;cursor:pointer"><input type="checkbox" data-fkey="restoreok"' + (S.restoreOk ? " checked" : "") + ' style="width:16px;height:16px;accent-color:#0f766e" /><span style="font-size:14.5px;color:#44403c">위 내용을 확인했고 이 시점으로 되돌립니다</span></label>'
-      + '<div style="margin-top:14px"><button class="' + (can ? "primary" : "") + '" style="' + (can ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:800;cursor:not-allowed") + 'padding:9px 18px" data-act="restore">이 시점으로 복원</button></div></div>'
+      + '<div style="margin-top:14px;display:flex;gap:9px;align-items:center"><button class="' + (can ? "primary" : "") + '" style="' + (can ? "" : "background:#cabfb0;color:#fff;border:none;border-radius:9px;padding:9px 18px;font-weight:800;cursor:not-allowed") + 'padding:9px 18px" data-act="restore">이 시점으로 복원</button>'
+      + '<button style="padding:9px 16px' + (snapOk ? "" : ";background:#f5f2ec;color:#a8a29e;cursor:not-allowed") + '" data-act="snapcsv"' + (snapOk ? "" : " disabled") + '>⬇ 이 시점 CSV 받기</button>'
+      + (snapOk ? "" : '<span style="font-size:13px;color:#a8a29e">내용을 불러오는 중…</span>')
+      + "</div></div>"
       + '<div style="font-size:15.5px;font-weight:800;margin:24px 0 10px">저장 기록</div><div class="cardbox"><div style="display:grid;grid-template-columns:1.5fr 1fr 1fr .6fr .6fr;gap:8px;padding:10px 14px;background:#faf8f3;border-bottom:1px solid #f4f1ea;font-size:13px;font-weight:800;color:#a8a29e"><span>시각</span><span>작성자</span><span>동작</span><span>rev</span><span>업무</span></div>' + auditRows + "</div>"
       + pageSaves() + "</div></div>";
   }
@@ -4018,6 +4050,12 @@
     }
     // 스냅샷 고정/해제 — 확인 모달 없음(잃는 게 없다. saveas 와 같은 판단).
     else if (a === "histpin") emit({ type: "histpin", file: d.file, pinned: d.pin === "1" });
+    else if (a === "snapcsv") {
+      // ★ 클릭 제스처 **안에서** Blob 을 만들어 바로 내려받는다(파이썬 왕복을 끼우면 크롬이 막는다).
+      var _st = S.snapTree, _hp = S.history[S.histPick] || {};
+      if (!_st || _st.file !== _hp.file) return flash("이 시점의 내용을 아직 불러오지 못했습니다");
+      csvDownload(true, "프로세스계층도_rev" + (_st.rev || 0) + "_" + _dateStamp() + ".csv", _st.nodes);
+    }
     else if (a === "restore") { if (!S.author) return flash("저장자를 먼저 입력하세요"); if (!S.restoreOk) return; emit({ type: "restore", file: (S.history[S.histPick] || {}).file, author: S.author }); }
     else if (a === "reload") actReload();
     else if (a === "force") emit({ type: "force", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains });
@@ -4257,6 +4295,8 @@
     S.conflict = args.conflict || null;
     S.diskNewer = args.disk_newer || null;
     S.diffPreview = args.diff_preview || null;
+    // 한 번 배달되고 마는 값이라 **올 때만** 덮는다(다음 렌더에 null 로 지워지지 않게).
+    if (args.snap_tree) S.snapTree = args.snap_tree;
     S.importPreview = args.import_preview || null;
     S.importErrors = args.import_errors || [];
     S.collectPreview = args.collect_preview || null;

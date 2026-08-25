@@ -73,7 +73,7 @@ uv run streamlit run app.py --server.port 8540
 | `import_cancel` | JS→PY | 보류분 폐기 |
 | `collect_scan` | JS→PY | 다수 제출 JSON 취합(폴더 경로 **재귀 `rglob` — 하위 폴더 전부** 또는 다중 업로드) → `excel_io.collect_jsons` 로 **경로 병합·인원수 집계**, `pending_collect` 에 보류. 파일명은 폴더 기준 **상대경로**(하위 폴더 구분·표시용, 신원은 봉투 우선/basename 폴백), 미리보기에 **발견 파일 수(scanned)·파일명·제출자 총원·파일별 제외 수·소속 재설정·폴더 부서 불일치** 노출. **소속은 상대경로의 `<부서>/<과>` 에서 뽑는다**(봉투는 폴더가 없을 때의 폴백). 폴더 입력칸 기본값은 `path_config.get_collect_default()`(빈 칸일 때만 채움 → **[스캔]만 누르면 됨**) |
 | `collect_apply` / `collect_cancel` | JS→PY | 취합 보류분 반영 / 폐기. **`prune_empty` 옵트인**(기본 켜짐)이면 lv6 없는 빈 가지를 함께 제거 — 취합이 삭제까지 하는 유일한 경로 |
-| `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 |
+| `histpick` | JS→PY | 스냅샷 선택 → `schema.diff` 로 복원 미리보기 계산 + **그 시점 트리를 `snap_tree` 로 한 번 배달**(CSV 다운로드용, 추가 왕복 0) |
 | `restore` / `reload` | JS→PY | 스냅샷 복원 / 디스크 재로드 |
 | `save_as` | JS→PY | 현재 화면 트리를 **이름 붙여 보관** → `store.save_named`. 같은 이름이면 **다음 버전으로 쌓인다**(덮어쓰기 아님) |
 | `saves_load` / `saves_delete` | JS→PY | `{name, version}` — 보관본을 **화면에만** 불러오기(정본은 [저장]에서) / 버전·계보 삭제 |
@@ -392,6 +392,30 @@ uv run streamlit run app.py --server.port 8540
 - `.saving` 오버레이는 응답이 없으면 **20초 뒤 스스로 풀린다**(`_saveGuard`). 파이썬이 죽거나
   이벤트가 유실되면 화면이 **영구히 잠기는데**, 실제로 서버가 구 모듈을 물고 있을 때 겪었다.
 - 감사로그 `action` 이 `save` 와 `merge` 로 갈린다(`n_dirty`/`n_deleted`/`n_overlap` 동반).
+
+### ⬇ 그 시점 CSV 받기 — 스냅샷을 골라 표로 내려받는다
+
+`이력·복원` 의 "복원할 시점" 카드에서 [⬇ 이 시점 CSV 받기]. **복원하지 않고** 과거 rev 의 내용을
+표로 꺼내 지금과 비교하거나 보고에 쓴다.
+
+- **데이터는 `histpick` 왕복에 얹는다** — 파이썬이 미리보기 diff 를 내려고 이미 그 트리를
+  `load_snapshot` 으로 메모리에 갖고 있다. 추가 왕복이 0 이다.
+- ★ **`main()` 에서 `pop` 해 `_args` 로 넘긴다**(`flash`·`dirty_all` 선례). `_args` 안에서 `get` 하면
+  1~3MB 가 **매 렌더** 컴포넌트로 실려 나간다. 한 번 배달되고 사라져야 한다.
+- 프론트 `S.snapTree` 는 **올 때만 덮는다**(`if (args.snap_tree)`) — 매 렌더 `|| null` 로 지우면
+  다음 렌더에 버튼이 꺼진다. `actHistPick` 에서는 **반드시 `null` 로 무효화**한다 —
+  다른 rev 를 골랐는데 낡은 트리를 내려받으면 안 된다. 버튼은 `S.snapTree.file === hp.file` 일 때만 활성.
+- ★ **`csvRows(mask, nodes)` 는 로컬 children 인덱스(`kidsIndexOf`)를 만들어 쓴다.**
+  `S.nodes` 를 임시로 바꿔치고 `touchTree()` 하는 방식은 **금지** — `childrenOf`/`byId` 는 전역
+  캐시라 그 사이 다른 코드가 과거 트리를 현재로 착각한다. 정렬 비교자는 `_kidCmp` 를 재사용해
+  **행 순서가 라이브 CSV 와 같게** 맞춘다.
+- ★★ **`futureYearMax` → `rollupFutureYears` 에도 그 인덱스를 넘긴다.** 빠뜨리면 `향후완료시점`
+  **한 열만 살아 있는 트리 기준**이 돼 CSV 전체를 못 믿게 된다(다른 열은 노드 자체에서 읽으므로
+  멀쩡해서 더 위험하다). lv7 롤업이 걸린 유일한 열이다.
+- `부서/과` 의 `S.dept` 폴백은 **`SOLO` 일 때만** — 메인앱 관리자 소속이 과거 트리에 새면 안 된다.
+- 다운로드는 **클릭 제스처 안에서 동기적으로** `_dl(Blob)`. 파이썬 왕복을 끼우면 크롬이
+  "사용자 동작 없는 샌드박스 다운로드"로 보고 막는다(구 `download` 이벤트가 죽은 이유).
+- 파일명은 `프로세스계층도_rev<N>_<날짜>.csv` — rev 를 넣어야 여러 시점을 받아도 안 덮인다.
 
 ### 📌 rev 고정(핀) — `history/_pins.json`
 

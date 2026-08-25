@@ -68,7 +68,7 @@ def _load() -> dict:
     return st.session_state["data"]
 
 
-def _args(flash: str, conflict, dirty_all: bool) -> dict:
+def _args(flash: str, conflict, dirty_all: bool, snap_tree) -> dict:
     data = st.session_state["data"]
     mtime, rev, author = store.disk_stat()
     seen = st.session_state.get("disk_seen_mtime", 0.0)
@@ -91,6 +91,9 @@ def _args(flash: str, conflict, dirty_all: bool) -> dict:
         "conflict": conflict,
         "disk_newer": disk_newer,
         "dirty_all": dirty_all,
+        # 선택한 스냅샷의 트리 — CSV 다운로드용. ★ **한 번 배달되고 사라진다**(main 에서 pop).
+        #   `_args` 안에서 session_state 를 get 하면 1~3MB 가 **매 렌더** 실려 나간다.
+        "snap_tree": snap_tree,
         # 판정은 파이썬이 한다 — 프론트는 결과만 그린다
         "diff_preview": st.session_state.get("diff_preview"),
         "import_preview": st.session_state.get("import_preview"),
@@ -358,11 +361,16 @@ def _preview_restore(name: str, nodes: list[dict] | None) -> None:
     snap = store.load_snapshot(name)
     if snap is None:
         st.session_state["diff_preview"] = None
+        st.session_state.pop("snap_tree", None)
         return
     cur = st.session_state["data"]
     if nodes is not None:
         cur = {**cur, "nodes": nodes}      # 세션 원본 미변경 — 얕은 사본으로만 비교
     d = schema.diff(cur, snap)
+    # CSV 다운로드용으로 그 시점 트리를 남긴다 — 이미 메모리에 있으니 **추가 왕복이 0** 이다.
+    # 다운로드는 프론트가 클릭 제스처 안에서 Blob 으로 만든다(파이썬 bytes → data-URI 는 크롬이 막는다).
+    st.session_state["snap_tree"] = {"file": name, "nodes": snap.get("nodes") or [],
+                                     "rev": snap.get("rev", 0)}
     st.session_state["diff_preview"] = {
         "file": name,
         "added": len(d["added"]), "changed": len(d["changed"]), "removed": len(d["removed"]),
@@ -553,8 +561,11 @@ def main() -> None:
     flash = st.session_state.pop("flash", "")
     conflict = st.session_state.get("conflict")
     dirty_all = st.session_state.pop("dirty_all", False)
+    # ★ pop 이다 — 스냅샷 트리는 histpick 응답에 **한 번만** 실린다(flash 와 같은 성격).
+    #   남겨 두면 매 렌더마다 수 MB 가 컴포넌트로 흘러간다.
+    snap_tree = st.session_state.pop("snap_tree", None)
 
-    evt = _component()(**_args(flash, conflict, dirty_all), key="pd_v2", default=None)
+    evt = _component()(**_args(flash, conflict, dirty_all, snap_tree), key="pd_v2", default=None)
 
     # 대기 중인 다운로드가 있으면 브라우저 다운로드를 트리거(데이터 URI 자동 클릭)
     pend = st.session_state.pop("pending_download", None)
