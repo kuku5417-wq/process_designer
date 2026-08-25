@@ -4023,8 +4023,12 @@
     var a = el.dataset.act, d = el.dataset;
     if (a === "tab") {
       S.activeTab = d.k; rerender();
-      // 이력 탭 진입 시 기본 선택의 diff 를 파이썬에 요청 (안 하면 "계산하는 중…" 에 머문다)
-      if (S.activeTab === "hist" && S.history.length && !S.diffPreview) actHistPick(S.histPick || 0);
+      // 이력 탭 진입 시 기본 선택의 diff 와 **스냅샷 트리**를 파이썬에 요청 (안 하면 "계산하는 중…" 에 머문다)
+      // ★ snapTree 도 조건에 넣는다. diffPreview 는 저장 뒤에도 세션에 남아 있는데 snapTree 는
+      //   epoch 이 오를 때 비워지므로, diffPreview 만 보면 **재진입 시 요청이 생략돼**
+      //   [이 시점 CSV 받기] 가 "내용을 불러오는 중…" 인 채로 영영 비활성에 머문다.
+      if (S.activeTab === "hist" && S.history.length && (!S.diffPreview || !S.snapTree))
+        actHistPick(S.histPick || 0);
     }
     // ★ 편집 잠금 게이트 — 부서/과 편집 범위 밖 노드의 수정·삭제를 **여기 한 곳에서** 막는다.
     //   액션마다 조건을 흩뿌리면 새 액션이 생길 때 조용히 새어 나간다. 새 편집 액션을 추가하면
