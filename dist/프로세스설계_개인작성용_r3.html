@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1024";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -1218,6 +1218,9 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
     deleted: [], domSig: "", replaceAll: false, saving: false,
     // 선택한 스냅샷의 트리(CSV 다운로드용). 파이썬이 histpick 응답에 **한 번만** 실어 준다.
     snapTree: null,
+    // 남이 지운 업무를 내가 고쳤을 때 되살릴지 묻는 목록. 있으면 모달이 뜨고, 그때까지
+    // 파이썬은 **아무것도 쓰지 않은** 상태다(내 편집은 전부 그대로 살아 있다).
+    reviveAsk: null,
     aiTab: "now",           // 과별 막대의 AI 구간 기준 (now|future) — **그래프만** 바꾼다(KPI 는 둘 다 유지)
     chatReady: false, chatLog: [], chatQ: "", chatBusy: false, chatProvider: "",
     history: [], audit: [], flash: "", conflict: null, diskNewer: null,
@@ -1925,18 +1928,22 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
     markDirty("dom"); rerender(); }
 
   var _saveGuard = null;      // 저장 응답이 안 올 때 오버레이를 푸는 타이머
-  function doSave() {
+  /** revive: undefined = 아직 안 물어봄(필요하면 파이썬이 되물음) / true = 되살림 / false = 삭제를 따름. */
+  function doSave(revive) {
     // 개인 모드에는 서버가 없다 — [저장] 은 "제출 파일 내보내기"다.
     // 편집 자체는 markDirty 마다 localStorage 에 자동 저장되므로 눌러야 안 날아가는 게 아니다.
     if (SOLO) return soloExport();
     if (!S.author) { flash("저장자를 먼저 입력하세요"); return; }
     if (!S.dirty.length) { flash("변경 사항이 없습니다"); return; }
+    S.reviveAsk = null;         // 모달을 닫고 그 답을 실어 보낸다
     // mode: 취합 반영·보관본 불러오기 직후는 **전체 교체**(replace). 그 외 평소 편집은 부분 병합(merge).
     //   replace 를 안 쓰면 취합이 지운 빈 가지가 디스크에서 되살아난다.
     S.saving = true;
-    emit({ type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains,
-           dirty: S.dirty, deleted: S.deleted, dom_sig: S.domSig,
-           mode: S.replaceAll ? "replace" : "merge" });
+    var _p = { type: "save", rev: S.rev, author: S.author, nodes: S.nodes, domains: S.domains,
+               dirty: S.dirty, deleted: S.deleted, dom_sig: S.domSig,
+               mode: S.replaceAll ? "replace" : "merge" };
+    if (revive === true || revive === false) _p.revive = revive;
+    emit(_p);
     rerender();                 // 저장 중 오버레이를 즉시 씌운다
     // ★ 안전장치 — 오버레이는 응답(epoch 증가)이 와야 풀린다. 파이썬이 예외로 죽거나 연결이
     //   끊기면 응답이 영영 안 와 **화면이 영구히 잠긴다**(실제로 겪었다). 반드시 스스로 풀어야 한다.
@@ -3819,6 +3826,32 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
       + "</div></div>";
   }
 
+  /** 되살리기 확인 모달 — **내가 고친 업무를 그 사이 남이 지웠다.**
+   *
+   *  그냥 얹으면 남의 삭제가 조용히 무효가 되고, 그냥 버리면 내 수정이 조용히 사라진다.
+   *  어느 쪽이 옳은지는 데이터로 알 수 없으므로 **사람이 고른다**. 배경 클릭으로 닫지 않는다.
+   *  이 모달이 떠 있는 동안 파이썬은 아무것도 쓰지 않았고 내 편집은 전부 그대로다.
+   */
+  function reviveModal() {
+    var r = S.reviveAsk; if (!r || !r.length) return "";
+    var rows = r.slice(0, 30).map(function (it) {
+      return '<div style="padding:7px 12px;border-bottom:1px solid #f7f4ee;font-size:14px">'
+        + '<span class="lvb g">lv' + esc(it.level) + "</span> " + esc(it.path)
+        + (it.by ? ' <span style="color:#a8a29e">· ' + esc(maskName(it.by)) + " 님이 지움</span>" : "")
+        + "</div>";
+    }).join("") + (r.length > 30 ? '<div style="padding:7px 12px;color:#a8a29e;font-size:13px">…외 '
+        + (r.length - 30) + "건</div>" : "");
+    return '<div class="modalbg"><div class="modal" style="max-width:560px">'
+      + '<div class="mtitle">지워진 업무를 고쳤습니다</div>'
+      + '<div class="mbody">아래 ' + r.length + "건은 <b>내가 고치는 동안 다른 사람이 지운</b> 업무입니다."
+      + "<br/>되살릴지, 삭제를 따를지 골라 주세요. <b>아직 아무것도 저장되지 않았습니다.</b></div>"
+      + '<div class="cardbox" style="margin:10px 0;max-height:220px;overflow:auto">' + rows + "</div>"
+      + '<div class="mbtns"><button class="mcancel" data-act="revcancel">취소</button>'
+      + '<button data-act="revdrop">삭제를 따름 (내 수정 버림)</button>'
+      + '<button class="primary" data-act="revkeep">되살려서 저장</button></div>'
+      + "</div></div>";
+  }
+
   // ── 렌더 / 포커스 복원 ──────────────────────────────
   function fullView() {
     var body;
@@ -3835,7 +3868,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
     // 저장 왕복 중에는 편집면을 덮는다 — 그 사이 친 글자는 왕복 뒤 트리에 덮여 사라진다.
     var savingBar = S.saving ? '<div class="savebar">💾 저장 중…</div>' : "";
     return '<div class="' + (S.saving ? "saving" : "") + '">'
-      + topbar() + banners() + body + confirmModal() + "</div>" + savingBar;
+      + topbar() + banners() + body + confirmModal() + reviveModal() + "</div>" + savingBar;
   }
   // ── 스크롤 위치 보존 ────────────────────────────────────────────
   // rerender 는 innerHTML 을 통째로 갈아끼워 모든 스크롤이 0 으로 돌아간다. 긴 목록을 내려
@@ -4004,6 +4037,10 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
       return flash(S.eDepts.length > 1
         ? "새 업무는 과를 **하나만** 고른 상태에서 추가하세요 (지금 " + S.eDepts.length + "과 선택됨)"
         : "새 업무를 추가하려면 편집 범위에서 **과**까지 고르세요");
+    // 되살리기 확인 — 모달이 떠 있으면 그 버튼이 최우선이다(뒤 화면은 오버레이에 덮여 있다).
+    if (a === "revcancel") { S.reviveAsk = null; rerender(); return; }
+    if (a === "revkeep") { doSave(true); return; }
+    if (a === "revdrop") { doSave(false); return; }
     if (a === "eclear") { S.eGroup = ""; S.eDepts = []; rerender(); return; }
     // 과 칩 — 토글 / 전체 / 지우기. 부서는 select 로 남는다(과 목록을 좁히는 역할).
     if (a === "edeptpick") {
@@ -4350,8 +4387,8 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
       // ★ 저장 성공은 언제나 epoch 증가를 동반하므로 여기서 비우는 것이 트리 채택과 **원자적**이다.
       //   emit 시점에 낙관적으로 비우면 저장이 실패했을 때 **삭제 의도가 증발한다.**
       S.deleted = [];
+      S.reviveAsk = null;       // 저장이 끝났으면 물어볼 것도 없다
       S.domSig = _domSig(S.domains);
-      S.saving = false;
       // 취합 반영·보관본 불러오기 직후엔 트리를 통째로 갈아끼운 상태다 → 다음 저장은 전체 교체.
       S.replaceAll = !!args.dirty_all;
       if (args.dirty_all) S.dirty = S.nodes.map(function (n) { return n.id; }).concat(["dom"]);  // 엑셀 반영 직후: 전부 미저장
@@ -4368,6 +4405,12 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1000";
     S.audit = args.audit || [];
     S.conflict = args.conflict || null;
     S.diskNewer = args.disk_newer || null;
+    // ★ 저장 왕복이 **끝났다는 사실**은 응답이 왔다는 것 자체다 — epoch 분기 안에서 풀면
+    //   충돌·되살리기 확인처럼 **트리를 갈지 않는 응답**에서 오버레이가 안 풀려 화면이
+    //   20초(_saveGuard)나 잠긴다. 어떤 응답이든 여기서 푼다.
+    S.saving = false;
+    // 되살리기 확인 — 한 번 배달되고 마는 값이라 **올 때만** 덮는다(취소는 프론트에서 null 로).
+    if (args.revive_ask && args.revive_ask.length) S.reviveAsk = args.revive_ask;
     S.diffPreview = args.diff_preview || null;
     // 한 번 배달되고 마는 값이라 **올 때만** 덮는다(다음 렌더에 null 로 지워지지 않게).
     if (args.snap_tree) S.snapTree = args.snap_tree;

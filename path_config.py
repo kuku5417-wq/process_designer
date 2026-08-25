@@ -142,6 +142,16 @@ def pins_path() -> Path:
     return get_history_dir() / "_pins.json"
 
 
+def tombs_path() -> Path:
+    """삭제된 노드 id 기록(묘비).
+
+    편집 중이던 사람이 **이미 지워진 업무**를 고쳐 저장할 때, 그것이 "새 업무"인지
+    "남이 지운 것"인지 구분하려면 지웠다는 사실이 어딘가 남아야 한다. 트리 안에 두면
+    스냅샷·엑셀 왕복마다 따라다니므로 `_pins.json` 과 같은 자리에 따로 둔다.
+    """
+    return get_history_dir() / "_tombs.json"
+
+
 def get_collect_default() -> str:
     """제출 취합 스캔 폴더의 기본값 (관리자 PC 기준 경로).
 

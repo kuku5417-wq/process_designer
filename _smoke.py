@@ -1518,6 +1518,89 @@ def main() -> int:
 
     os.environ["PROCESS_DATA_PATH"] = str(_TMP)      # ★ 원복
 
+    # 35. 삭제 기록(묘비) + 되살리기 선택
+    #     "남이 지운 업무를 내가 고쳤다" 를 **새 업무와 구분**하려면 지웠다는 사실이 남아야 한다.
+    _tb = _TMP / "tomb"
+    os.environ["PROCESS_DATA_PATH"] = str(_tb)
+
+    def _mk35():
+        _d = schema.bootstrap()
+        _p = schema.add_node(_d, "lv3_seonjang", 4, "관리자", "P")
+        _x = schema.add_node(_d, _p, 5, "관리자", "X")
+        _y = schema.add_node(_d, _p, 5, "관리자", "Y")
+        store.save_tree(schema.normalize(_d), "관리자", force=True)
+        _b, _ = store.load_tree()
+        return _b, _p, _x, _y
+
+    def _nm35():
+        return sorted(n["name"] for n in store.load_tree()[0]["nodes"] if n["level"] >= 4)
+
+    _b35, _P35, _X35, _Y35 = _mk35()
+    _r035 = _b35["rev"]
+    _A35, _B35 = copy.deepcopy(_b35), copy.deepcopy(_b35)
+    _A35["nodes"] = [n for n in _A35["nodes"] if n["id"] != _X35]
+    store.save_merge(_A35["nodes"], _A35["domains"], [], [_X35], "A", my_rev=_r035)
+    ck(store.load_tombs().get(_X35, {}).get("by") == "A", "삭제하면 묘비에 **누가 지웠는지**까지 남는다")
+
+    for _nd in _B35["nodes"]:
+        if _nd["id"] == _X35:
+            _nd["name"] = "X-B수정"
+    _q35 = store.save_merge(_B35["nodes"], _B35["domains"], [_X35], [], "B", my_rev=_r035)
+    ck((not _q35.ok) and _q35.revive_ask == (_X35,),
+       "★ 남이 지운 업무를 내가 고치면 **묻는다** (조용히 되살리지 않는다)")
+    ck(_nm35() == ["P", "Y"], "★ 물어보는 동안은 **아무것도 쓰지 않았다** — 답을 고른 뒤에 저장된다")
+
+    _k35 = store.save_merge(_B35["nodes"], _B35["domains"], [_X35], [], "B",
+                            my_rev=_r035, revive=True)
+    ck(_k35.ok and _k35.n_revived == 1 and "X-B수정" in _nm35(), "되살리기를 고르면 내 수정과 함께 살아난다")
+
+    _b36, _ = store.load_tree()
+    _A36 = copy.deepcopy(_b36)
+    _A36["nodes"] = [n for n in _A36["nodes"] if n["id"] != _X35]
+    store.save_merge(_A36["nodes"], _A36["domains"], [], [_X35], "A", my_rev=_b36["rev"])
+    _d35 = store.save_merge(_B35["nodes"], _B35["domains"], [_X35], [], "B",
+                            my_rev=_r035, revive=False)
+    ck(_d35.ok and _d35.n_dropped == 1 and "X-B수정" not in _nm35(),
+       "삭제 따르기를 고르면 삭제가 유지되고 **내 수정은 버려진다**(몇 건인지 보고한다)")
+
+    _b37, _ = store.load_tree()
+    _B37 = copy.deepcopy(_b37)
+    _NEW37 = schema.add_node(_B37, _P35, 5, "B", "진짜새업무")
+    _n37 = store.save_merge(_B37["nodes"], _B37["domains"], [_NEW37], [], "B", my_rev=_b37["rev"])
+    ck(_n37.ok and "진짜새업무" in _nm35(),
+       "★ **새 업무는 묻지 않는다** — 새 노드도 base 에 없으므로 묘비가 없으면 그냥 새 것이다")
+
+    # 전체 교체(취합 반영·복원)로 사라진 노드도 묘비에 남아야 한다 —
+    # 부분 병합은 rev 를 보지 않아 충돌 배너가 그 경로를 막아주지 못한다.
+    _b38, _ = store.load_tree()
+    _r38 = _b38["rev"]
+    _A38, _B38 = copy.deepcopy(_b38), copy.deepcopy(_b38)
+    _A38["nodes"] = [n for n in _A38["nodes"] if n["id"] != _Y35]
+    store.save_tree(_A38, "A", force=True)
+    for _nd in _B38["nodes"]:
+        if _nd["id"] == _Y35:
+            _nd["name"] = "Y-B수정"
+    _q38 = store.save_merge(_B38["nodes"], _B38["domains"], [_Y35], [], "B", my_rev=_r38)
+    ck(_q38.revive_ask == (_Y35,),
+       "★ **전체 교체로 지운 것도** 묻는다 (취합이 지운 빈 가지가 조용히 되살아나지 않는다)")
+
+    # 내 rev 이후가 아니면(내가 이미 알고 있던 삭제) 묻지 않는다
+    _b39, _ = store.load_tree()
+    _B39 = copy.deepcopy(_b39)
+    _NEW39 = schema.add_node(_B39, _P35, 5, "B", "나중업무")
+    _n39 = store.save_merge(_B39["nodes"], _B39["domains"], [_NEW39], [], "B", my_rev=_b39["rev"])
+    ck(_n39.ok and not _n39.revive_ask, "이미 반영된 삭제(내 rev 이후가 아님)는 묻지 않는다")
+
+    ck(isinstance(store.load_tombs(), dict), "load_tombs 는 항상 dict — 저장 경로에서 불린다")
+    _tp39 = pc.tombs_path()
+    _tp39.write_text("{ broken", encoding="utf-8")
+    ck(store.load_tombs() == {}, "손상된 묘비 파일은 '기록 없음' 으로 본다 (예외 금지)")
+    _b40, _ = store.load_tree()
+    ck(store.save_merge(_b40["nodes"], _b40["domains"], [], [], "A", my_rev=_b40["rev"]).ok,
+       "★ 묘비 파일이 깨져도 **저장은 된다**")
+
+    os.environ["PROCESS_DATA_PATH"] = str(_TMP)      # ★ 원복
+
     print()
     if _fails:
         print(f"=== {len(_fails)}/{_n} FAILED ===")

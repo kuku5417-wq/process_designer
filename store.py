@@ -45,6 +45,10 @@ class SaveResult:
     n_cascade: int = 0          # 그중 **남이 그 아래 추가한 것**까지 함께 지운 수
     overlap: tuple = ()         # 남도 손댄 노드 id (차단하지 않고 알리기만 한다)
     dom_kept: bool = False      # 도메인 변경을 반영하지 못하고 디스크본을 유지했는가
+    # ── 되살리기 확인 (남이 지운 업무를 내가 고쳤을 때) ──
+    revive_ask: tuple = ()      # 판단이 필요한 노드 id. **비어 있지 않으면 아무것도 쓰지 않았다**
+    n_revived: int = 0          # 되살린 수
+    n_dropped: int = 0          # 삭제를 따르느라 버린 내 수정 수
 
 
 # ── 원자적 저장 ─────────────────────────────────────────
@@ -263,6 +267,59 @@ def load_pins() -> set[str]:
         raw = json.loads(p.read_text(encoding="utf-8"))
         return {str(x) for x in (raw.get("files") or []) if str(x).strip()}
     except Exception:      # noqa: BLE001 — 손상 파일 때문에 저장이 막히면 안 된다
+        return set()
+
+
+_TOMB_MAX = 2000            # 최근 것만 남긴다 — 오래된 묘비는 아무도 그 시점 트리를 들고 있지 않다
+
+
+def load_tombs() -> dict[str, dict]:
+    """삭제된 노드 id → {"rev": 지운 시점 rev, "by": 지운 사람}.
+
+    ★ **절대 예외를 던지지 않는다**(`load_pins` 와 같은 이유) — 저장 경로 안에서 불린다.
+    """
+    try:
+        p = pc.tombs_path()
+        if not p.exists():
+            return {}
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        out = {}
+        for k, v in (raw.get("tombs") or {}).items():
+            if isinstance(v, dict) and str(k).strip():
+                out[str(k)] = {"rev": int(v.get("rev", 0)), "by": str(v.get("by", ""))}
+        return out
+    except Exception:      # noqa: BLE001 — 손상 파일 때문에 저장이 막히면 안 된다
+        return {}
+
+
+def _record_tombs(ids, rev: int, author: str) -> None:
+    """지운 id 를 기록. **best-effort** — 실패해도 저장을 무르지 않는다.
+
+    상한을 두는 이유: 묘비는 "내 rev 이후에 지워졌는가"를 답하기 위한 것이라 최신 것만 쓸모가 있다.
+    무한히 쌓으면 매 저장마다 읽고 쓰는 파일이 계속 커진다.
+    """
+    ids = [str(i) for i in (ids or []) if str(i).strip()]
+    if not ids:
+        return
+    try:
+        tombs = load_tombs()
+        for i in ids:
+            tombs[i] = {"rev": int(rev), "by": author or ""}
+        if len(tombs) > _TOMB_MAX:
+            keep = sorted(tombs.items(), key=lambda kv: kv[1].get("rev", 0), reverse=True)[:_TOMB_MAX]
+            tombs = dict(keep)
+        save_json_atomic({"tombs": tombs}, pc.tombs_path())
+    except Exception:      # noqa: BLE001 — 기록 실패가 저장을 되돌리게 하지 않는다
+        pass
+
+
+def _disk_node_ids() -> set[str]:
+    """디스크 정본의 노드 id 집합. 실패하면 빈 집합(= 이번엔 삭제 기록을 남기지 않는다)."""
+    try:
+        raw = json.loads(pc.tree_path().read_text(encoding="utf-8"))
+        return {str(n.get("id")) for n in (raw.get("nodes") or [])
+                if isinstance(n, dict) and n.get("id")}
+    except Exception:      # noqa: BLE001
         return set()
 
 
@@ -489,6 +546,11 @@ def save_tree(data: dict, author: str, force: bool = False, action: str = "save"
                           disk_author=disk_author, disk_updated_at=disk_updated)
 
     snapshot(disk_author or "unknown")     # pre-image 보존 (없으면 None, 무해)
+    # ★ 전체 교체(취합 반영·보관본·복원·강제 덮어쓰기)로 **사라지는 노드도 삭제로 기록**한다.
+    #   안 하면 취합이 지운 빈 가지를 다른 사람이 고쳐 저장할 때 조용히 되살아난다
+    #   (부분 병합은 rev 를 보지 않으므로 충돌 배너가 그 경로를 막아주지 못한다).
+    #   디스크를 한 번 더 읽는 값이지만 저장은 사람이 누르는 조작이라 감당할 만하다.
+    _prev_ids = _disk_node_ids()
 
     try:
         data = schema.normalize(data)
@@ -499,6 +561,7 @@ def save_tree(data: dict, author: str, force: bool = False, action: str = "save"
     except Exception as e:
         return SaveResult(ok=False, error=f"저장에 실패했습니다: {e}")
 
+    _record_tombs(_prev_ids - {str(n.get("id")) for n in data["nodes"]}, data["rev"], author)
     audit({"author": author, "rev": data["rev"], "n_nodes": len(data["nodes"]),
            "action": "force" if (force and disk_rev > my_rev) else action})
     try:
@@ -593,11 +656,16 @@ def _rebase_order(out: list[dict], imap: dict[str, dict], touched: set[str]) -> 
 
 def save_merge(nodes: list[dict], domains: dict, dirty: list[str] | None,
                deleted: list[str] | None, author: str, my_rev: int = 0,
-               dom_sig: str = "") -> SaveResult:
+               dom_sig: str = "", revive: bool | None = None) -> SaveResult:
     """내가 만진 노드만 디스크 최신본에 얹어 저장한다 (동시 편집 보호).
 
     rev 충돌로 **거부하지 않는다** — 구성상 "안 만진 것은 안 건드린다"가 보장되므로 거부할 이유가 없다.
     같은 노드를 둘이 만졌으면 **내 값이 이긴다**(마지막 저장 승리). 상대 값은 pre-image 스냅샷에 남는다.
+
+    ★ 단 하나 **사람에게 묻는 경우**가 있다: 내가 고친 업무를 그 사이 남이 **지웠을 때**.
+      그냥 얹으면 남의 삭제가 조용히 무효가 되고(내 dirty 에 실려 되살아난다), 그냥 버리면
+      내 수정이 조용히 사라진다. 어느 쪽이 옳은지는 데이터로 알 수 없으므로 `revive=None` 이면
+      **아무것도 쓰지 않고** `revive_ask` 로 되돌려 화면에서 고르게 한다.
     """
     if not (author or "").strip():
         return SaveResult(ok=False, error="저장자를 입력해 주세요.")
@@ -610,6 +678,20 @@ def save_merge(nodes: list[dict], domains: dict, dirty: list[str] | None,
         dirty_ids = {d for d in (dirty or []) if d in imap}
         del_ids = _del_closure(deleted, bmap)
         n_cascade = len(del_ids) - len([d for d in (deleted or []) if d in bmap])
+        # 내가 고친 것 중 **base 에 없고 + 내 rev 이후에 지워진** 것 = 남이 지운 업무를 내가 고쳤다.
+        # 묘비가 없으면 그냥 '새 업무'다 — 새 노드도 base 에 없으므로 이 구분이 반드시 필요하다.
+        _tombs = load_tombs()
+        gone = tuple(sorted(i for i in dirty_ids
+                            if i not in bmap and int((_tombs.get(i) or {}).get("rev", -1)) > my_rev))
+        n_revived = n_dropped = 0
+        if gone:
+            if revive is None:
+                return SaveResult(ok=False, revive_ask=gone)      # ★ 아무것도 쓰지 않았다
+            if revive:
+                n_revived = len(gone)
+            else:
+                dirty_ids -= set(gone)                            # 삭제를 따른다 → 내 수정을 버린다
+                n_dropped = len(gone)
         # 순서를 다시 매길 형제 그룹 — **옛 부모(base)** 를 반드시 포함한다.
         # A가 Y를 P1→P2 로 옮기면 incoming 에는 P2 만 있고, 구멍이 난 P1 은 dirty 어디에도 없다.
         touched = {imap[i].get("parent_id", "") for i in dirty_ids}
@@ -643,15 +725,18 @@ def save_merge(nodes: list[dict], domains: dict, dirty: list[str] | None,
     except Exception as e:      # noqa: BLE001 — 저장 실패로 앱이 죽지 않게
         return SaveResult(ok=False, error=f"저장에 실패했습니다: {e}")
 
+    _record_tombs(del_ids, data["rev"], author)
     audit({"author": author, "rev": data["rev"], "n_nodes": len(data["nodes"]), "action": "merge",
-           "n_dirty": len(dirty_ids), "n_deleted": len(del_ids), "n_overlap": len(overlap)})
+           "n_dirty": len(dirty_ids), "n_deleted": len(del_ids), "n_overlap": len(overlap),
+           "n_revived": n_revived, "n_dropped": n_dropped})
     try:
         prune_history()
     except Exception:           # noqa: BLE001 — 정리 실패가 저장을 무르게 하지 않는다
         pass
     return SaveResult(ok=True, rev=data["rev"], merged=True, n_applied=len(dirty_ids),
                       n_deleted=len(del_ids), n_cascade=max(0, n_cascade),
-                      overlap=overlap, dom_kept=dom_kept)
+                      overlap=overlap, dom_kept=dom_kept,
+                      n_revived=n_revived, n_dropped=n_dropped)
 
 
 def restore(name: str, author: str) -> tuple[SaveResult, dict | None]:

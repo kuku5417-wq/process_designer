@@ -68,7 +68,7 @@ def _load() -> dict:
     return st.session_state["data"]
 
 
-def _args(flash: str, conflict, dirty_all: bool, snap_tree) -> dict:
+def _args(flash: str, conflict, dirty_all: bool, snap_tree, revive_ask) -> dict:
     data = st.session_state["data"]
     mtime, rev, author = store.disk_stat()
     seen = st.session_state.get("disk_seen_mtime", 0.0)
@@ -94,6 +94,9 @@ def _args(flash: str, conflict, dirty_all: bool, snap_tree) -> dict:
         # 선택한 스냅샷의 트리 — CSV 다운로드용. ★ **한 번 배달되고 사라진다**(main 에서 pop).
         #   `_args` 안에서 session_state 를 get 하면 1~3MB 가 **매 렌더** 실려 나간다.
         "snap_tree": snap_tree,
+        # 남이 지운 업무를 내가 고쳤을 때 되살릴지 묻는 목록. **한 번 배달되고 사라진다**
+        #  — 프론트가 모달을 띄우고 [되살리기]/[삭제 따르기] 로 다시 저장을 emit 한다.
+        "revive_ask": revive_ask,
         # 판정은 파이썬이 한다 — 프론트는 결과만 그린다
         "diff_preview": st.session_state.get("diff_preview"),
         "import_preview": st.session_state.get("import_preview"),
@@ -395,9 +398,12 @@ def _handle(evt: dict) -> None:
         #                      부분 병합을 태우면 취합이 지운 빈 가지가 base 에서 되살아난다.
         _merge = (t == "save" and evt.get("mode") != "replace")
         if _merge:
+            # revive: None=아직 안 물어봄(필요하면 되물음) / True=되살림 / False=삭제를 따름
+            _rv = evt.get("revive")
             res = store.save_merge(
                 data["nodes"], data["domains"], evt.get("dirty") or [], evt.get("deleted") or [],
-                author, my_rev=data["rev"], dom_sig=str(evt.get("dom_sig") or ""))
+                author, my_rev=data["rev"], dom_sig=str(evt.get("dom_sig") or ""),
+                revive=(None if _rv is None else bool(_rv)))
         else:
             res = store.save_tree(data, author, force=(t == "force"))
         if res.ok:
@@ -424,11 +430,25 @@ def _handle(evt: dict) -> None:
                 if res.overlap:
                     _msg += (f" · {len(res.overlap)}건은 다른 사람도 손댄 업무입니다"
                              "(이전 값은 이력·복원에 남아 있습니다)")
+                if res.n_revived:
+                    _msg += f" · 다른 사람이 지웠던 {res.n_revived}건을 다시 살렸습니다"
+                if res.n_dropped:
+                    _msg += (f" · 다른 사람이 지운 {res.n_dropped}건은 삭제를 따랐습니다"
+                             "(내 수정은 반영하지 않았습니다)")
                 if res.dom_kept:
                     _msg += " · 도메인이 그 사이 바뀌어 이번 변경은 반영하지 않았습니다. 다시 고쳐 주세요"
                 st.session_state["flash"] = _msg + "."
             else:
                 st.session_state["flash"] = f"저장했습니다 (rev {res.rev})."
+        elif res.revive_ask:
+            # ★ 아무것도 쓰지 않았다 — 화면에서 고른 뒤 다시 저장한다. 세션 트리도 건드리지 않으므로
+            #   epoch 이 그대로고, 사용자의 미저장 편집이 전부 살아 있다.
+            _ids = set(res.revive_ask)
+            _tombs = store.load_tombs()
+            _items = _node_brief([n for n in data["nodes"] if n.get("id") in _ids], data)
+            for _it, _nid in zip(_items, [n["id"] for n in data["nodes"] if n.get("id") in _ids]):
+                _it["by"] = str((_tombs.get(_nid) or {}).get("by", ""))
+            st.session_state["revive_ask"] = _items
         elif res.conflict:
             st.session_state["conflict"] = {"disk_author": res.disk_author, "disk_rev": res.disk_rev}
         else:
@@ -564,8 +584,10 @@ def main() -> None:
     # ★ pop 이다 — 스냅샷 트리는 histpick 응답에 **한 번만** 실린다(flash 와 같은 성격).
     #   남겨 두면 매 렌더마다 수 MB 가 컴포넌트로 흘러간다.
     snap_tree = st.session_state.pop("snap_tree", None)
+    revive_ask = st.session_state.pop("revive_ask", None)
 
-    evt = _component()(**_args(flash, conflict, dirty_all, snap_tree), key="pd_v2", default=None)
+    evt = _component()(**_args(flash, conflict, dirty_all, snap_tree, revive_ask),
+                       key="pd_v2", default=None)
 
     # 대기 중인 다운로드가 있으면 브라우저 다운로드를 트리거(데이터 URI 자동 클릭)
     pend = st.session_state.pop("pending_download", None)
