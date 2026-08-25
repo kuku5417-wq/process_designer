@@ -766,13 +766,15 @@ def validate(data: dict) -> list[str]:
     return errs
 
 
-def duplicate_siblings(data: dict, min_level: int = 5) -> list[dict]:
+def duplicate_siblings(data: dict, min_level: int = 4) -> list[dict]:
     """같은 부모 아래 **이름이 같은 형제**(중복) 목록. 하위(자손)는 보지 않는다 — 이름만 본다.
 
     복사(하위 포함 복제)로 생긴 동명 형제를 잡아 경고·내보내기 차단에 쓴다. 취합·붙여넣기가
     이름 경로로 병합하므로 같은 이름 형제가 남으면 두 업무가 조용히 합쳐진다. `validate` 에는
     넣지 않는다(하드 검증에 넣으면 기존 데이터 로드/저장이 거부됨) — 경고 전용.
-    JS `dupSiblings` 와 규칙이 같아야 한다(twin). 기본 lv5 이상만(복사가 lv5+ 에서만 되므로).
+    JS `dupSiblings` 와 규칙이 같아야 한다(twin). **기본 lv4 이상**이다 — 예전엔 lv5 였는데
+    (복사가 lv5+ 에서만 되므로) 엑셀 가져오기·붙여넣기로 **lv4 동명 형제**도 생기고,
+    취합이 lv4~lv6 을 이름 경로로 병합하므로 lv4 도 똑같이 위험하다. lv3(부문)은 별도 안내다.
     반환: [{parent_id, level, name, ids:[...]}] (이름·부모별 1건, count>=2).
     """
     groups: dict[tuple, list[dict]] = {}

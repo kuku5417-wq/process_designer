@@ -891,13 +891,24 @@ def main() -> int:
     schema.update_node(dt, b6, {"name": "정밀시험"}, "x")
     dt = schema.normalize(dt)
     ck(schema.duplicate_siblings(dt) == [], "이름 수정하면 중복 해소")
-    # (d) lv3/lv4 동명 형제는 min_level=5 라 미감지
+    # (d) lv4 동명 형제는 **기본으로 감지**한다 — 엑셀 가져오기·붙여넣기로 생기고,
+    #     취합이 lv4~lv6 을 이름 경로로 병합하므로 lv5·lv6 과 똑같이 위험하다.
     dd = schema.bootstrap()
     q4a = schema.add_node(dd, "lv3_seonjang", 4, "x", "같은대분류")
     q4b = schema.add_node(dd, "lv3_seonjang", 4, "x", "같은대분류")
     dd = schema.normalize(dd)
-    ck(schema.duplicate_siblings(dd) == [], "lv4 동명 형제는 기본(min_level=5) 미감지")
-    ck(len(schema.duplicate_siblings(dd, min_level=4)) == 1, "min_level=4 로 낮추면 lv4 동명 감지")
+    _d4 = schema.duplicate_siblings(dd)
+    ck(len(_d4) == 1 and set(_d4[0]["ids"]) == {q4a, q4b},
+       f"★ lv4 동명 형제를 기본(min_level=4)으로 감지 (실제 {_d4})")
+    ck(schema.duplicate_siblings(dd, min_level=5) == [],
+       "min_level=5 로 올리면 lv4 는 빠진다 (인자는 그대로 동작)")
+    # lv3(부문)은 기본에서 빠진다 — 별도 안내 대상이고 병합은 사람이 판단한다
+    _d3 = schema.bootstrap()
+    schema.add_node(_d3, schema.ROOT_ID, 3, "x", "동명부문")
+    schema.add_node(_d3, schema.ROOT_ID, 3, "x", "동명부문")
+    _d3 = schema.normalize(_d3)
+    ck(not [g for g in schema.duplicate_siblings(_d3) if int(g["level"]) == 3],
+       "★ lv3 동명 부문은 기본 감지에서 제외 (부문 통합은 하위 전체가 움직인다)")
     # (e) 빈 이름 형제는 미감지
     de = schema.bootstrap()
     r4 = schema.add_node(de, "lv3_seonjang", 4, "x", "대분류E")

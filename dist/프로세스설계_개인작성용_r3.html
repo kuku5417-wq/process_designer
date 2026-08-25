@@ -24,7 +24,7 @@
 <script>
 /* build_standalone.py 주입 — 개인 배포판 표식.
    이 플래그가 없으면 index.html 은 기존대로(Streamlit 컴포넌트/디자인 미리보기) 돈다. */
-window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1206";
+window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1252";
 </script>
 <script>
 /*! Sortable 1.15.6 - MIT | git://github.com/SortableJS/Sortable.git */
@@ -874,7 +874,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1206";
    *  보지 않고 이름만 본다. 복사(하위 포함 복제)로 생긴 동명 형제를 잡아 경고·내보내기 차단에 쓴다.
    *  기본 lv5 이상만(복사가 lv5+ 에서만 되므로). 반환 [{parentId, level, name, ids:[...]}]. */
   function dupSiblings(minLevel) {
-    minLevel = minLevel || 5;
+    minLevel = minLevel || 4;      // schema.duplicate_siblings 트윈 — 기본 lv4(위 함수 주석 참조)
     var groups = {};
     S.nodes.forEach(function (n) {
       var nm = String(n.name || "").trim();
@@ -1759,6 +1759,71 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1206";
     victims[srcId] = 1;
   }
 
+  /** 트리에 남아 있는 **동명 형제를 전부** 합친다(lv4·lv5·lv6).
+   *
+   *  ★ **얕은 레벨부터 한 라운드씩** 돌고 매 라운드 다시 스캔한다. lv4 를 합치면 그 아래
+   *    lv5·lv6 이 `mergePair` 로 함께 정리되므로, 먼저 훑어둔 목록을 그대로 쓰면 이미 사라진
+   *    노드를 가리킨다. 또 **합쳐진 노드를 S.nodes 에서 빼고 나서** 다시 스캔해야 한다 —
+   *    안 빼면 같은 그룹이 계속 잡혀 무한 루프가 된다.
+   *  편집 범위가 걸려 있으면 **전원이 내 범위 안인 그룹만** 합친다(게이트 누수 방지).
+   */
+  function dupGroupsMergeable() {
+    return dupSiblings(4).filter(function (g) {
+      return g.ids.length >= 2 && g.ids.every(function (i) { var n = byId(i); return n && canEdit(n); });
+    });
+  }
+  function actMergeAll() {
+    var gs = dupGroupsMergeable();
+    var all = dupSiblings(4);
+    if (!gs.length) {
+      return flash(all.length ? "합칠 수 있는 그룹이 없습니다 — 편집 범위 밖입니다" : "같은 이름 항목이 없습니다");
+    }
+    var extra = gs.reduce(function (a, g) { return a + g.ids.length - 1; }, 0);
+    var skipped = all.length - gs.length;
+    S.confirm = {
+      title: "같은 이름 " + gs.length + "묶음(" + extra + "개)을 합칩니다"
+        + (skipped > 0 ? " (범위 밖 " + skipped + "묶음 제외)" : ""),
+      body: "각 묶음의 맨 앞 항목으로 나머지를 합칩니다. 하위도 이름이 같으면 함께 합쳐지고, "
+        + "값이 둘 다 채워져 있으면 첫 번째 값을 남깁니다. "
+        + "되돌리려면 저장 전에 [다시 읽기] 를 해야 합니다.",
+      okLabel: extra + "개 합치기",
+      danger: true, onOk: doMergeAll,
+    };
+    rerender();
+  }
+  function doMergeAll() {
+    var victims = {}, stat = { nodes: 0, moved: 0, dropped: 0 }, groups = 0, guard = 0;
+    while (guard++ < 60) {                       // 안전장치 — 어떤 경우에도 무한 루프가 되지 않게
+      var gs = dupGroupsMergeable();
+      if (!gs.length) break;
+      var minLv = gs.reduce(function (a, g) { return Math.min(a, Number(g.level)); }, 99);
+      gs.filter(function (g) { return Number(g.level) === minLv; }).forEach(function (g) {
+        var dst = g.ids[0];
+        g.ids.slice(1).forEach(function (sid) {
+          if (byId(dst) && byId(sid)) mergePair(dst, sid, victims, stat);
+        });
+        groups++;
+      });
+      // ★ 다음 스캔 전에 반드시 반영한다 — 안 빼면 같은 그룹이 계속 잡힌다.
+      S.nodes = S.nodes.filter(function (x) { return !victims[x.id]; });
+      touchTree();
+    }
+    var gone = Object.keys(victims);
+    if (!gone.length) { flash("합칠 동명 항목이 없습니다"); return rerender(); }
+    S.dirty = S.dirty.filter(function (d) { return !victims[d]; });
+    gone.forEach(function (v) { if (S.deleted.indexOf(v) < 0) S.deleted.push(v); });
+    markDirty("del");
+    // 병합으로 형제가 사라진 부모마다 order 를 다시 매긴다(구멍 방지).
+    var pars = {}; S.nodes.forEach(function (n) { pars[n.parent_id] = 1; });
+    Object.keys(pars).forEach(renumber);
+    recalcAi();
+    if (S.selectedId && !byId(S.selectedId)) { S.selectedId = null; S.sel = {}; }
+    flash("같은 이름 " + groups + "묶음을 합쳤습니다 — 업무 " + gone.length + "개 정리"
+      + (stat.moved ? " · 하위 " + stat.moved + "개 이동" : "")
+      + (stat.dropped ? " · 값이 달라 " + stat.dropped + "칸은 첫 번째 값을 남겼습니다" : ""));
+    rerender();
+  }
+
   /** 드롭된 카드(들)를 dst 로 병합. 되돌릴 수 없으므로 확인 모달을 거친다. */
   function actMergeInto(ids, dstId) {
     var dst = byId(dstId);
@@ -2461,8 +2526,14 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1206";
         var par = (d.parentId && d.parentId !== ROOT) ? byId(d.parentId) : null;
         return "'" + esc((par ? par.name + " › " : "") + d.name) + "' " + d.ids.length + "개";
       }).join(", ");
-      h += '<div class="warn" style="margin:8px 14px 0;border-radius:10px">⚠ 같은 이름의 항목이 있습니다 — '
-        + (SOLO ? '<b>내보내기 전에</b> ' : '') + '이름을 수정하세요: ' + items + "</div>";
+      // [전부 합치기] — 하나씩 드래그하지 않고 한 번에 정리한다(하위 재귀 병합은 드래그와 같은 규칙).
+      h += '<div class="warn" style="margin:8px 14px 0;border-radius:10px;display:flex;'
+        + 'align-items:center;gap:10px;flex-wrap:wrap">'
+        + '<span style="flex:1 1 auto">⚠ 같은 이름의 항목이 있습니다 — '
+        + (SOLO ? '<b>내보내기 전에</b> ' : '') + '이름을 수정하거나 합치세요: ' + items + "</span>"
+        + '<button class="minibtn" data-act="mergeall" '
+        + 'title="같은 이름끼리 한 번에 합칩니다 — 하위도 이름이 같으면 함께 합쳐집니다">⧉ 전부 합치기</button>'
+        + "</div>";
     }
     // lv3 동명 부문 — 오타 교정(CEDAR CUS → CEDAR CSU) 뒤에 생길 수 있다. 위 가드는 lv5+ 라 안 잡힌다.
     // 자동 병합은 하지 않는다(부문 통합은 하위 전체가 움직이는 조작이라 사람이 판단해야 한다).
@@ -4366,6 +4437,7 @@ window.__PD_SOLO__ = true; window.__PD_BUILD__ = "20260825_1206";
     }
     // 스냅샷 고정/해제 — 확인 모달 없음(잃는 게 없다. saveas 와 같은 판단).
     else if (a === "histpin") emit({ type: "histpin", file: d.file, pinned: d.pin === "1" });
+    else if (a === "mergeall") actMergeAll();
     else if (a === "dlcsv")
       // 파일명에 rev 를 넣어 여러 번 받아도 안 덮인다(스냅샷 CSV 와 같은 규칙).
       csvDownload(true, "프로세스계층도_rev" + (S.rev || 0) + "_" + _dateStamp() + ".csv");
